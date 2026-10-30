@@ -19,13 +19,68 @@ Steps:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+from collections import Counter
 from typing import Any
 
 from langgraph.runtime import Runtime
 
 from proofline.context import Deps
+from proofline.prompts.loader import load_prompt
+from proofline.render import draft_block, notes_block, plan_block
+from proofline.schemas import CRITERION_WEIGHTS, Critique, RevisionRecord
 from proofline.state import ScriptState
+
+log = logging.getLogger("proofline.nodes.critic")
 
 
 async def critic(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
-    raise NotImplementedError("Week 1 S4 — see module docstring")
+    started = time.perf_counter()
+    settings = runtime.context.settings
+    plan = state["plan"]
+    draft = state["draft"]
+    revision = state.get("revision_count", 0)
+
+    rubric, brand_voice = await asyncio.gather(
+        asyncio.to_thread(settings.rubric_path.read_text, "utf-8"),
+        asyncio.to_thread(settings.brand_voice_path.read_text, "utf-8"),
+    )
+    prompt = load_prompt("critic").render(
+        rubric=rubric,
+        brand_voice=brand_voice,
+        audience=state["audience"],
+        video_format=state["video_format"],
+        target_seconds=plan.target_seconds,
+        estimated_seconds=draft.estimated_seconds,
+        plan=plan_block(plan),
+        research_notes=notes_block(state["research_notes"]),
+        draft=draft_block(draft),
+    )
+    critique = await runtime.context.llm.generate(
+        prompt, Critique, role="critic", run_config=state["run_config"]
+    )
+
+    # The schema enforces 8 scores; this enforces one per criterion, so overall is well-defined.
+    counts = Counter(s.criterion for s in critique.scores)
+    if set(counts) != set(CRITERION_WEIGHTS) or any(n != 1 for n in counts.values()):
+        missing = sorted(set(CRITERION_WEIGHTS) - set(counts))
+        repeated = sorted(c for c, n in counts.items() if n > 1)
+        raise ValueError(
+            f"critic: each criterion must be scored once; missing={missing} repeated={repeated}"
+        )
+
+    lowest = min(critique.scores, key=lambda s: s.score)
+    log.info(
+        "critic: revision %d, overall %.1f, lowest %s=%d (%.1fs)",
+        revision,
+        critique.overall,
+        lowest.criterion,
+        lowest.score,
+        time.perf_counter() - started,
+    )
+    return {
+        "critique": critique,
+        "history": [RevisionRecord(kind="critique", revision=revision, score=critique.overall)],
+    }
