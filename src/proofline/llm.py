@@ -76,7 +76,11 @@ class AnthropicLLM:
         run_config: RunConfig,
     ) -> T:
         spec = run_config.models[role]
-        runnable = self._client(spec).with_structured_output(schema, include_raw=True)
+        # json_schema, not tool calling: Sonnet/Opus 5.5 can't force a tool call, and a text
+        # reply keeps the repair turn below valid (a tool_use turn would need a tool_result).
+        runnable = self._client(spec).with_structured_output(
+            schema, include_raw=True, method="json_schema"
+        )
         messages: list[BaseMessage] = [
             SystemMessage(content=prompt.system),
             HumanMessage(content=prompt.user),
