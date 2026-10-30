@@ -25,10 +25,10 @@ traced in LangSmith, explained in a README.
 
 ## Week 0 — Setup (Oct 29–30, ~45 min) ◀ CURRENT
 
-- [ ] Create repo `proofline` on your personal GitHub (private until launch), unzip this kit into it, first commit
+- [x] Create repo `proofline` on your personal GitHub (private until launch), unzip this kit into it, first commit
 - [ ] `uv sync`, copy `.env.example` → `.env`, add `ANTHROPIC_API_KEY`, `TAVILY_API_KEY`
 - [ ] Open Claude Code in the repo and paste the kickoff prompt from `docs/KICKOFF.md`
-- [ ] Fast suite runs: routing + schema tests pass, Week 1 targets show as `xfailed`
+- [x] Fast suite runs: routing + schema tests pass, Week 1 targets show as `xfailed`
 - [ ] Fill in `docs/BRAND_VOICE.md` (15 min, your words — the writer and critic depend on it)
 
 **Done when:** `uv run pytest -m "not live"` is green with xfails, and Claude Code
