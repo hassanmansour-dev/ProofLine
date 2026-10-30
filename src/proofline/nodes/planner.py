@@ -8,6 +8,8 @@ Steps:
     1. target_seconds = schemas.TARGET_SECONDS[state["video_format"]]
     2. load_prompt("planner").render(topic=..., audience=..., video_format=..., target_seconds=...)
     3. plan = await runtime.context.llm.generate(prompt, Plan, role="planner", run_config=state["run_config"])
+       then overwrite plan.target_seconds with the code value — it drives target_words and
+       length_fit, so it's never taken from the model (ADR-0011).
     4. log INFO: duration, #queries, #sections
     5. return {"plan": plan}
 """
@@ -40,6 +42,8 @@ async def planner(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
     plan = await runtime.context.llm.generate(
         prompt, Plan, role="planner", run_config=state["run_config"]
     )
+    if plan.target_seconds != target_seconds:
+        plan = plan.model_copy(update={"target_seconds": target_seconds})
     log.info(
         "planner: %d queries, %d sections, target %ss (%.1fs)",
         len(plan.search_queries),

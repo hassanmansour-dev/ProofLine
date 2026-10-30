@@ -1,4 +1,4 @@
-"""researcher — Plan → ResearchNotes. Week 1, S3. Gets RetryPolicy(max_attempts=3) in graph.py.
+"""researcher — Plan → ResearchNotes. Week 1, S3. graph.py wires it with RETRY_POLICY below.
 
 Contract (docs/ARCHITECTURE.md §4, ADR-0007):
     reads:   topic, plan, run_config
@@ -9,7 +9,10 @@ Steps:
     1. Run every plan.search_queries concurrently via deps.search.search(q, max_results=cfg.results_per_query),
        bounded by asyncio.Semaphore(settings.search_concurrency).
        One failed query must not sink the others — collect failures, log WARNING;
-       if ALL queries fail, raise (RetryPolicy retries the node).
+       if ALL queries fail, raise SearchUnavailableError when every failure was transient
+       (RETRY_POLICY retries the node), else re-raise the first non-transient error
+       (bad key, quota) so it isn't retried. LangGraph's default retry_on skips
+       RuntimeError/ValueError/OSError but retries most others — hence an explicit retry_on.
     2. Dedupe by normalized URL (lowercase scheme+host, strip trailing "/", drop fragment
        and utm_* params) — see normalize_url below. Keep the highest-score duplicate.
     3. Sort by score desc (None last), keep cfg.max_sources, truncate content to
@@ -33,15 +36,19 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langgraph.runtime import Runtime
+from langgraph.types import RetryPolicy
 
 from proofline.context import Deps
 from proofline.prompts.loader import load_prompt
 from proofline.render import bullet_list, sources_block
 from proofline.schemas import ExtractedFindings, Finding, ResearchNotes, Source
-from proofline.search import SearchClient, SearchResult
+from proofline.search import SearchClient, SearchResult, SearchUnavailableError
 from proofline.state import ScriptState
 
 log = logging.getLogger("proofline.nodes.researcher")
+
+# For graph.py: retry only transient search outages (ADR-0011).
+RETRY_POLICY = RetryPolicy(max_attempts=3, retry_on=SearchUnavailableError)
 
 
 def normalize_url(url: str) -> str:
@@ -74,7 +81,12 @@ async def _search_all(
     for query, exc in failures:
         log.warning("researcher: query failed: %r: %r", query, exc)
     if failures and len(failures) == len(queries):
-        raise RuntimeError(f"all {len(queries)} search queries failed") from failures[0][1]
+        for _, exc in failures:
+            if not isinstance(exc, SearchUnavailableError):
+                raise exc
+        raise SearchUnavailableError(f"all {len(queries)} search queries failed") from failures[0][
+            1
+        ]
     return [r for o in outcomes if not isinstance(o, BaseException) for r in o]
 
 

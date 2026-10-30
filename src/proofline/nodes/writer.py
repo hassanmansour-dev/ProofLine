@@ -14,7 +14,8 @@ Steps:
     3. brand_voice = settings.brand_voice_path.read_text()
        target_seconds = plan.target_seconds; target_words = round(target_seconds / 60 * WORDS_PER_MINUTE)
     4. Render + generate Draft.
-    5. Keep only cited_source_ids that exist in research_notes; log WARNING for dropped ids.
+    5. Citations live only in the narration (Draft.cited_source_ids is parsed from it, ADR-0011).
+       Strip inline citations to ids not in research_notes; log WARNING for dropped ids.
        (Draft is frozen → use draft.model_copy(update={...}).)
     6. return {"draft": draft, "revision_count": revision_count,
                "history": [RevisionRecord(kind="draft", revision=revision_count,
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -33,10 +35,42 @@ from langgraph.runtime import Runtime
 from proofline.context import Deps
 from proofline.prompts.loader import load_prompt
 from proofline.render import notes_block, plan_block, revision_context
-from proofline.schemas import WORDS_PER_MINUTE, Draft, RevisionRecord
+from proofline.schemas import CITATION_RE, WORDS_PER_MINUTE, Draft, RevisionRecord
 from proofline.state import ScriptState
 
 log = logging.getLogger("proofline.nodes.writer")
+
+
+# A citation plus the spaces before it, so dropping "claim [S9]." leaves "claim."
+_CITATION_WITH_SPACE_RE = re.compile(r"(?P<space>[ \t]*)" + CITATION_RE.pattern)
+
+
+def _strip_unknown_citations(text: str, known: set[str], dropped: list[str]) -> str:
+    def keep_known(m: re.Match[str]) -> str:
+        ids = [i.strip() for i in m.group(2).split(",")]
+        kept = [i for i in ids if i in known]
+        if len(kept) == len(ids):
+            return m.group(0)
+        dropped.extend(i for i in ids if i not in known)
+        return m.group("space") + "".join(f"[{i}]" for i in kept) if kept else ""
+
+    return _CITATION_WITH_SPACE_RE.sub(keep_known, text)
+
+
+def _without_unknown_citations(draft: Draft, known: set[str]) -> tuple[Draft, list[str]]:
+    """Remove inline citations to ids the researcher never assigned (ADR-0007)."""
+    dropped: list[str] = []
+    update = {
+        "hook": _strip_unknown_citations(draft.hook, known, dropped),
+        "call_to_action": _strip_unknown_citations(draft.call_to_action, known, dropped),
+        "sections": [
+            s.model_copy(
+                update={"narration": _strip_unknown_citations(s.narration, known, dropped)}
+            )
+            for s in draft.sections
+        ],
+    }
+    return (draft.model_copy(update=update) if dropped else draft), dropped
 
 
 async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
@@ -66,13 +100,9 @@ async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
     )
     draft = await deps.llm.generate(prompt, Draft, role="writer", run_config=state["run_config"])
 
-    known = notes.source_ids
-    cited = [i for i in dict.fromkeys(draft.cited_source_ids) if i in known]
-    dropped = [i for i in draft.cited_source_ids if i not in known]
+    draft, dropped = _without_unknown_citations(draft, notes.source_ids)
     if dropped:
         log.warning("writer: dropped citations to unknown sources: %s", sorted(set(dropped)))
-    if cited != draft.cited_source_ids:
-        draft = draft.model_copy(update={"cited_source_ids": cited})
 
     log.info(
         "writer: revision %d, %d words (~%ds of %ds), %d sources cited (%.1fs)",
@@ -80,7 +110,7 @@ async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
         draft.word_count,
         draft.estimated_seconds,
         plan.target_seconds,
-        len(cited),
+        len(draft.cited_source_ids),
         time.perf_counter() - started,
     )
     return {

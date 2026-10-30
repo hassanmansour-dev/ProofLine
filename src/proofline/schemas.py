@@ -12,7 +12,7 @@ import re
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 VideoFormat = Literal["short", "long"]
 ModelRole = Literal["planner", "researcher", "writer", "critic"]
@@ -21,6 +21,8 @@ WORDS_PER_MINUTE = 150
 TARGET_SECONDS: dict[VideoFormat, int] = {"short": 60, "long": 600}
 
 SOURCE_ID_RE = re.compile(r"^S\d+$")
+# An inline citation: [S3] or, if the model groups them, [S2, S5].
+CITATION_RE = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
 
 
 class _Model(BaseModel):
@@ -70,7 +72,10 @@ class Plan(_Model):
         description="Web search queries (3-8 words each) that would find primary sources: official docs, changelogs, papers, maintainer posts.",
     )
     outline: list[OutlineSection] = Field(min_length=3, max_length=6)
-    target_seconds: int = Field(gt=0, description="Target spoken duration in seconds.")
+    target_seconds: int = Field(
+        gt=0,
+        description="Copy the target seconds given in <format> exactly. (Set in code after generation.)",
+    )
 
 
 # ── Researcher ────────────────────────────────────────────────────────────────
@@ -135,9 +140,6 @@ class Draft(_Model):
     )
     sections: list[ScriptSection] = Field(min_length=1)
     call_to_action: str = Field(description="Closing line: one specific next step for the viewer.")
-    cited_source_ids: list[str] = Field(
-        default_factory=list, description="Every source id cited anywhere in the narration."
-    )
 
     @property
     def spoken_text(self) -> str:
@@ -145,8 +147,20 @@ class Draft(_Model):
         return "\n\n".join(parts)
 
     @property
+    def cited_source_ids(self) -> list[str]:
+        """Source ids cited inline in the spoken text, in first-seen order (ADR-0011).
+
+        Parsed from the narration, never reported by the model, so it can't disagree with it.
+        """
+        ids = (
+            i.strip() for m in CITATION_RE.finditer(self.spoken_text) for i in m.group(1).split(",")
+        )
+        return list(dict.fromkeys(ids))
+
+    @property
     def word_count(self) -> int:
-        text = re.sub(r"\[S\d+\]", "", self.spoken_text)
+        # drop the space before a citation too, so "step [S1]." doesn't leave a "." word
+        text = re.sub(r"\s*" + CITATION_RE.pattern, "", self.spoken_text)
         return len(text.split())
 
     @property
@@ -202,6 +216,21 @@ class Critique(_Model):
         default_factory=list,
         description="Claims in the draft not supported by any finding, quoted verbatim.",
     )
+
+    @model_validator(mode="after")
+    def _one_score_per_criterion(self) -> Critique:
+        """overall and score_for need every criterion exactly once (ADR-0011).
+
+        Failing here, inside validation, lets the LLM adapter's repair retry fix it.
+        """
+        seen = [s.criterion for s in self.scores]
+        missing = sorted(set(CRITERION_WEIGHTS) - set(seen))
+        repeated = sorted({c for c in seen if seen.count(c) > 1})
+        if missing or repeated:
+            raise ValueError(
+                f"score each criterion exactly once; missing={missing} repeated={repeated}"
+            )
+        return self
 
     def score_for(self, criterion: Criterion) -> int:
         for s in self.scores:

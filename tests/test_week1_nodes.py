@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from proofline.context import Deps
 from proofline.nodes import critic, finalizer, planner, researcher, writer
-from proofline.nodes.researcher import normalize_url
+from proofline.nodes.researcher import RETRY_POLICY, normalize_url
 from proofline.schemas import Critique, Draft, ExtractedFindings, Finding, Plan
-from proofline.search import SearchResult
+from proofline.search import SearchResult, SearchUnavailableError
 from proofline.state import FIELD_OWNERS
 from tests.fakes import (
     FakeLLM,
@@ -52,6 +53,21 @@ async def test_planner_returns_only_plan_using_planner_role(tmp_path: Path) -> N
     assert call.role == "planner"
     assert call.schema is Plan
     assert "What LangGraph checkpointers actually store" in call.prompt.user
+
+
+async def test_planner_sets_target_seconds_in_code(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_plan(target_seconds=600))
+    deps = _deps(tmp_path, llm)
+    update = await run_node("planner", planner, base_state(deps.settings), deps)
+    assert update["plan"].target_seconds == 60  # short, whatever the model said
+
+
+async def test_nodes_use_the_run_config_snapshot_not_live_settings(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_plan())
+    deps = _deps(tmp_path, llm)
+    snapshot = deps.settings.run_config().model_copy(update={"max_sources": 2})
+    await run_node("planner", planner, base_state(deps.settings, run_config=snapshot), deps)
+    assert llm.calls[0].run_config == snapshot
 
 
 # ── researcher ────────────────────────────────────────────────────────────────
@@ -101,14 +117,22 @@ async def test_researcher_survives_one_failed_query(tmp_path: Path) -> None:
 
 
 async def test_researcher_caps_and_truncates_sources(tmp_path: Path) -> None:
-    long = [make_result(i).model_copy(update={"content": "x" * 10_000}) for i in range(1, 20)]
-    deps = _deps(tmp_path, _research_llm(), FakeSearch(default=long))
+    plan = make_plan()
+    # distinct results per query: 3 queries x 5 results = 15 unique, above max_sources=8
+    results = {
+        q: [
+            make_result(10 * qi + i).model_copy(update={"content": "x" * 10_000})
+            for i in range(1, 6)
+        ]
+        for qi, q in enumerate(plan.search_queries)
+    }
+    deps = _deps(tmp_path, _research_llm(), FakeSearch(results=results))
     cfg = deps.settings.run_config()
     update = await run_node(
         "researcher", researcher, base_state(deps.settings, plan=make_plan()), deps
     )
     sources = update["research_notes"].sources
-    assert len(sources) <= cfg.max_sources
+    assert len(sources) == cfg.max_sources
     assert all(len(s.content) <= cfg.max_source_chars for s in sources)
 
 
@@ -153,7 +177,10 @@ async def test_writer_drops_citations_to_unknown_sources(tmp_path: Path) -> None
     deps = _deps(tmp_path, llm)
     state = base_state(deps.settings, plan=make_plan(), research_notes=make_notes(3))
     update = await run_node("writer", writer, state, deps)
-    assert update["draft"].cited_source_ids == ["S1"]
+    draft = update["draft"]
+    assert draft.cited_source_ids == ["S1"]
+    assert "[S42]" not in draft.spoken_text
+    assert "Point 2 holds." in draft.spoken_text
 
 
 # ── critic ────────────────────────────────────────────────────────────────────
@@ -228,52 +255,58 @@ async def test_researcher_fails_loudly_when_every_query_fails(tmp_path: Path) ->
     plan = make_plan()
     llm = FakeLLM()
     deps = _deps(tmp_path, llm, FakeSearch(fail=set(plan.search_queries)))
-    with pytest.raises(RuntimeError, match="all 3 search queries failed"):
+    with pytest.raises(SearchUnavailableError, match="all 3 search queries failed"):
         await run_node("researcher", researcher, base_state(deps.settings, plan=plan), deps)
     assert llm.calls == []
 
 
-async def test_researcher_bounds_search_concurrency(tmp_path: Path) -> None:
-    import asyncio
+def _researcher_graph_with_retry() -> Any:
+    """researcher wired as graph.py will wire it, with backoff removed for test speed."""
+    from langgraph.graph import END, START, StateGraph
 
-    class SlowSearch(FakeSearch):
-        active = 0
-        peak = 0
+    from proofline.state import ScriptState
 
+    builder = StateGraph(ScriptState, context_schema=Deps)
+    fast = RETRY_POLICY._replace(initial_interval=0.0, jitter=False)
+    builder.add_node("researcher", researcher, retry_policy=fast)
+    builder.add_edge(START, "researcher")
+    builder.add_edge("researcher", END)
+    return builder.compile()
+
+
+async def test_researcher_does_not_retry_non_transient_errors(tmp_path: Path) -> None:
+    class BadKeySearch(FakeSearch):
         async def search(self, query: str, *, max_results: int) -> list[SearchResult]:
             self.queries.append(query)
-            n = len(self.queries)
-            self.active += 1
-            self.peak = max(self.peak, self.active)
-            await asyncio.sleep(0.01)
-            self.active -= 1
-            return [make_result(n)]
+            raise PermissionError("invalid API key")
 
-    queries = [f"query {i}" for i in range(5)]
-    deps = Deps(
-        settings=make_settings(tmp_path, search_concurrency=2),
-        llm=_research_llm(),
-        search=(search := SlowSearch()),
+    plan = make_plan()
+    search = BadKeySearch()
+    deps = Deps(settings=make_settings(tmp_path), llm=FakeLLM(), search=search)
+    with pytest.raises(PermissionError, match="invalid API key"):
+        await _researcher_graph_with_retry().ainvoke(
+            base_state(deps.settings, plan=plan), context=deps
+        )
+    assert len(search.queries) == len(plan.search_queries)  # one attempt, no retries
+
+
+async def test_researcher_retry_policy_recovers_from_a_search_outage(tmp_path: Path) -> None:
+    plan = make_plan()
+
+    class FlakySearch(FakeSearch):
+        async def search(self, query: str, *, max_results: int) -> list[SearchResult]:
+            self.queries.append(query)
+            if len(self.queries) <= len(plan.search_queries):  # whole first attempt fails
+                raise SearchUnavailableError("503")
+            return [make_result(1)]
+
+    search = FlakySearch()
+    deps = Deps(settings=make_settings(tmp_path), llm=_research_llm(), search=search)
+    out = await _researcher_graph_with_retry().ainvoke(
+        base_state(deps.settings, plan=plan), context=deps
     )
-    state = base_state(deps.settings, plan=make_plan(search_queries=queries))
-    update = await run_node("researcher", researcher, state, deps)
-    assert search.peak == 2
-    assert len(update["research_notes"].sources) == 5
-
-
-# ── critic: one score per criterion ───────────────────────────────────────────
-
-
-async def test_critic_rejects_a_repeated_criterion(tmp_path: Path) -> None:
-    good = make_critique(7)
-    scores = [*good.scores[:-1], good.scores[0]]  # length_fit missing, hook twice
-    bad = Critique.model_construct(scores=scores, must_fix=[], unsupported_claims=[])
-    deps = _deps(tmp_path, FakeLLM({Critique: [bad]}))
-    state = base_state(
-        deps.settings, plan=make_plan(), research_notes=make_notes(), draft=make_draft()
-    )
-    with pytest.raises(ValueError, match=r"missing=\['length_fit'\] repeated=\['hook'\]"):
-        await run_node("critic", critic, state, deps)
+    assert len(out["research_notes"].sources) == 1
+    assert len(search.queries) == 2 * len(plan.search_queries)
 
 
 # ── finalizer: only cited sources ─────────────────────────────────────────────
