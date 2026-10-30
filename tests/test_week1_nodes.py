@@ -329,3 +329,44 @@ async def test_finalizer_lists_only_cited_sources(tmp_path: Path) -> None:
     assert final.source_urls == ["https://example.com/doc2"]
     assert final.revision_count == 0
     assert "https://example.com/doc1" not in final.markdown
+
+
+# ── writer: citation cleanup ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "dropped"),
+    [
+        ("Both [S1, S42] hold.", "Both [S1] hold.", ["S42"]),
+        ("A claim [S9][S1].", "A claim [S1].", ["S9"]),
+        ("A claim [S42].", "A claim.", ["S42"]),
+        ("[S9] Start here.", "Start here.", ["S9"]),
+        ("Loose [s2] and [S 3; S1].", "Loose [S2] and [S3][S1].", []),
+        ("A range [S1-S3].", "A range.", ["[S1-S3]"]),
+        ("Fine [S1][S2].", "Fine [S1][S2].", []),
+        ("Not a citation [see docs].", "Not a citation [see docs].", []),
+    ],
+)
+def test_writer_citation_cleanup(text: str, expected: str, dropped: list[str]) -> None:
+    from proofline.nodes.writer import _clean_citations
+
+    seen: list[str] = []
+    assert _clean_citations(text, {"S1", "S2", "S3"}, seen) == expected
+    assert seen == dropped
+
+
+async def test_writer_cleans_on_screen_notes_too(tmp_path: Path) -> None:
+    draft = make_draft()
+    sections = [draft.sections[0].model_copy(update={"on_screen": "Diagram [S42]"})]
+    llm = FakeLLM().queue(draft.model_copy(update={"sections": sections}))
+    deps = _deps(tmp_path, llm)
+    state = base_state(deps.settings, plan=make_plan(), research_notes=make_notes(3))
+    update = await run_node("writer", writer, state, deps)
+    assert update["draft"].sections[0].on_screen == "Diagram"
+
+
+def test_search_concurrency_must_be_positive(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        make_settings(tmp_path, search_concurrency=0)

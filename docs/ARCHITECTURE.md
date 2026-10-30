@@ -121,7 +121,7 @@ the Jan 2027 launch.)
 Nodes read `runtime.context`. Tests pass `FakeLLM` / `FakeSearch`. Nothing
 imports a client at module level (ADR-0003).
 
-`StructuredLLM.generate(prompt: RenderedPrompt, schema: type[T], *, role: ModelRole) -> T`
+`StructuredLLM.generate(prompt: RenderedPrompt, schema: type[T], *, role: ModelRole, run_config: RunConfig) -> T`
 — one method. The Anthropic adapter maps `role` (`planner|researcher|writer|critic`)
 to the model + temperature from `RunConfig`, uses
 `with_structured_output(..., method="json_schema")` (ADR-0011), and tags the call

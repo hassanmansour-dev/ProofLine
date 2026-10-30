@@ -93,4 +93,7 @@ def test_session_start_reports_current_week() -> None:
         "session_start.py", {"hook_event_name": "SessionStart", "source": "startup"}
     )
     assert code == 0
-    assert "Current plan week: **Week 0" in out
+    plan = (HOOKS.parents[1] / "docs" / "PLAN.md").read_text(encoding="utf-8")
+    [current] = [ln for ln in plan.splitlines() if ln.startswith("#") and "◀ CURRENT" in ln]
+    week = current.lstrip("# ").split(" — ")[0]  # e.g. "Week 1"
+    assert f"Current plan week: **{week}" in out

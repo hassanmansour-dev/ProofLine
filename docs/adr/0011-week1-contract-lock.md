@@ -37,8 +37,10 @@ packages (langgraph 1.2.16, langchain-anthropic 1.7.6, tavily-python):
   re-check.
 - `Draft` has no `cited_source_ids` field. It is a property parsed from the spoken
   text with `schemas.CITATION_RE` (`[S3]` or `[S2, S5]`), in first-seen order. The
-  writer strips inline citations to unknown ids from the narration (logged at
-  WARNING). `word_count` removes citations and the whitespace before them.
+  writer rewrites every citation in the hook, narration, on-screen notes and call to
+  action to canonical `[S1][S2]`: loose forms (`[s3]`, `[S1; S9]`) are normalized,
+  unparseable ones (`[S1-S3]`) and unknown ids are dropped and logged at WARNING.
+  `word_count` removes citations and the whitespace before them.
 - The planner overwrites `plan.target_seconds` with `TARGET_SECONDS[video_format]`.
 - `search.SearchUnavailableError` marks transient search failures (timeout,
   transport error, 5xx); the Tavily adapter maps those to it and lets auth, quota
@@ -46,8 +48,10 @@ packages (langgraph 1.2.16, langchain-anthropic 1.7.6, tavily-python):
   failed transiently, else re-raises the first non-transient error.
   `graph.py` wires the researcher with `researcher.RETRY_POLICY`
   (`RetryPolicy(max_attempts=3, retry_on=SearchUnavailableError)`).
-- Unit tests run nodes through a one-node graph compiled with the strict-serde
-  `InMemorySaver`, and `FakeLLM` records the `run_config` each call received.
+- Unit tests run nodes through a one-node graph compiled with the allowlisted-serde
+  `InMemorySaver` and read the node's update back from the checkpoint, so a state
+  model missing from `STATE_MODELS` fails node tests; `FakeLLM` records the
+  `run_config` each call received. `render.notes_block` escapes web-derived text.
 
 ## Alternatives considered
 - **Keep the uniqueness check in the critic node (as the stub said)** — a bad

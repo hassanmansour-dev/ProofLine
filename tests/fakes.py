@@ -127,10 +127,16 @@ async def run_node(
     builder.add_edge(name, END)
     app = builder.compile(checkpointer=InMemorySaver(serde=make_serde()))
     cfg: Any = {"configurable": {"thread_id": thread_id}}
+    emitted: set[str] | None = None
     async for chunk in app.astream(state, cfg, context=deps, stream_mode="updates"):
         if name in chunk:
-            return dict(chunk[name] or {})
-    raise AssertionError(f"node {name} emitted no update")
+            emitted = set(chunk[name] or {})
+    if emitted is None:
+        raise AssertionError(f"node {name} emitted no update")
+    # Read the update back from the checkpoint, not from memory: a state model missing
+    # from the serde allowlist comes back as a dict and fails the node's type assertions.
+    values = (await app.aget_state(cfg)).values
+    return {k: values[k] for k in emitted}
 
 
 def base_state(settings: Settings, **kw: Any) -> dict[str, Any]:
