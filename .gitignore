@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+.data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+outputs/
+
+# Claude Code: local-only settings and agent memory
+.claude/settings.local.json
+.claude/agent-memory-local/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
