@@ -35,7 +35,10 @@ def notes_block(notes: ResearchNotes) -> str:
     lines = ["Sources:"]
     lines += [f"[{s.id}] {s.title} — {s.url}" for s in notes.sources]
     lines.append("\nFindings:")
-    lines += [f"- ({f.confidence}) {f.claim} [{', '.join(f.source_ids)}]" for f in notes.findings]
+    lines += [
+        f"- ({f.confidence}) {f.claim} " + "".join(f"[{i}]" for i in f.source_ids)
+        for f in notes.findings
+    ]
     if notes.gaps:
         lines.append("\nGaps (not answered by sources):")
         lines += [f"- {g}" for g in notes.gaps]

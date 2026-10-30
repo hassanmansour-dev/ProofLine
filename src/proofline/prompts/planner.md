@@ -1,6 +1,6 @@
 ---
 name: planner
-version: 1.0.0
+version: 1.1.0
 model_role: planner
 description: Turns a topic into an angle, answerable questions, search queries and an outline.
 ---
@@ -23,8 +23,8 @@ What a good plan does:
 - Builds an outline where every section has one job. A short video has 3 sections;
   a long one has 4–6.
 
-Set `target_seconds` from the format: short = 60, long = 600 unless the topic
-clearly needs less.
+Copy the target seconds given in <format> into `target_seconds`. The format fixes
+the length, so the outline should fit it rather than change it.
 
 ## user
 <topic>{topic}</topic>

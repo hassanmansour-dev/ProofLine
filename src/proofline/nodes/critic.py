@@ -6,7 +6,8 @@ Contract (docs/ARCHITECTURE.md §4, ADR-0008):
     LLM:     prompts/critic.md, role="critic", schema=Critique (temperature 0 via RunConfig)
 Steps:
     1. rubric = settings.rubric_path.read_text(); brand_voice = settings.brand_voice_path.read_text()
-    2. Render with plan_block, notes_block, draft_block; estimated_seconds = draft.estimated_seconds
+    2. Render with plan_block, notes_block, draft_block; estimated_seconds = draft.estimated_seconds;
+       length_deviation (e.g. "+12%") computed here so the model doesn't do the arithmetic
     3. critique = await llm.generate(..., Critique, role="critic", ...)
        The overall score is critique.overall (computed in Python, with the accuracy gate).
     4. (Critique's validator enforces each criterion exactly once, so a bad output goes
@@ -53,6 +54,7 @@ async def critic(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
         video_format=state["video_format"],
         target_seconds=plan.target_seconds,
         estimated_seconds=draft.estimated_seconds,
+        length_deviation=f"{(draft.estimated_seconds - plan.target_seconds) / plan.target_seconds:+.0%}",
         plan=plan_block(plan),
         research_notes=notes_block(state["research_notes"]),
         draft=draft_block(draft),

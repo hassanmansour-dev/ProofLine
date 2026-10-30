@@ -200,6 +200,10 @@ async def test_critic_uses_critic_role_and_logs_score(tmp_path: Path) -> None:
     assert set(update) <= FIELD_OWNERS["critic"]
     assert isinstance(update["critique"], Critique)
     assert llm.calls[0].role == "critic"
+    est = make_draft().estimated_seconds
+    assert (
+        f"estimated at {est} seconds ({(est - 60) / 60:+.0%} vs target)" in llm.calls[0].prompt.user
+    )
     assert update["history"][0].score == make_critique(7).overall
     assert update["history"][0].revision == 1
 

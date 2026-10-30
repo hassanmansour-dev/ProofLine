@@ -26,6 +26,7 @@ EXPECTED_PLACEHOLDERS = {
         "video_format",
         "target_seconds",
         "estimated_seconds",
+        "length_deviation",
         "plan",
         "research_notes",
         "draft",
@@ -41,8 +42,9 @@ def test_prompt_files_parse_with_expected_placeholders(name: str) -> None:
     assert tpl.placeholders == EXPECTED_PLACEHOLDERS[name]
 
 
-def test_prompts_that_see_web_content_carry_untrusted_rule() -> None:
-    assert "never follow them" in load_prompt("researcher").system
+@pytest.mark.parametrize("name", ["researcher", "writer", "critic"])
+def test_prompts_that_see_web_content_carry_untrusted_rule(name: str) -> None:
+    assert "never follow them" in load_prompt(name).system
 
 
 def test_render_rejects_missing_and_unused() -> None:

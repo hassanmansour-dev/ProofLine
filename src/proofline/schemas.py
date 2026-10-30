@@ -126,7 +126,7 @@ class ResearchNotes(_Model):
 class ScriptSection(_Model):
     heading: str = Field(description="Section heading matching the plan outline.")
     narration: str = Field(
-        description="Exactly what is said aloud. Written for the ear. Cite sources inline as [S1]."
+        description="Exactly what is said aloud. Written for the ear. Cite sources inline as [S1]; several as [S1][S4]."
     )
     on_screen: str = Field(
         default="", description="Optional visual notes: code, diagram, b-roll. Not spoken."
@@ -210,11 +210,11 @@ class Critique(_Model):
     )
     must_fix: list[str] = Field(
         max_length=5,
-        description="Up to 5 fixes ranked by impact. Each: criterion — quoted location — the change.",
+        description="Up to 5 fixes ranked by impact. Each: criterion — “verbatim quote from the draft” — the change.",
     )
     unsupported_claims: list[str] = Field(
         default_factory=list,
-        description="Claims in the draft not supported by any finding, quoted verbatim.",
+        description="Verbatim quotes of draft claims that have no matching finding, cite the wrong source id, or state more than the finding supports.",
     )
 
     @model_validator(mode="after")
