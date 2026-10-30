@@ -1,0 +1,44 @@
+# Fast checks on every push and PR: lint, format, types, unit tests.
+# No secrets and no network calls beyond installing deps — live tests are excluded.
+# Evals (DeepEval, promptfoo) get their own workflow in Week 10.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: lint · types · tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install (Python from .python-version, deps from uv.lock)
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run ruff check --output-format github .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict, src/)
+        run: uv run mypy src
+
+      - name: Fast tests (no network, no keys)
+        run: uv run pytest -m "not live"

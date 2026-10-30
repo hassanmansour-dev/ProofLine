@@ -64,6 +64,7 @@ Wait for my answers before changing anything.
 | `.claude/hooks/` | Bash guard, file protection, ruff-on-edit, prompt-version check, test-on-stop, session context |
 | `.claude/agents/` | `langgraph-architect`, `code-reviewer`, `test-engineer`, `prompt-engineer`, `api-verifier` |
 | `.claude/skills/` | `/week`, `/new-node`, `/ship-check`, `/adr`, `/live-run`, `/readme`, + `langgraph-patterns` reference |
+| `.github/workflows/ci.yml` | CI on push/PR: ruff, format check, mypy, fast tests (no keys) |
 | `.mcp.json` | LangChain docs MCP server (dev tooling only — the app itself has no MCP in Phase 1) |
 | `docs/` | Architecture, 10 ADRs, 13-week plan, rubric, prompt standards, brand voice (yours), monthly template |
 | `src/proofline/` | Contracts + infra implemented; nodes, graph wiring, CLI, API are your Week 1–3 work |
