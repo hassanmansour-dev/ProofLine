@@ -13,7 +13,10 @@ from tests.fakes import make_critique, make_settings
 def _state(critique: Critique, revision_count: int, tmp_path: Any, **cfg: Any) -> ScriptState:
     settings = make_settings(tmp_path, **cfg)
     return ScriptState(
-        critique=critique, revision_count=revision_count, run_config=settings.run_config()
+        critique=critique,
+        score=critique.overall,
+        revision_count=revision_count,
+        run_config=settings.run_config(),
     )
 
 

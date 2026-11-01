@@ -1,12 +1,12 @@
-"""researcher — Plan → ResearchNotes. Week 1, S3. graph.py wires it with RETRY_POLICY below.
+"""researcher — Outline → ResearchNotes. Week 1, S3. graph.py wires it with RETRY_POLICY below.
 
 Contract (docs/ARCHITECTURE.md §4, ADR-0007):
-    reads:   topic, plan, run_config
+    reads:   topic, outline, run_config
     writes:  research_notes
     deps:    runtime.context.search, runtime.context.llm, settings.search_concurrency
     LLM:     prompts/researcher.md, role="researcher", schema=ExtractedFindings
 Steps:
-    1. Run every plan.search_queries concurrently via deps.search.search(q, max_results=cfg.results_per_query),
+    1. Run every outline.search_queries concurrently via deps.search.search(q, max_results=cfg.results_per_query),
        bounded by asyncio.Semaphore(settings.search_concurrency).
        One failed query must not sink the others — collect failures, log WARNING;
        if ALL queries fail, raise SearchUnavailableError when every failure was transient
@@ -24,7 +24,7 @@ Steps:
        Log WARNING with counts.
     8. return {"research_notes": ResearchNotes(sources=..., findings=..., gaps=extracted.gaps)}
 Edge: zero sources after search → skip the LLM, return notes with no findings and
-      gaps = plan.key_questions (writer must state limits; critic penalizes).
+      gaps = outline.key_questions (writer must state limits; critic penalizes).
 """
 
 from __future__ import annotations
@@ -128,11 +128,11 @@ async def researcher(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, An
     started = time.perf_counter()
     deps = runtime.context
     cfg = state["run_config"]
-    plan = state["plan"]
+    outline = state["outline"]
 
     results = await _search_all(
         deps.search,
-        plan.search_queries,
+        outline.search_queries,
         max_results=cfg.results_per_query,
         concurrency=deps.settings.search_concurrency,
     )
@@ -150,15 +150,17 @@ async def researcher(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, An
     ]
 
     if not sources:
-        log.warning("researcher: no usable sources for %d queries", len(plan.search_queries))
+        log.warning("researcher: no usable sources for %d queries", len(outline.search_queries))
         return {
-            "research_notes": ResearchNotes(sources=[], findings=[], gaps=list(plan.key_questions))
+            "research_notes": ResearchNotes(
+                sources=[], findings=[], gaps=list(outline.key_questions)
+            )
         }
 
     prompt = load_prompt("researcher").render(
         topic=state["topic"],
-        angle=plan.angle,
-        key_questions=bullet_list(plan.key_questions),
+        angle=outline.angle,
+        key_questions=bullet_list(outline.key_questions),
         sources=sources_block(sources),
     )
     extracted = await deps.llm.generate(

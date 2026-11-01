@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from proofline import schemas
 from proofline.checkpointing import SERDE_ALLOWLIST, open_checkpointer
 from proofline.state import ScriptState
-from tests.fakes import make_critique, make_draft, make_notes, make_plan
+from tests.fakes import make_critique, make_draft, make_notes, make_outline
 
 
 def _models_in(tp: Any) -> set[type[BaseModel]]:
@@ -37,7 +37,7 @@ def test_every_state_model_is_allowlisted() -> None:
 
 
 class _S(TypedDict, total=False):
-    plan: schemas.Plan
+    outline: schemas.Outline
     research_notes: schemas.ResearchNotes
     draft: schemas.Draft
     critique: schemas.Critique
@@ -46,7 +46,7 @@ class _S(TypedDict, total=False):
 
 async def _write(state: _S) -> dict[str, Any]:
     return {
-        "plan": make_plan(),
+        "outline": make_outline(),
         "research_notes": make_notes(),
         "draft": make_draft(),
         "critique": make_critique(7),

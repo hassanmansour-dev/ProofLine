@@ -1,25 +1,18 @@
-"""writer — plan + notes (+ critique/feedback) → Draft. Week 1 S4 (first draft), Week 2 S2 (revisions).
+"""writer — outline + notes (+ critique/feedback) → Draft. Week 1 (first draft), Week 2 (revisions).
 
 Contract (docs/ARCHITECTURE.md §4):
-    reads:   topic, audience, video_format, run_config, plan, research_notes,
+    reads:   topic, audience, run_config, outline, research_notes,
              draft?, critique?, approved?, feedback?, revision_count?
     writes:  draft, revision_count, history
     LLM:     prompts/writer.md, role="writer", schema=Draft
 Steps:
-    1. is_revision = "draft" in state
-       revision_count = state.get("revision_count", 0) + 1 if is_revision else 0
-    2. rejected_by_human = state.get("approved") is False
-       ctx = render.revision_context(state.get("draft"), state.get("critique"),
-                                     state.get("feedback"), rejected_by_human)
-    3. brand_voice = settings.brand_voice_path.read_text()
-       target_seconds = plan.target_seconds; target_words = round(target_seconds / 60 * WORDS_PER_MINUTE)
-    4. Render + generate Draft.
-    5. Citations live only in the narration (Draft.cited_source_ids is parsed from it, ADR-0011).
-       Strip inline citations to ids not in research_notes; log WARNING for dropped ids.
-       (Draft is frozen → use draft.model_copy(update={...}).)
-    6. return {"draft": draft, "revision_count": revision_count,
-               "history": [RevisionRecord(kind="draft", revision=revision_count,
-                                          note="human feedback" if rejected_by_human else "")]}
+    1. is_revision = "draft" in state → revision_count + 1, else 0.
+       rejected_by_human = approved is False (None means not reviewed yet).
+    2. Render with revision_context(...) and generate a Draft.
+    3. Over run_config.max_words → one more call with too_long_context(...); if still
+       over, keep it and log WARNING (the Week 2 critic's length_fit scores it).
+    4. Citations live only in the text (Draft.cited_source_ids is parsed from it,
+       ADR-0011): normalize them and drop ids not in research_notes, logging WARNING.
 """
 
 from __future__ import annotations
@@ -33,9 +26,10 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from proofline.context import Deps
+from proofline.llm import RenderedPrompt
 from proofline.prompts.loader import load_prompt
-from proofline.render import notes_block, plan_block, revision_context
-from proofline.schemas import CITATION_RE, WORDS_PER_MINUTE, Draft, RevisionRecord
+from proofline.render import notes_block, outline_block, revision_context, too_long_context
+from proofline.schemas import CITATION_RE, Draft, RevisionRecord
 from proofline.state import ScriptState
 
 log = logging.getLogger("proofline.nodes.writer")
@@ -83,56 +77,59 @@ def _clean_citations(text: str, known: set[str], dropped: list[str]) -> str:
 def _without_unknown_citations(draft: Draft, known: set[str]) -> tuple[Draft, list[str]]:
     """Normalize inline citations and remove ids the researcher never assigned."""
     dropped: list[str] = []
-
-    def clean(text: str) -> str:
-        return _clean_citations(text, known, dropped)
-
-    sections = [
-        s.model_copy(update={"narration": clean(s.narration), "on_screen": clean(s.on_screen)})
-        for s in draft.sections
-    ]
-    update = {"hook": clean(draft.hook), "call_to_action": clean(draft.call_to_action)}
-    cleaned = draft.model_copy(update={**update, "sections": sections})
+    cleaned = draft.model_copy(
+        update={
+            field: _clean_citations(getattr(draft, field), known, dropped)
+            for field in ("hook", "body", "call_to_action")
+        }
+    )
     return (cleaned if cleaned != draft else draft), dropped
 
 
 async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
     started = time.perf_counter()
     deps = runtime.context
-    plan = state["plan"]
+    cfg = state["run_config"]
     notes = state["research_notes"]
 
     is_revision = "draft" in state
     revision_count = state.get("revision_count", 0) + 1 if is_revision else 0
     rejected_by_human = state.get("approved") is False
-    ctx = revision_context(
+    brand_voice = await asyncio.to_thread(deps.settings.brand_voice_path.read_text, "utf-8")
+    template = load_prompt("writer")
+
+    def prompt_with(context: str) -> RenderedPrompt:
+        return template.render(
+            brand=cfg.brand_name,
+            brand_voice=brand_voice,
+            topic=state["topic"],
+            audience=state["audience"],
+            max_words=cfg.max_words,
+            outline=outline_block(state["outline"]),
+            research_notes=notes_block(notes),
+            revision_context=context,
+        )
+
+    context = revision_context(
         state.get("draft"), state.get("critique"), state.get("feedback"), rejected_by_human
     )
-    brand_voice = await asyncio.to_thread(deps.settings.brand_voice_path.read_text, "utf-8")
-
-    prompt = load_prompt("writer").render(
-        brand_voice=brand_voice,
-        topic=state["topic"],
-        audience=state["audience"],
-        video_format=state["video_format"],
-        target_seconds=plan.target_seconds,
-        target_words=round(plan.target_seconds / 60 * WORDS_PER_MINUTE),
-        plan=plan_block(plan),
-        research_notes=notes_block(notes),
-        revision_context=ctx,
-    )
-    draft = await deps.llm.generate(prompt, Draft, role="writer", run_config=state["run_config"])
+    draft = await deps.llm.generate(prompt_with(context), Draft, role="writer", run_config=cfg)
+    if draft.word_count > cfg.max_words:
+        log.warning("writer: %d words > %d, asking for a cut", draft.word_count, cfg.max_words)
+        shorten = too_long_context(draft, cfg.max_words)
+        draft = await deps.llm.generate(prompt_with(shorten), Draft, role="writer", run_config=cfg)
+        if draft.word_count > cfg.max_words:
+            log.warning("writer: still %d words after one cut; keeping it", draft.word_count)
 
     draft, dropped = _without_unknown_citations(draft, notes.source_ids)
     if dropped:
         log.warning("writer: dropped unknown or malformed citations: %s", sorted(set(dropped)))
 
     log.info(
-        "writer: revision %d, %d words (~%ds of %ds), %d sources cited (%.1fs)",
+        "writer: revision %d, %d/%d words, %d sources cited (%.1fs)",
         revision_count,
         draft.word_count,
-        draft.estimated_seconds,
-        plan.target_seconds,
+        cfg.max_words,
         len(draft.cited_source_ids),
         time.perf_counter() - started,
     )

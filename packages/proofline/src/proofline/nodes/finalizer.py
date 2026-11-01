@@ -1,20 +1,12 @@
-"""finalizer — approved Draft → FinalScript + files. Week 1 S4. Deterministic, no LLM.
+"""finalizer — Draft → FinalScript + files. Deterministic, no LLM.
 
 Contract (docs/ARCHITECTURE.md §4):
-    reads:   draft, research_notes, critique, revision_count
+    reads:   draft, research_notes, critique?, revision_count
     writes:  final_script
-    thread:  runtime.execution_info.thread_id (verified on langgraph 1.2.16; the
-             (state, config: RunnableConfig, runtime) signature also works).
-Steps:
-    1. markdown = render.script_markdown(draft, research_notes)
-    2. final = FinalScript(thread_id=..., title=draft.title, markdown=markdown,
-                           word_count=draft.word_count, estimated_seconds=draft.estimated_seconds,
-                           revision_count=..., final_score=critique.overall,
-                           source_urls=[urls of cited sources], prompt_versions=prompt_versions())
-    3. Write settings.output_dir / thread_id / "script.md" and "script.json"
-       (final.model_dump_json(indent=2)). Overwrite = idempotent on retry.
-       File I/O: wrap in asyncio.to_thread (no blocking I/O in async nodes).
-    4. return {"final_script": final}
+    thread:  runtime.execution_info.thread_id (required: outputs are keyed by it)
+Renders the Markdown script (title, hook, body, call to action, cited sources) and
+writes outputs/<thread_id>/script.md and script.json, overwriting on every run so a
+retried or resumed finalizer is idempotent.
 """
 
 from __future__ import annotations
@@ -57,7 +49,7 @@ async def finalizer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any
         word_count=draft.word_count,
         estimated_seconds=draft.estimated_seconds,
         revision_count=state.get("revision_count", 0),
-        final_score=state["critique"].overall,
+        final_score=critique.overall if (critique := state.get("critique")) else None,
         source_urls=[s.url for s in notes.sources if s.id in cited],
         prompt_versions=prompt_versions(),
     )
@@ -66,6 +58,6 @@ async def finalizer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any
     await asyncio.to_thread(_write_outputs, out_dir, final)
 
     log.info(
-        "finalizer: wrote %s (%d words, score %.1f)", out_dir, final.word_count, final.final_score
+        "finalizer: wrote %s (%d words, score %s)", out_dir, final.word_count, final.final_score
     )
     return {"final_script": final}

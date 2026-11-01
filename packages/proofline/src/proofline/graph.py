@@ -23,7 +23,6 @@ from langgraph.graph import StateGraph
 
 from proofline.config import Settings
 from proofline.prompts import prompt_versions
-from proofline.schemas import VideoFormat
 from proofline.state import InputState, ScriptState
 
 
@@ -38,25 +37,14 @@ def new_thread_id() -> str:
     return str(uuid.uuid4())
 
 
-def initial_state(
-    topic: str, audience: str, video_format: VideoFormat, settings: Settings
-) -> InputState:
-    return InputState(
-        topic=topic,
-        audience=audience,
-        video_format=video_format,
-        run_config=settings.run_config(),
-    )
-
-
-def invoke_config(thread_id: str, settings: Settings, *, video_format: str) -> RunnableConfig:
+def invoke_config(thread_id: str, settings: Settings) -> RunnableConfig:
     """Config for every invoke/resume: identity, recursion backstop, tracing metadata."""
     cfg = settings.run_config()
     return RunnableConfig(
         configurable={"thread_id": thread_id},
         recursion_limit=settings.recursion_limit,
         run_name="script-pipeline",
-        tags=[video_format, settings.env],
+        tags=[settings.env],
         metadata={
             "thread_id": thread_id,
             "prompt_versions": prompt_versions(),

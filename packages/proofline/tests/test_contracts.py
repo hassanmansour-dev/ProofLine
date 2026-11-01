@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+from pathlib import Path
 
 from proofline import nodes
 from proofline.state import FIELD_OWNERS, InputState, ScriptState
@@ -24,3 +25,14 @@ def test_only_history_is_shared() -> None:
         for f in fields - {"history"}:
             assert f not in seen, f"{f} owned by both {seen[f]} and {node}"
             seen[f] = node
+
+
+def test_initial_state_sets_a_default_for_every_later_week_field(tmp_path: Path) -> None:
+    from proofline.state import initial_state
+    from tests.fakes import make_settings
+
+    state = initial_state("topic", "audience", make_settings(tmp_path).run_config())
+    assert state["revision_count"] == 0
+    assert state["history"] == []
+    for field in ("critique", "score", "approved", "feedback"):
+        assert state[field] is None  # type: ignore[literal-required]

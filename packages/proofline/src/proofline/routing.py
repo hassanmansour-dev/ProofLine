@@ -13,7 +13,10 @@ AfterHuman = Literal["writer", "finalizer"]
 def route_after_critic(state: ScriptState) -> AfterCritic:
     """Revise while below threshold and budget remains; otherwise hand to the human."""
     cfg = state["run_config"]
-    if state["critique"].overall >= cfg.score_threshold:
+    score = state.get("score")
+    if score is None:
+        raise ValueError("route_after_critic: no score in state; the critic sets it")
+    if score >= cfg.score_threshold:
         return "human_review"
     if state.get("revision_count", 0) >= cfg.max_revisions:
         return "human_review"

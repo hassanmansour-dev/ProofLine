@@ -20,7 +20,7 @@ from tests.fakes import (
     FakeSearch,
     make_critique,
     make_draft,
-    make_plan,
+    make_outline,
     make_result,
     make_settings,
 )
@@ -33,7 +33,7 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     findings = ExtractedFindings(
         findings=[Finding(claim="Fact.", source_ids=["S1"], confidence="high")]
     )
-    llm = FakeLLM().queue(make_plan(), findings, make_draft(), make_critique(9))
+    llm = FakeLLM().queue(make_outline(), findings, make_draft(), make_critique(9))
     deps = Deps(
         settings=make_settings(tmp_path), llm=llm, search=FakeSearch(default=[make_result(1)])
     )
@@ -54,9 +54,7 @@ async def test_health(client: AsyncClient) -> None:
 
 @pytest.mark.xfail(strict=True, reason="Week 3 S3 target")
 async def test_run_review_complete_flow(client: AsyncClient) -> None:
-    r = await client.post(
-        "/runs", json={"topic": "LangGraph checkpointers", "video_format": "short"}
-    )
+    r = await client.post("/runs", json={"topic": "LangGraph checkpointers"})
     assert r.status_code == 200
     run = r.json()
     assert run["status"] == "awaiting_review"

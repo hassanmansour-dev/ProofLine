@@ -33,20 +33,21 @@ async def test_pipeline_produces_sourced_script(topic: str) -> None:
 
     from proofline.config import get_settings
     from proofline.context import build_deps
-    from proofline.graph import build_graph, initial_state, invoke_config, new_thread_id
+    from proofline.graph import build_graph, invoke_config, new_thread_id
+    from proofline.state import initial_state
 
     settings = get_settings()
     deps = build_deps(settings)
     app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
     tid = new_thread_id()
     out = await app.ainvoke(
-        initial_state(topic, "developers moving into AI engineering", "short", settings),
-        invoke_config(tid, settings, video_format="short"),
+        initial_state(topic, "developers new to AI", settings.run_config()),
+        invoke_config(tid, settings),
         context=deps,
     )
     final = out["final_script"]
     assert final.source_urls, "script cites no sources"
-    assert 30 <= final.estimated_seconds <= 120
+    assert final.word_count <= settings.max_words
     print(
         f"\n{topic}: score={final.final_score} revisions={final.revision_count} → outputs/{tid}/script.md"
     )

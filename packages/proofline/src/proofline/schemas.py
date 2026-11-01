@@ -14,11 +14,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VideoFormat = Literal["short", "long"]
 ModelRole = Literal["planner", "researcher", "writer", "critic"]
 
+# One output format (ADR-0012): a short script for a LinkedIn post or a 1-minute video.
+MAX_WORDS = 200
 WORDS_PER_MINUTE = 150
-TARGET_SECONDS: dict[VideoFormat, int] = {"short": 60, "long": 600}
 
 SOURCE_ID_RE = re.compile(r"^S\d+$")
 # An inline citation: [S3] or, if the model groups them, [S2, S5].
@@ -44,6 +44,8 @@ class RunConfig(_Model):
     max_sources: int = Field(default=8, ge=1, le=30)
     results_per_query: int = Field(default=5, ge=1, le=20)
     max_source_chars: int = Field(default=4000, ge=500)
+    max_words: int = Field(default=MAX_WORDS, ge=50, le=1000)
+    brand_name: str = Field(default="Build Clearly", min_length=1, max_length=80)
     models: dict[ModelRole, ModelSpec]
 
 
@@ -51,19 +53,19 @@ class RunConfig(_Model):
 
 
 class OutlineSection(_Model):
-    title: str = Field(description="Section title, 2-6 words.")
+    title: str = Field(description="Beat title, 2-6 words.")
     goal: str = Field(
-        description="What the viewer should understand or feel after this section, one sentence."
+        description="What the reader or viewer should understand after this beat, one sentence."
     )
 
 
-class Plan(_Model):
+class Outline(_Model):
     angle: str = Field(
         description="The specific take on the topic for this audience, one sentence. Not a restatement of the topic."
     )
     key_questions: list[str] = Field(
-        min_length=3,
-        max_length=5,
+        min_length=2,
+        max_length=4,
         description="Questions the script must answer, answerable from sources.",
     )
     search_queries: list[str] = Field(
@@ -71,10 +73,8 @@ class Plan(_Model):
         max_length=5,
         description="Web search queries (3-8 words each) that would find primary sources: official docs, changelogs, papers, maintainer posts.",
     )
-    outline: list[OutlineSection] = Field(min_length=3, max_length=6)
-    target_seconds: int = Field(
-        gt=0,
-        description="Copy the target seconds given in <format> exactly. (Set in code after generation.)",
+    sections: list[OutlineSection] = Field(
+        min_length=2, max_length=4, description="The beats of the script body, in order."
     )
 
 
@@ -123,28 +123,17 @@ class ResearchNotes(_Model):
 # ── Writer ────────────────────────────────────────────────────────────────────
 
 
-class ScriptSection(_Model):
-    heading: str = Field(description="Section heading matching the plan outline.")
-    narration: str = Field(
-        description="Exactly what is said aloud. Written for the ear. Cite sources inline as [S1]; several as [S1][S4]."
-    )
-    on_screen: str = Field(
-        default="", description="Optional visual notes: code, diagram, b-roll. Not spoken."
-    )
-
-
 class Draft(_Model):
-    title: str = Field(description="Video title, under 70 characters, specific, no clickbait.")
-    hook: str = Field(
-        description="First 1-2 spoken sentences. Must create a reason to keep watching."
+    title: str = Field(description="Title, under 70 characters, specific, no clickbait.")
+    hook: str = Field(description="First 1-2 sentences. Must create a reason to keep reading.")
+    body: str = Field(
+        description="The main content, following the outline's beats. Short paragraphs separated by blank lines. Written for the ear. Cite sources inline as [S1]; several as [S1][S4]."
     )
-    sections: list[ScriptSection] = Field(min_length=1)
-    call_to_action: str = Field(description="Closing line: one specific next step for the viewer.")
+    call_to_action: str = Field(description="Closing line: one specific next step for the reader.")
 
     @property
     def spoken_text(self) -> str:
-        parts = [self.hook, *(s.narration for s in self.sections), self.call_to_action]
-        return "\n\n".join(parts)
+        return "\n\n".join([self.hook, self.body, self.call_to_action])
 
     @property
     def cited_source_ids(self) -> list[str]:
@@ -272,7 +261,9 @@ class FinalScript(_Model):
     word_count: int
     estimated_seconds: int
     revision_count: int
-    final_score: float
+    final_score: float | None = Field(
+        default=None, description="Critic's overall score; None when no critic ran (Week 1)."
+    )
     source_urls: list[str]
     prompt_versions: dict[str, str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -283,8 +274,7 @@ class FinalScript(_Model):
 
 class StartRunRequest(_Model):
     topic: str = Field(min_length=3, max_length=300)
-    audience: str = Field(default="developers moving into AI engineering", max_length=300)
-    video_format: VideoFormat = "short"
+    audience: str = Field(default="developers new to AI", min_length=3, max_length=300)
 
 
 class RunView(_Model):
@@ -302,13 +292,12 @@ class RunView(_Model):
 STATE_MODELS: tuple[type[BaseModel], ...] = (
     RunConfig,
     ModelSpec,
-    Plan,
+    Outline,
     OutlineSection,
     ResearchNotes,
     Source,
     Finding,
     Draft,
-    ScriptSection,
     Critique,
     CriterionScore,
     RevisionRecord,

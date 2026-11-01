@@ -20,11 +20,10 @@ from proofline.schemas import (
     Draft,
     Finding,
     ModelRole,
+    Outline,
     OutlineSection,
-    Plan,
     ResearchNotes,
     RunConfig,
-    ScriptSection,
     Source,
 )
 from proofline.search import SearchResult, SearchUnavailableError
@@ -140,12 +139,15 @@ async def run_node(
 
 
 def base_state(settings: Settings, **kw: Any) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "topic": "What LangGraph checkpointers actually store",
-        "audience": "developers moving into AI engineering",
-        "video_format": "short",
-        "run_config": settings.run_config(),
-    }
+    from proofline.state import initial_state
+
+    state: dict[str, Any] = dict(
+        initial_state(
+            "What LangGraph checkpointers actually store",
+            "developers new to AI",
+            settings.run_config(),
+        )
+    )
     state.update(kw)
     return state
 
@@ -153,24 +155,23 @@ def base_state(settings: Settings, **kw: Any) -> dict[str, Any]:
 # ── factories ─────────────────────────────────────────────────────────────────
 
 
-def make_plan(**kw: Any) -> Plan:
+def make_outline(**kw: Any) -> Outline:
     data: dict[str, Any] = {
         "angle": "Checkpointers store every step, so a crash costs one node, not the run.",
-        "key_questions": ["What is stored?", "When is it written?", "How do you resume?"],
+        "key_questions": ["What is stored?", "How do you resume?"],
         "search_queries": [
             "langgraph checkpointer",
             "langgraph interrupt resume",
             "langgraph sqlite saver",
         ],
-        "outline": [
+        "sections": [
             OutlineSection(title="The crash", goal="Feel the problem"),
             OutlineSection(title="What gets saved", goal="Know what a checkpoint holds"),
             OutlineSection(title="Resume", goal="Know the one call that resumes"),
         ],
-        "target_seconds": 60,
     }
     data.update(kw)
-    return Plan(**data)
+    return Outline(**data)
 
 
 def make_result(n: int, *, url: str | None = None, score: float | None = None) -> SearchResult:
@@ -195,29 +196,26 @@ def make_notes(n_sources: int = 3) -> ResearchNotes:
 
 
 def make_draft(
-    title: str = "Your agent crashed. Lose one step, not the run.", cited: list[str] | None = None
+    title: str = "Your agent crashed. Lose one step, not the run.",
+    cited: list[str] | None = None,
+    body: str | None = None,
 ) -> Draft:
-    """Default narration cites S1..S3. `cited` replaces it with one section per cited id."""
-    if cited is None:
-        sections = [
-            ScriptSection(heading="The crash", narration="Long runs fail midway [S1]."),
-            ScriptSection(
-                heading="What gets saved", narration="State is saved after each step [S2]."
-            ),
-            ScriptSection(
-                heading="Resume", narration="Call it again with the same thread id [S3]."
-            ),
-        ]
-    else:
-        sections = [
-            ScriptSection(heading=f"Point {i}", narration=f"Point {i} holds [{sid}].")
-            for i, sid in enumerate(cited, 1)
-        ] or [ScriptSection(heading="Point", narration="An uncited point.")]
+    """Default body cites S1..S3. `cited` replaces it with one sentence per cited id."""
+    if body is None:
+        if cited is None:
+            body = (
+                "Long runs fail midway [S1].\n\n"
+                "State is saved after each step [S2].\n\n"
+                "Call it again with the same thread id [S3]."
+            )
+        else:
+            body = " ".join(f"Point {i} holds [{sid}]." for i, sid in enumerate(cited, 1))
+            body = body or "An uncited point."
     return Draft(
         title=title,
         hook="Your agent crashed at step nine. With a checkpointer, you lose one step"
         + (" [S1]." if cited is None else "."),
-        sections=sections,
+        body=body,
         call_to_action="Add a SQLite checkpointer to one graph today.",
     )
 

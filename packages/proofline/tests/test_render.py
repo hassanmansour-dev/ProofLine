@@ -30,6 +30,15 @@ def test_revision_context_ignores_stale_feedback_when_not_rejected() -> None:
     assert "<human_feedback>" not in ctx
 
 
+def test_markdown_has_title_hook_body_cta_in_order() -> None:
+    draft = make_draft()
+    md = script_markdown(draft, make_notes(3))
+    positions = [md.index(part) for part in (f"# {draft.title}", draft.hook, "Long runs fail")]
+    positions.append(md.index(f"**{draft.call_to_action}**"))
+    assert positions == sorted(positions)
+    assert f"{draft.word_count} words" in md
+
+
 def test_markdown_lists_only_cited_sources() -> None:
     md = script_markdown(make_draft(cited=["S2"]), make_notes(3))
     assert "doc2" in md

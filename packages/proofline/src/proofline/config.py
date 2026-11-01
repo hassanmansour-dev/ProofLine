@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from proofline.schemas import ModelSpec, RunConfig
+from proofline.schemas import MAX_WORDS, ModelSpec, RunConfig
 
 
 class Settings(BaseSettings):
@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     )
 
     env: str = "dev"
+    # Who the scripts are written for; reaches every prompt via RunConfig (ADR-0012).
+    brand_name: str = "Build Clearly"
+    max_words: int = Field(default=MAX_WORDS, ge=50, le=1000)
     checkpointer_url: str = "sqlite:///.data/checkpoints.db"
     output_dir: Path = Path("outputs")
     brand_voice_path: Path = Path("docs/BRAND_VOICE.md")
@@ -42,6 +45,8 @@ class Settings(BaseSettings):
             max_sources=self.max_sources,
             results_per_query=self.results_per_query,
             max_source_chars=self.max_source_chars,
+            max_words=self.max_words,
+            brand_name=self.brand_name,
             models={
                 "planner": ModelSpec(model=self.planner_model, temperature=0.3, max_tokens=2048),
                 "researcher": ModelSpec(

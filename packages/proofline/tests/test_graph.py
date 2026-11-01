@@ -11,14 +11,15 @@ from langgraph.types import Command
 
 from proofline.checkpointing import open_checkpointer
 from proofline.context import Deps
-from proofline.graph import build_graph, initial_state, invoke_config
+from proofline.graph import build_graph, invoke_config
 from proofline.schemas import ExtractedFindings, Finding, HumanDecision
+from proofline.state import initial_state
 from tests.fakes import (
     FakeLLM,
     FakeSearch,
     make_critique,
     make_draft,
-    make_plan,
+    make_outline,
     make_result,
     make_settings,
 )
@@ -37,7 +38,7 @@ def _llm(critic_scores: list[int], drafts: int | None = None) -> FakeLLM:
             Finding(claim=f"Fact {i}.", source_ids=[f"S{i}"], confidence="high") for i in (1, 2, 3)
         ]
     )
-    llm = FakeLLM().queue(make_plan(), findings)
+    llm = FakeLLM().queue(make_outline(), findings)
     for _ in range(drafts or len(critic_scores)):
         llm.queue(make_draft())
     for s in critic_scores:
@@ -62,7 +63,7 @@ async def _stream(app: Any, inputs: Any, cfg: Any, deps: Deps) -> list[str]:
 
 def _inputs(deps: Deps) -> Any:
     return initial_state(
-        "What LangGraph checkpointers actually store", "devs", "short", deps.settings
+        "What LangGraph checkpointers actually store", "devs", deps.settings.run_config()
     )
 
 
@@ -73,7 +74,7 @@ def _inputs(deps: Deps) -> Any:
 async def test_linear_run_reaches_finalizer(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([9]))
     app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
-    cfg = invoke_config("w1", deps.settings, video_format="short")
+    cfg = invoke_config("w1", deps.settings)
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes == ["planner", "researcher", "writer", "critic", "finalizer"]
     state = (await app.aget_state(cfg)).values
@@ -94,7 +95,7 @@ async def test_mermaid_renders_every_node() -> None:
 async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([6, 7, 8]))
     app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
-    cfg = invoke_config("w2a", deps.settings, video_format="short")
+    cfg = invoke_config("w2a", deps.settings)
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes.count("writer") == 3
     assert nodes[-1] == "finalizer"
@@ -107,7 +108,7 @@ async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
 async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([5, 5, 5, 5]))  # max_revisions=3 → 4 drafts, then stop
     app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
-    cfg = invoke_config("w2b", deps.settings, video_format="short")
+    cfg = invoke_config("w2b", deps.settings)
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes.count("writer") == 4
     assert nodes[-1] == "finalizer"
@@ -121,7 +122,7 @@ async def test_reject_then_approve(tmp_path: Path) -> None:
     llm = _llm([9, 9])
     deps = _deps(tmp_path, llm)
     app = build_graph().compile(checkpointer=InMemorySaver())
-    cfg = invoke_config("w3a", deps.settings, video_format="short")
+    cfg = invoke_config("w3a", deps.settings)
 
     first = await app.ainvoke(_inputs(deps), cfg, context=deps)
     [intr] = first["__interrupt__"]
@@ -143,7 +144,7 @@ async def test_reject_then_approve(tmp_path: Path) -> None:
 async def test_resume_after_process_restart_sqlite(tmp_path: Path) -> None:
     url = f"sqlite:///{tmp_path / 'cp.db'}"
     deps = _deps(tmp_path, _llm([9]))
-    cfg = invoke_config("w3b", deps.settings, video_format="short")
+    cfg = invoke_config("w3b", deps.settings)
 
     async with open_checkpointer(url) as saver:
         await build_graph().compile(checkpointer=saver).ainvoke(_inputs(deps), cfg, context=deps)

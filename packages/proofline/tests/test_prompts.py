@@ -6,28 +6,26 @@ from proofline.prompts import PromptError, load_prompt, prompt_versions
 from proofline.prompts.loader import parse_prompt
 
 EXPECTED_PLACEHOLDERS = {
-    "planner": {"topic", "audience", "video_format", "target_seconds"},
+    "planner": {"brand", "topic", "audience", "max_words"},
     "researcher": {"topic", "angle", "key_questions", "sources"},
     "writer": {
+        "brand",
         "brand_voice",
         "topic",
         "audience",
-        "video_format",
-        "target_seconds",
-        "target_words",
-        "plan",
+        "max_words",
+        "outline",
         "research_notes",
         "revision_context",
     },
     "critic": {
+        "brand",
         "rubric",
         "brand_voice",
         "audience",
-        "video_format",
-        "target_seconds",
-        "estimated_seconds",
-        "length_deviation",
-        "plan",
+        "word_count",
+        "max_words",
+        "outline",
         "research_notes",
         "draft",
     },
@@ -50,14 +48,14 @@ def test_prompts_that_see_web_content_carry_untrusted_rule(name: str) -> None:
 def test_render_rejects_missing_and_unused() -> None:
     tpl = load_prompt("planner")
     with pytest.raises(PromptError, match="missing"):
-        tpl.render(topic="t", audience="a", video_format="short")
+        tpl.render(brand="b", topic="t", audience="a")
     with pytest.raises(PromptError, match="unused"):
-        tpl.render(topic="t", audience="a", video_format="short", target_seconds=60, extra=1)
+        tpl.render(brand="b", topic="t", audience="a", max_words=200, extra=1)
 
 
 def test_render_does_not_reinterpret_braces_in_values() -> None:
     tpl = load_prompt("planner")
-    out = tpl.render(topic="{not_a_field}", audience="a", video_format="short", target_seconds=60)
+    out = tpl.render(brand="b", topic="{not_a_field}", audience="a", max_words=200)
     assert "{not_a_field}" in out.user
 
 

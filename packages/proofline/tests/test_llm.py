@@ -9,8 +9,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from proofline.config import Settings
 from proofline.llm import AnthropicLLM, RenderedPrompt, StructuredOutputError
-from proofline.schemas import Plan
-from tests.fakes import make_plan
+from proofline.schemas import Outline
+from tests.fakes import make_outline
 
 pytestmark = pytest.mark.anyio
 
@@ -49,10 +49,10 @@ def _bad() -> dict[str, Any]:
 
 
 async def test_uses_json_schema_and_repairs_once(settings: Settings) -> None:
-    plan = make_plan()
-    llm, chat = _llm(settings, [_bad(), {"raw": AIMessage(content="ok"), "parsed": plan}])
-    out = await llm.generate(PROMPT, Plan, role="planner", run_config=settings.run_config())
-    assert out is plan
+    outline = make_outline()
+    llm, chat = _llm(settings, [_bad(), {"raw": AIMessage(content="ok"), "parsed": outline}])
+    out = await llm.generate(PROMPT, Outline, role="planner", run_config=settings.run_config())
+    assert out is outline
     assert chat.kwargs == {"include_raw": True, "method": "json_schema"}
     first, second = chat.runnable.seen
     assert len(second) == len(first) + 2
@@ -63,4 +63,4 @@ async def test_uses_json_schema_and_repairs_once(settings: Settings) -> None:
 async def test_raises_after_two_invalid_outputs(settings: Settings) -> None:
     llm, _ = _llm(settings, [_bad(), _bad()])
     with pytest.raises(StructuredOutputError, match=r"planner@9\.9\.9"):
-        await llm.generate(PROMPT, Plan, role="planner", run_config=settings.run_config())
+        await llm.generate(PROMPT, Outline, role="planner", run_config=settings.run_config())

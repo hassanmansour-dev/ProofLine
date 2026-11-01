@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from xml.sax.saxutils import escape, quoteattr
 
-from proofline.schemas import Critique, Draft, Plan, ResearchNotes, Source
+from proofline.schemas import Critique, Draft, Outline, ResearchNotes, Source
 
 
-def plan_block(plan: Plan) -> str:
-    lines = [f"Angle: {plan.angle}", f"Target: {plan.target_seconds}s", "Key questions:"]
-    lines += [f"- {q}" for q in plan.key_questions]
-    lines.append("Outline:")
-    lines += [f"{i}. {s.title} — {s.goal}" for i, s in enumerate(plan.outline, 1)]
+def outline_block(outline: Outline) -> str:
+    lines = [f"Angle: {outline.angle}", "Key questions:"]
+    lines += [f"- {q}" for q in outline.key_questions]
+    lines.append("Beats:")
+    lines += [f"{i}. {s.title} — {s.goal}" for i, s in enumerate(outline.sections, 1)]
     return "\n".join(lines)
 
 
@@ -48,13 +48,24 @@ def notes_block(notes: ResearchNotes) -> str:
 
 
 def draft_block(draft: Draft) -> str:
-    parts = [f"TITLE: {draft.title}", f"HOOK: {draft.hook}"]
-    for s in draft.sections:
-        parts.append(f"## {s.heading}\n{s.narration}")
-        if s.on_screen:
-            parts.append(f"[on screen: {s.on_screen}]")
-    parts.append(f"CALL TO ACTION: {draft.call_to_action}")
-    return "\n\n".join(parts)
+    return "\n\n".join(
+        [
+            f"TITLE: {draft.title}",
+            f"HOOK: {draft.hook}",
+            f"BODY:\n{draft.body}",
+            f"CALL TO ACTION: {draft.call_to_action}",
+        ]
+    )
+
+
+def too_long_context(draft: Draft, max_words: int) -> str:
+    """The writer's shorten-once block when a draft is over the word limit."""
+    return (
+        f"Your previous draft is {draft.word_count} words; the limit is {max_words}. "
+        "Cut it to fit: keep the hook, the strongest points and every citation that "
+        "still supports a kept claim.\n"
+        f"<previous_draft>\n{draft_block(draft)}\n</previous_draft>"
+    )
 
 
 def critique_block(critique: Critique) -> str:
@@ -94,14 +105,12 @@ def revision_context(
 
 
 def script_markdown(draft: Draft, notes: ResearchNotes) -> str:
-    cited = [s for s in notes.sources if s.id in set(draft.cited_source_ids)]
-    out = [f"# {draft.title}", "", f"*~{draft.estimated_seconds}s · {draft.word_count} words*", ""]
-    out += ["## Hook", draft.hook, ""]
-    for s in draft.sections:
-        out += [f"## {s.heading}", s.narration, ""]
-        if s.on_screen:
-            out += [f"> On screen: {s.on_screen}", ""]
-    out += ["## Call to action", draft.call_to_action, ""]
-    if cited:
-        out += ["## Sources"] + [f"- [{s.id}] [{s.title}]({s.url})" for s in cited]
+    """The finalizer's output: title, hook, body, call to action, then cited sources."""
+    cited = set(draft.cited_source_ids)
+    sources = [s for s in notes.sources if s.id in cited]
+    out = [f"# {draft.title}", "", draft.hook, "", draft.body.strip(), ""]
+    out += [f"**{draft.call_to_action}**", ""]
+    out += ["---", f"*{draft.word_count} words · ~{draft.estimated_seconds}s spoken*"]
+    if sources:
+        out += ["", "## Sources"] + [f"- [{s.id}] [{s.title}]({s.url})" for s in sources]
     return "\n".join(out).rstrip() + "\n"
