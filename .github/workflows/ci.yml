@@ -1,4 +1,5 @@
-# Fast checks on every push and PR: lint, format, types, unit tests.
+# Fast checks on every push and PR, across both workspace packages
+# (packages/proofline, packages/measured_evals): lint, format, types, unit tests.
 # No secrets and no network calls beyond installing deps — live tests are excluded.
 # Evals (DeepEval, promptfoo) get their own workflow in Week 10.
 name: CI
@@ -40,5 +41,10 @@ jobs:
       - name: Mypy (strict, every package's src/)
         run: uv run mypy
 
-      - name: Fast tests (no network, no keys)
+      - name: Fast tests, both packages (no network, no keys)
         run: uv run pytest -m "not live"
+
+      - name: measured_evals stands alone (installed without proofline)
+        run: >-
+          uv run --isolated --no-project --with ./packages/measured_evals --with pytest
+          python -m pytest -q -p no:cacheprovider packages/measured_evals/tests
