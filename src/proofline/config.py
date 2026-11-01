@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from proofline.schemas import ModelSpec, RunConfig
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     max_sources: int = 8
     results_per_query: int = 5
     max_source_chars: int = 4000
-    search_concurrency: int = 4
+    search_concurrency: int = Field(default=4, ge=1)
     recursion_limit: int = 40
 
     planner_model: str = "claude-haiku-5-5"

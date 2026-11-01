@@ -33,12 +33,17 @@ def sources_block(sources: list[Source]) -> str:
 
 def notes_block(notes: ResearchNotes) -> str:
     lines = ["Sources:"]
-    lines += [f"[{s.id}] {s.title} — {s.url}" for s in notes.sources]
+    # Titles, URLs, findings and gaps all derive from web pages: escape them so they
+    # can't close the <research_notes> tag they're rendered into (ADR-0007).
+    lines += [f"[{s.id}] {escape(s.title)} — {escape(s.url)}" for s in notes.sources]
     lines.append("\nFindings:")
-    lines += [f"- ({f.confidence}) {f.claim} [{', '.join(f.source_ids)}]" for f in notes.findings]
+    lines += [
+        f"- ({f.confidence}) {escape(f.claim)} " + "".join(f"[{i}]" for i in f.source_ids)
+        for f in notes.findings
+    ]
     if notes.gaps:
         lines.append("\nGaps (not answered by sources):")
-        lines += [f"- {g}" for g in notes.gaps]
+        lines += [f"- {escape(g)}" for g in notes.gaps]
     return "\n".join(lines)
 
 

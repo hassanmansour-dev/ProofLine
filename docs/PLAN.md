@@ -23,7 +23,7 @@ traced in LangSmith, explained in a README.
 
 ---
 
-## Week 0 — Setup (Oct 29–30, ~45 min) ◀ CURRENT
+## Week 0 — Setup (Oct 29–30, ~45 min)
 
 - [x] Create repo `proofline` on your personal GitHub (private until launch), unzip this kit into it, first commit
 - [ ] `uv sync`, copy `.env.example` → `.env`, add `ANTHROPIC_API_KEY`, `TAVILY_API_KEY`
@@ -36,20 +36,21 @@ session start shows "Week 0".
 
 ---
 
-## Week 1 — Linear end to end (Oct 26 → Nov 1 · GROW-5)
+## Week 1 — Linear end to end (Oct 26 → Nov 1 · GROW-5) ◀ CURRENT
 
 Goal: one straight pass works on a real topic. No loops yet.
 
-- [ ] **S1 Contracts.** Read `state.py`, `schemas.py`, `routing.py`, `render.py`, `llm.py`,
+- [x] **S1 Contracts.** Read `state.py`, `schemas.py`, `routing.py`, `render.py`, `llm.py`,
   `prompts/loader.py` (already implemented and tested). Review them with the
   `langgraph-architect` agent; change anything you disagree with *now*, via an ADR.
   Then lock them. Read the four prompts with the `prompt-engineer` agent.
-- [ ] **S2 Planner.** Implement `nodes/planner.py` + prompt review with `prompt-engineer`.
+  *(Done: ADR-0011 accepted; its open items are deferred to Week 3.)*
+- [x] **S2 Planner.** Implement `nodes/planner.py` + prompt review with `prompt-engineer`.
   Test with FakeLLM: correct role, correct schema, returns only `plan`.
-- [ ] **S3 Researcher.** Review the `search.py` Tavily adapter, then implement `nodes/researcher.py`:
+- [x] **S3 Researcher.** Review the `search.py` Tavily adapter, then implement `nodes/researcher.py`:
   concurrent queries, URL dedupe, top-N, truncation, `S1..Sn` ids in code, drop unknown
   ids from findings. Tests with FakeSearch for each of those behaviors.
-- [ ] **S4 Writer + critic (score only) + finalizer.** Implement the three nodes. Critic
+- [x] **S4 Writer + critic (score only) + finalizer.** Implement the three nodes. Critic
   `overall` + accuracy gate tests. Finalizer writes `outputs/<thread_id>/script.md|json`.
 - [ ] **S5 Wire + run.** `graph.py` linear wiring (critic → finalizer for now),
   `cli.py run --no-review`, `--mermaid`. First live run on a topic you know well.

@@ -29,11 +29,30 @@ def test_critique_requires_all_criteria() -> None:
         Critique(scores=full.scores[:-1], must_fix=[])
 
 
+def test_critique_rejects_a_repeated_criterion() -> None:
+    full = make_critique(8)
+    scores = [*full.scores[:-1], full.scores[0]]  # length_fit missing, hook twice
+    with pytest.raises(ValidationError, match=r"missing=\['length_fit'\] repeated=\['hook'\]"):
+        Critique(scores=scores, must_fix=[])
+
+
+def test_cited_source_ids_are_parsed_from_the_narration() -> None:
+    d = make_draft().model_copy(
+        update={"call_to_action": "Read both [S3, S5] and S9 without brackets."}
+    )
+    assert d.cited_source_ids == ["S1", "S2", "S3", "S5"]
+
+
+def test_word_count_ignores_grouped_citations() -> None:
+    d = make_draft(cited=[]).model_copy(update={"call_to_action": "Do it now [S1, S2]."})
+    assert d.word_count == len(d.spoken_text.replace(" [S1, S2]", "").split())
+
+
 def test_word_count_ignores_citations() -> None:
     d = make_draft()
     assert "[S1]" in d.spoken_text
     assert d.word_count == len(
-        d.spoken_text.replace("[S1]", "").replace("[S2]", "").replace("[S3]", "").split()
+        d.spoken_text.replace(" [S1]", "").replace(" [S2]", "").replace(" [S3]", "").split()
     )
     assert d.estimated_seconds == round(d.word_count / 150 * 60)
 

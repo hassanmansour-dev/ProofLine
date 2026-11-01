@@ -55,7 +55,7 @@ Pydantic for every value that came from an LLM (ADR-0002).
 | `run_config` | `RunConfig` | input (from Settings) | snapshot of thresholds/models so a resumed run behaves like it started (ADR-0004) |
 | `plan` | `Plan` | planner | angle, key questions, search queries, outline, target duration |
 | `research_notes` | `ResearchNotes` | researcher | sources with code-assigned ids `S1..Sn`, findings citing those ids, gaps |
-| `draft` | `Draft` | writer | structured script; word count + duration derived |
+| `draft` | `Draft` | writer | structured script; cited ids, word count + duration derived from the narration (ADR-0011) |
 | `revision_count` | `int` | writer | 0 on first draft |
 | `critique` | `Critique` | critic | per-criterion scores + evidence; `overall` computed in Python |
 | `approved` | `bool` | human_review | |
@@ -71,8 +71,8 @@ contract tests in `tests/test_contracts.py`.
 Every node: `async def node(state: ScriptState, runtime: Runtime[Deps]) -> dict`.
 
 **planner** — reads `topic, audience, video_format`. One structured LLM call →
-`Plan` (3–5 search queries, 3–6 outline sections, target duration from
-format). No network besides the LLM.
+`Plan` (3–5 search queries, 3–6 outline sections). `target_seconds` is set in
+code from the format, overriding the model (ADR-0011). No network besides the LLM.
 
 **researcher** — reads `plan`. Runs `plan.search_queries` concurrently against
 `deps.search` (semaphore = 4), dedupes by normalized URL, keeps the top
@@ -80,7 +80,9 @@ format). No network besides the LLM.
 in code.** One structured LLM call extracts `findings` that must cite those ids;
 unknown ids are dropped and logged. Sources are passed to the LLM inside
 `<source id="S3" url="...">` tags and treated as untrusted data (ADR-0007).
-`RetryPolicy(max_attempts=3)` on this node.
+`researcher.RETRY_POLICY` on this node: 3 attempts, retrying only
+`SearchUnavailableError` (timeouts, transport errors, 5xx). One failed query
+doesn't fail the node; all failing does (ADR-0011).
 ⟶ Phase 2: this node becomes a supervisor + parallel specialist researchers
 (web, docs/GitHub, dev discussions). The `ResearchNotes` contract stays the same,
 so writer/critic don't change.
@@ -88,14 +90,17 @@ so writer/critic don't change.
 **writer** — reads `plan, research_notes, draft?, critique?, approved?, feedback?`.
 First pass: write from plan + notes. Revision: fix the critique's `must_fix`
 items first; if the last human decision was a reject, the human feedback
-outranks the critique. Every factual claim must cite a source id. Increments
+outranks the critique. Every factual claim must cite a source id inline (`[S3]`);
+citations live only in the narration (`Draft.cited_source_ids` is parsed from it),
+and inline citations to unknown ids are stripped and logged. Increments
 `revision_count` on revisions. Appends a `RevisionRecord(kind="draft")`.
 
 **critic** — reads `draft, research_notes, plan, audience`. Scores against
 `docs/RUBRIC.md` (8 criteria, integer 1–10, each with quoted evidence from the
 draft and a concrete fix). `Critique.overall` is a weighted mean computed in
 Python with a **hard gate**: if `technical_accuracy < 6`, overall is capped at 6.
-Low temperature. ⟶ Phase 2: an independent fact-checker agent runs before or
+`Critique` validation requires each criterion exactly once, so a malformed critique
+goes through the adapter's repair retry (ADR-0011). Low temperature. ⟶ Phase 2: an independent fact-checker agent runs before or
 beside the critic, possibly on a different model.
 
 **human_review** — calls `interrupt(payload)` with title, rendered draft, score,
@@ -116,10 +121,11 @@ the Jan 2027 launch.)
 Nodes read `runtime.context`. Tests pass `FakeLLM` / `FakeSearch`. Nothing
 imports a client at module level (ADR-0003).
 
-`StructuredLLM.generate(prompt: RenderedPrompt, schema: type[T], *, role: ModelRole) -> T`
+`StructuredLLM.generate(prompt: RenderedPrompt, schema: type[T], *, role: ModelRole, run_config: RunConfig) -> T`
 — one method. The Anthropic adapter maps `role` (`planner|researcher|writer|critic`)
-to the model + temperature from `RunConfig`, uses `with_structured_output`, and
-tags the call with the prompt name + version for tracing.
+to the model + temperature from `RunConfig`, uses
+`with_structured_output(..., method="json_schema")` (ADR-0011), and tags the call
+with the prompt name + version for tracing.
 
 ## 6. Persistence
 
@@ -164,10 +170,11 @@ duration and key numbers (sources kept, score, revision).
 
 | Failure | Behavior |
 |---|---|
-| Search provider error / timeout | node RetryPolicy (3 attempts, backoff); then fail the run loudly |
+| Search timeout / 5xx / network (all queries) | `SearchUnavailableError` → node RetryPolicy (3 attempts, backoff); then fail the run loudly |
+| Search auth / quota / bad request | not retried; fails the run immediately |
 | Search returns nothing usable | researcher returns notes with `gaps` populated; writer must state limits, critic penalizes accuracy |
 | LLM returns invalid structure | adapter retries once with the validation error appended; then raises |
-| LLM cites unknown source id | dropped in code, logged at WARNING |
+| LLM cites unknown source id | dropped in code (findings: from `source_ids`; drafts: from the narration), logged at WARNING |
 | Critic never reaches threshold | revision guard sends the best-effort draft to the human |
 | Process dies mid-run | resume from checkpoint with same `thread_id` |
 

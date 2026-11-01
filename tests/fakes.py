@@ -27,7 +27,7 @@ from proofline.schemas import (
     ScriptSection,
     Source,
 )
-from proofline.search import SearchResult
+from proofline.search import SearchResult, SearchUnavailableError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -37,6 +37,7 @@ class LLMCall:
     prompt: RenderedPrompt
     schema: type[BaseModel]
     role: ModelRole
+    run_config: RunConfig
 
 
 class FakeLLM:
@@ -56,7 +57,7 @@ class FakeLLM:
     async def generate(
         self, prompt: RenderedPrompt, schema: type[T], *, role: ModelRole, run_config: RunConfig
     ) -> T:
-        self.calls.append(LLMCall(prompt=prompt, schema=schema, role=role))
+        self.calls.append(LLMCall(prompt=prompt, schema=schema, role=role, run_config=run_config))
         queue = self._queues.get(schema)
         if not queue:
             raise AssertionError(f"FakeLLM: no queued {schema.__name__} for role={role}")
@@ -80,7 +81,7 @@ class FakeSearch:
     async def search(self, query: str, *, max_results: int) -> list[SearchResult]:
         self.queries.append(query)
         if query in self.fail:
-            raise TimeoutError(f"FakeSearch: simulated failure for {query!r}")
+            raise SearchUnavailableError(f"FakeSearch: simulated failure for {query!r}")
         return list(self.results.get(query, self.default))[:max_results]
 
 
@@ -111,22 +112,31 @@ async def run_node(
     """Run one node inside a real one-node graph and return exactly the update it emitted.
 
     Going through LangGraph (not calling fn directly) gives the node a real Runtime,
-    including runtime.execution_info.thread_id.
+    including runtime.execution_info.thread_id. The strict-serde checkpointer makes every
+    update round-trip through serialization, as it will in production.
     """
+    from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, START, StateGraph
 
+    from proofline.checkpointing import make_serde
     from proofline.state import ScriptState
 
     builder = StateGraph(ScriptState, context_schema=Deps)
     builder.add_node(name, fn)
     builder.add_edge(START, name)
     builder.add_edge(name, END)
-    app = builder.compile()
+    app = builder.compile(checkpointer=InMemorySaver(serde=make_serde()))
     cfg: Any = {"configurable": {"thread_id": thread_id}}
+    emitted: set[str] | None = None
     async for chunk in app.astream(state, cfg, context=deps, stream_mode="updates"):
         if name in chunk:
-            return dict(chunk[name] or {})
-    raise AssertionError(f"node {name} emitted no update")
+            emitted = set(chunk[name] or {})
+    if emitted is None:
+        raise AssertionError(f"node {name} emitted no update")
+    # Read the update back from the checkpoint, not from memory: a state model missing
+    # from the serde allowlist comes back as a dict and fails the node's type assertions.
+    values = (await app.aget_state(cfg)).values
+    return {k: values[k] for k in emitted}
 
 
 def base_state(settings: Settings, **kw: Any) -> dict[str, Any]:
@@ -187,10 +197,9 @@ def make_notes(n_sources: int = 3) -> ResearchNotes:
 def make_draft(
     title: str = "Your agent crashed. Lose one step, not the run.", cited: list[str] | None = None
 ) -> Draft:
-    return Draft(
-        title=title,
-        hook="Your agent crashed at step nine. With a checkpointer, you lose one step [S1].",
-        sections=[
+    """Default narration cites S1..S3. `cited` replaces it with one section per cited id."""
+    if cited is None:
+        sections = [
             ScriptSection(heading="The crash", narration="Long runs fail midway [S1]."),
             ScriptSection(
                 heading="What gets saved", narration="State is saved after each step [S2]."
@@ -198,9 +207,18 @@ def make_draft(
             ScriptSection(
                 heading="Resume", narration="Call it again with the same thread id [S3]."
             ),
-        ],
+        ]
+    else:
+        sections = [
+            ScriptSection(heading=f"Point {i}", narration=f"Point {i} holds [{sid}].")
+            for i, sid in enumerate(cited, 1)
+        ] or [ScriptSection(heading="Point", narration="An uncited point.")]
+    return Draft(
+        title=title,
+        hook="Your agent crashed at step nine. With a checkpointer, you lose one step"
+        + (" [S1]." if cited is None else "."),
+        sections=sections,
         call_to_action="Add a SQLite checkpointer to one graph today.",
-        cited_source_ids=cited if cited is not None else ["S1", "S2", "S3"],
     )
 
 

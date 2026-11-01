@@ -8,7 +8,8 @@ Week 3 S1 (human):    human_review ─route_after_human→ {writer, finalizer}
 outcome straight to finalizer and doesn't add the node — same graph otherwise.
 
 Rules: StateGraph(ScriptState, context_schema=Deps, input_schema=InputState);
-path maps on every conditional edge; RetryPolicy(max_attempts=3) on researcher.
+path maps on every conditional edge; researcher gets researcher.RETRY_POLICY
+(retries only SearchUnavailableError — ADR-0011; not a bare RetryPolicy).
 """
 
 from __future__ import annotations
