@@ -13,16 +13,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from proofline.api import create_app
-from proofline.context import Deps
 from proofline.schemas import ExtractedFindings, Finding
 from tests.fakes import (
     FakeLLM,
     FakeSearch,
     make_critique,
+    make_deps,
     make_draft,
     make_outline,
     make_result,
-    make_settings,
 )
 
 pytestmark = pytest.mark.anyio
@@ -34,9 +33,7 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
         findings=[Finding(claim="Fact.", source_ids=["S1"], confidence="high")]
     )
     llm = FakeLLM().queue(make_outline(), findings, make_draft(), make_critique(9))
-    deps = Deps(
-        settings=make_settings(tmp_path), llm=llm, search=FakeSearch(default=[make_result(1)])
-    )
+    deps = make_deps(tmp_path, llm, FakeSearch(default=[make_result(1)]))
     app = create_app(deps=deps, checkpointer_url="memory://")
     # ASGITransport doesn't run lifespan itself, so enter it explicitly.
     async with (

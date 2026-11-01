@@ -19,6 +19,7 @@ from tests.fakes import (
     FakeSearch,
     base_state,
     make_critique,
+    make_deps,
     make_draft,
     make_notes,
     make_outline,
@@ -30,8 +31,9 @@ from tests.fakes import (
 pytestmark = pytest.mark.anyio
 
 
-def _deps(tmp_path: Path, llm: FakeLLM, search: FakeSearch | None = None) -> Deps:
-    return Deps(settings=make_settings(tmp_path), llm=llm, search=search or FakeSearch())
+def _deps(tmp_path: Path, llm: FakeLLM, search: FakeSearch | None = None, **settings: Any) -> Deps:
+    """Researcher tests pass `search` (WebResearcher over FakeSearch); others get the stub."""
+    return make_deps(tmp_path, llm, search, **settings)
 
 
 def test_normalize_url_dedupes_common_variants() -> None:
@@ -284,7 +286,7 @@ async def test_researcher_does_not_retry_non_transient_errors(tmp_path: Path) ->
 
     outline = make_outline()
     search = BadKeySearch()
-    deps = Deps(settings=make_settings(tmp_path), llm=FakeLLM(), search=search)
+    deps = make_deps(tmp_path, FakeLLM(), search)
     with pytest.raises(PermissionError, match="invalid API key"):
         await _researcher_graph_with_retry().ainvoke(
             base_state(deps.settings, outline=outline), context=deps
@@ -303,7 +305,7 @@ async def test_researcher_retry_policy_recovers_from_a_search_outage(tmp_path: P
             return [make_result(1)]
 
     search = FlakySearch()
-    deps = Deps(settings=make_settings(tmp_path), llm=_research_llm(), search=search)
+    deps = make_deps(tmp_path, _research_llm(), search)
     out = await _researcher_graph_with_retry().ainvoke(
         base_state(deps.settings, outline=outline), context=deps
     )

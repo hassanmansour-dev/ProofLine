@@ -9,16 +9,27 @@ from dataclasses import dataclass
 
 from proofline.config import Settings, get_settings
 from proofline.llm import AnthropicLLM, StructuredLLM
-from proofline.search import SearchClient, TavilySearch
+from proofline.research import Researcher, StubResearcher, WebResearcher
 
 
 @dataclass(frozen=True)
 class Deps:
     settings: Settings
     llm: StructuredLLM
-    search: SearchClient
+    researcher: Researcher
+
+
+def build_researcher(settings: Settings, llm: StructuredLLM) -> Researcher:
+    """PROOFLINE_RESEARCHER picks the implementation; only `web` needs TAVILY_API_KEY."""
+    if settings.researcher == "web":
+        from proofline.search import TavilySearch
+
+        return WebResearcher(TavilySearch(), llm, concurrency=settings.search_concurrency)
+    return StubResearcher()
 
 
 def build_deps(settings: Settings | None = None) -> Deps:
     """Production wiring. Tests build Deps directly with fakes."""
-    return Deps(settings=settings or get_settings(), llm=AnthropicLLM(), search=TavilySearch())
+    settings = settings or get_settings()
+    llm = AnthropicLLM()
+    return Deps(settings=settings, llm=llm, researcher=build_researcher(settings, llm))

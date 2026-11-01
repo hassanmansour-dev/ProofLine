@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,6 +31,8 @@ class Settings(BaseSettings):
     max_sources: int = 8
     results_per_query: int = 5
     max_source_chars: int = 4000
+    # stub = fixed notes, no network (Week 1 default); web = Tavily search + LLM extraction
+    researcher: Literal["stub", "web"] = "stub"
     search_concurrency: int = Field(default=4, ge=1)
     recursion_limit: int = 40
 

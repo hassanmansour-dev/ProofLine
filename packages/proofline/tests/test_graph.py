@@ -18,10 +18,10 @@ from tests.fakes import (
     FakeLLM,
     FakeSearch,
     make_critique,
+    make_deps,
     make_draft,
     make_outline,
     make_result,
-    make_settings,
 )
 
 pytestmark = pytest.mark.anyio
@@ -47,10 +47,8 @@ def _llm(critic_scores: list[int], drafts: int | None = None) -> FakeLLM:
 
 
 def _deps(tmp_path: Path, llm: FakeLLM) -> Deps:
-    return Deps(
-        settings=make_settings(tmp_path),
-        llm=llm,
-        search=FakeSearch(default=[make_result(1), make_result(2), make_result(3)]),
+    return make_deps(
+        tmp_path, llm, FakeSearch(default=[make_result(1), make_result(2), make_result(3)])
     )
 
 

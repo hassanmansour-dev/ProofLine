@@ -99,10 +99,20 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
 
 
-def make_deps(tmp_path: Path, llm: FakeLLM | None = None, search: FakeSearch | None = None) -> Deps:
-    return Deps(
-        settings=make_settings(tmp_path), llm=llm or FakeLLM(), search=search or FakeSearch()
+def make_deps(
+    tmp_path: Path, llm: FakeLLM | None = None, search: FakeSearch | None = None, **settings: Any
+) -> Deps:
+    """Deps with fakes. With `search`, the researcher is a WebResearcher over it; else the stub."""
+    from proofline.research import StubResearcher, WebResearcher
+
+    s = make_settings(tmp_path, **settings)
+    llm = llm or FakeLLM()
+    researcher = (
+        WebResearcher(search, llm, concurrency=s.search_concurrency)
+        if search is not None
+        else StubResearcher()
     )
+    return Deps(settings=s, llm=llm, researcher=researcher)
 
 
 async def run_node(
