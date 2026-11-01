@@ -4,7 +4,7 @@
 name = "proofline-workspace"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = ["proofline"]
+dependencies = ["proofline", "measured-evals"]
 
 [tool.uv]
 package = false
@@ -14,6 +14,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 proofline = { workspace = true }
+measured-evals = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -44,7 +45,7 @@ known-first-party = ["proofline", "measured_evals", "tests"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["packages/proofline/src"]
+files = ["packages/proofline/src", "packages/measured_evals/src"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
@@ -52,7 +53,7 @@ module = ["tavily.*", "aiosqlite.*", "langgraph.checkpoint.postgres.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["packages/proofline/tests"]
+testpaths = ["packages/proofline/tests", "packages/measured_evals/tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "live: calls real LLM/search APIs (needs keys, costs money); run with -m live",

@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "measured-evals",
     "proofline",
     "proofline-workspace",
 ]
@@ -907,6 +908,11 @@ wheels = [
 ]
 
 [[package]]
+name = "measured-evals"
+version = "0.0.1"
+source = { editable = "packages/measured_evals" }
+
+[[package]]
 name = "mypy"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1159,6 +1165,7 @@ name = "proofline-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "measured-evals" },
     { name = "proofline" },
 ]
 
@@ -1173,7 +1180,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "proofline", editable = "packages/proofline" }]
+requires-dist = [
+    { name = "measured-evals", editable = "packages/measured_evals" },
+    { name = "proofline", editable = "packages/proofline" },
+]
 
 [package.metadata.requires-dev]
 dev = [
