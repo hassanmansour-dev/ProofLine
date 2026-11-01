@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     search_concurrency: int = Field(default=4, ge=1)
     recursion_limit: int = 40
 
+    llm_provider: str = "anthropic"  # see llm.PROVIDERS
     planner_model: str = "claude-haiku-5-5"
     researcher_model: str = "claude-haiku-5-5"
     writer_model: str = "claude-sonnet-5-5"

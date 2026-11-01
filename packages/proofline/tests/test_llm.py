@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from proofline.config import Settings
-from proofline.llm import AnthropicLLM, RenderedPrompt, StructuredOutputError
+from proofline.llm import AnthropicLLM, RenderedPrompt, StructuredOutputError, build_llm
 from proofline.schemas import Outline
-from tests.fakes import make_outline
+from tests.fakes import make_outline, make_settings
 
 pytestmark = pytest.mark.anyio
 
@@ -64,3 +65,26 @@ async def test_raises_after_two_invalid_outputs(settings: Settings) -> None:
     llm, _ = _llm(settings, [_bad(), _bad()])
     with pytest.raises(StructuredOutputError, match=r"planner@9\.9\.9"):
         await llm.generate(PROMPT, Outline, role="planner", run_config=settings.run_config())
+
+
+# ── build_llm: provider + key from the environment ────────────────────────────
+
+
+def test_build_llm_returns_the_anthropic_adapter_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    assert isinstance(build_llm(make_settings(tmp_path)), AnthropicLLM)
+
+
+def test_build_llm_rejects_an_unknown_provider(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="'nope' is not supported; choose one of: anthropic"):
+        build_llm(make_settings(tmp_path, llm_provider="nope"))
+
+
+def test_build_llm_fails_early_without_an_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY is not set"):
+        build_llm(make_settings(tmp_path))

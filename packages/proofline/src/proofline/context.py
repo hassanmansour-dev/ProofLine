@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from proofline.config import Settings, get_settings
-from proofline.llm import AnthropicLLM, StructuredLLM
+from proofline.llm import StructuredLLM, build_llm
 from proofline.research import Researcher, StubResearcher, WebResearcher
 
 
@@ -31,5 +31,5 @@ def build_researcher(settings: Settings, llm: StructuredLLM) -> Researcher:
 def build_deps(settings: Settings | None = None) -> Deps:
     """Production wiring. Tests build Deps directly with fakes."""
     settings = settings or get_settings()
-    llm = AnthropicLLM()
+    llm = build_llm(settings)
     return Deps(settings=settings, llm=llm, researcher=build_researcher(settings, llm))

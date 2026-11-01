@@ -1,15 +1,21 @@
-"""StructuredLLM port + Anthropic adapter (ADR-0003).
+"""StructuredLLM port, the Anthropic adapter, and the env-driven model factory (ADR-0003).
 
 Nodes call `deps.llm.generate(prompt, Schema, role=..., run_config=...)` and get a
 validated Pydantic object back. The adapter owns model selection, tracing tags,
 and one repair retry when the model's output doesn't validate.
+
+`build_llm(settings)` picks the adapter from PROOFLINE_LLM_PROVIDER; model names and
+temperatures per role come from PROOFLINE_*_MODEL via RunConfig. Adding a provider =
+one adapter class + one entry in PROVIDERS (+ its langchain-* package).
 """
 
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -17,6 +23,9 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel
 
 from proofline.schemas import ModelRole, ModelSpec, RunConfig
+
+if TYPE_CHECKING:
+    from proofline.config import Settings
 
 log = logging.getLogger("proofline.llm")
 
@@ -115,3 +124,23 @@ class AnthropicLLM:
                     ),
                 ]
         raise StructuredOutputError(f"{prompt.tag}: no valid {schema.__name__} after 2 attempts")
+
+
+# provider name -> (adapter factory, env var holding its API key)
+PROVIDERS: dict[str, tuple[Callable[[], StructuredLLM], str]] = {
+    "anthropic": (AnthropicLLM, "ANTHROPIC_API_KEY"),
+}
+
+
+def build_llm(settings: Settings) -> StructuredLLM:
+    """The production LLM for PROOFLINE_LLM_PROVIDER. Fails early on config errors."""
+    provider = settings.llm_provider.strip().lower()
+    if provider not in PROVIDERS:
+        raise ValueError(
+            f"PROOFLINE_LLM_PROVIDER={settings.llm_provider!r} is not supported; "
+            f"choose one of: {', '.join(sorted(PROVIDERS))}"
+        )
+    factory, key_var = PROVIDERS[provider]
+    if not os.environ.get(key_var):
+        raise RuntimeError(f"{key_var} is not set (see .env.example)")
+    return factory()
