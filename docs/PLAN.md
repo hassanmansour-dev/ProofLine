@@ -44,7 +44,7 @@ Goal: one straight pass works on a real topic. No loops yet.
   `prompts/loader.py` (already implemented and tested). Review them with the
   `langgraph-architect` agent; change anything you disagree with *now*, via an ADR.
   Then lock them. Read the four prompts with the `prompt-engineer` agent.
-  *(Done: ADR-0011 is `proposed` — Hassan to accept; its open items are deferred to Week 3.)*
+  *(Done: ADR-0011 accepted; its open items are deferred to Week 3.)*
 - [x] **S2 Planner.** Implement `nodes/planner.py` + prompt review with `prompt-engineer`.
   Test with FakeLLM: correct role, correct schema, returns only `plan`.
 - [x] **S3 Researcher.** Review the `search.py` Tavily adapter, then implement `nodes/researcher.py`:

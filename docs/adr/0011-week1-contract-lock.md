@@ -1,6 +1,7 @@
 # ADR-0011: Week 1 contract lock: derived values in code, schema-level critic validation, explicit search retry
 
-- Status: proposed
+- Status: accepted (2026-11-01). The Week 1 scope reset (ADR-0012) changes the output
+  format and makes research a stub by default; the decisions below still hold.
 - Date: 2026-10-30
 - Phase/Week: P1W1
 
