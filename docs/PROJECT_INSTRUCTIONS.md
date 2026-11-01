@@ -7,7 +7,7 @@ Claude Code doesn't read Projects; it reads `CLAUDE.md` in this repo.
 ```text
 Project: Proofline — a multi-agent content pipeline where nothing ships without passing the evals and a human sign-off. Built in public by me (Hassan Mansour, Senior Applied AI Engineer) as my flagship project. Public launch: Jan 24, 2027. Repo: proofline (personal GitHub, private until launch).
 
-What it does: turns a topic into a fact-checked, scored video script for Build Clearly. Planner → supervisor → parallel researchers (web, GitHub/docs) → writer → critic (1–10 rubric, revise if under 8, max 3 revisions) → independent fact-checker (different model) → human review (interrupt) → finalizer.
+What it does: turns a topic and an audience into a fact-checked, scored short technical script (≤200 words: a LinkedIn post and a 1-minute video) for a configurable brand. Planner → supervisor → parallel researchers (web, GitHub/docs) → writer → critic (1–10 rubric, revise if under 8, max 3 revisions) → independent fact-checker (different model) → human review (interrupt) → finalizer.
 
 Stack: LangGraph, Pydantic structured output, SQLite then Postgres/Supabase checkpointer, FastAPI, LangSmith tracing, my own read-only knowledge MCP server (past scripts, book chapters) plus existing search/GitHub MCP servers, DeepEval + promptfoo in CI. uv workspace: packages/proofline (the pipeline app) and packages/measured_evals (standalone eval + security package; never imports proofline).
 

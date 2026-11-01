@@ -1,9 +1,10 @@
 # CLAUDE.md — Proofline
 
 **Proofline: a multi-agent content pipeline where nothing ships without passing
-the evals and a human sign-off.** It turns a topic into an approved, sourced
-video script for the **Build Clearly** channel: plan → research → write →
-critique (loop) → human review (interrupt) → finalize.
+the evals and a human sign-off.** It turns a topic and an audience into an
+approved, sourced short technical script (≤200 words: a LinkedIn post and a
+1-minute video) for a configurable brand (`PROOFLINE_BRAND_NAME`): plan → research
+→ write → critique (loop) → human review (interrupt) → finalize.
 
 This is Hassan's **flagship project**, built in public over 13 weeks
 (Oct 26, 2026 → public launch Jan 24, 2027) to show senior agentic AI
@@ -12,7 +13,8 @@ engineering. Three build phases on one repo:
 - **Phase 2 (weeks 5–8):** multi-agent (supervisor, parallel researchers,
   independent fact-checker) + a read-only knowledge MCP server.
 - **Phase 3 (weeks 9–11):** evals (golden set, DeepEval, promptfoo in CI),
-  cost budgets, prompt-injection tests, auth, rate limiting.
+  cost budgets, prompt-injection tests — in `packages/measured_evals` — plus
+  auth and rate limiting in the app.
 - **Launch (weeks 12–13):** case study, demo video, repo goes public.
 
 ## Guardrails (non-negotiable)
@@ -43,11 +45,11 @@ calls search, not an agent. If a change pulls toward Phase 2/3, stop and say so.
 
 ```bash
 uv sync                                   # install (incl. dev deps)
-uv run pytest -m "not live"               # fast tests, no network, no API keys
+uv run pytest -m "not live"               # fast tests, both packages, no network, no keys
 uv run pytest -m live                     # real LLM + search calls (costs money)
 uv run ruff check --fix . && uv run ruff format .
 uv run mypy
-uv run proofline run "topic" --audience "devs moving into AI"   # CLI
+uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
 uv run uvicorn proofline.api:app --reload                       # API (Week 3+)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
@@ -60,23 +62,33 @@ Full detail: `docs/ARCHITECTURE.md`. Decisions: `docs/adr/`. Do not contradict
 an accepted ADR silently — propose a new ADR (`/adr`) instead.
 
 ```
-packages/proofline/src/proofline/
-  state.py        ScriptState TypedDict — the single source of truth for graph state
-  schemas.py      Pydantic models for every LLM output + API payloads
-  config.py       Settings (pydantic-settings, env-driven): models, thresholds
-  context.py      Deps dataclass passed as LangGraph runtime context (LLM, search, settings)
-  llm.py          StructuredLLM port + Anthropic adapter
-  search.py       SearchClient port + Tavily adapter
-  routing.py      PURE routing functions (no I/O). Fully unit-tested.
-  render.py       Deterministic text: state objects → prompt blocks, final Markdown
-  prompts/        Versioned node prompts (*.md) + loader
-  nodes/          One module per node: planner, researcher, writer, critic, human_review, finalizer
-  graph.py        build_graph() — wiring only, no business logic
-  checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist
-  api.py          FastAPI create_app() (Week 3)
-  cli.py          Typer CLI
-packages/proofline/tests/   unit (fakes, no network) + live (marked)
+pyproject.toml              uv workspace root: dev tools + shared ruff/mypy/pytest config
+packages/proofline/         the pipeline app
+  src/proofline/
+    state.py        ScriptState TypedDict + initial_state() defaults — the graph's source of truth
+    schemas.py      Pydantic models for every LLM output, state value and API payload
+    config.py       Settings (pydantic-settings, PROOFLINE_* env): brand, word limit, models, ...
+    context.py      Deps (settings, llm, researcher) passed as LangGraph runtime context
+    llm.py          StructuredLLM port + Anthropic adapter + build_llm() factory (env-driven)
+    research/       Researcher port: StubResearcher (default), WebResearcher (Tavily)
+    search.py       SearchClient port + Tavily adapter (used by WebResearcher)
+    routing.py      PURE routing functions (no I/O). Fully unit-tested.
+    render.py       Deterministic text: state objects → prompt blocks, final Markdown
+    prompts/        Versioned node prompts (*.md) + loader
+    nodes/          One module per node: planner, researcher, writer, critic, human_review, finalizer
+    graph.py        build_graph() — wiring only, no business logic
+    checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist (Week 3)
+    api.py          FastAPI create_app() (Week 3)
+    cli.py          Typer CLI: `proofline run --topic --audience`
+  tests/            unit (fakes, no network) + live (marked)
+packages/measured_evals/    standalone eval + security package (skeleton until Phase 3)
+  src/measured_evals/       NEVER imports proofline — tests/test_boundary.py + CI enforce it
 ```
+
+Package rule: dependencies point one way, `proofline` → `measured_evals`. Anything
+generic (metrics, golden-set format, budgets, injection checks) goes in
+`measured_evals` with no reference to Proofline's schemas; Proofline adapts its
+types to it.
 
 Data flow rules:
 - Nodes are `async def node(state: ScriptState, runtime: Runtime[Deps]) -> dict`.
