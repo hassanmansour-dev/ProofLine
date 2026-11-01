@@ -1,53 +1,75 @@
-"""CLI. `run` lands in Week 1 S5 (--no-review), streaming in Week 2 S3, review in Week 3 S1.
+"""CLI: `proofline run --topic ... --audience ...` prints the finished script.
 
-Design notes for the implementation:
-- Call `dotenv.load_dotenv()` first: pydantic-settings only reads PROOFLINE_* into
-  Settings, but the Anthropic, Tavily and LangSmith SDKs read their keys from the
-  process environment. (api.py does the same in its lifespan.)
-- `run`: thread_id = new_thread_id(); open_checkpointer(settings.checkpointer_url);
-  compile; astream(initial_state(...), invoke_config(...), context=build_deps(),
-  stream_mode="updates"); print one rich line per node update (node, key numbers).
-- On "__interrupt__": show the payload, ask approve? [y/N], feedback if no;
-  resume with Command(resume=HumanDecision(...).model_dump()) — same thread_id,
-  same context; loop until final_script.
-- `show THREAD_ID`: aget_state + aget_state_history → table of history records.
+Week 1 runs the linear graph with no checkpointer. Week 2 streams node updates;
+Week 3 adds the review prompt (interrupt + resume) and `show THREAD_ID`.
+
+`.env` is loaded first: pydantic-settings only reads PROOFLINE_* into Settings, but the
+Anthropic, Tavily and LangSmith SDKs read their keys from the process environment.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
-app = typer.Typer(no_args_is_help=True, help="Build Clearly script pipeline")
+from proofline.config import get_settings
+from proofline.context import Deps, build_deps
+from proofline.graph import build_graph, invoke_config, new_thread_id
+from proofline.schemas import FinalScript
+from proofline.state import initial_state
+
+app = typer.Typer(no_args_is_help=True, help="Proofline: topic → sourced short script.")
+
+
+async def run_pipeline(topic: str, audience: str, deps: Deps) -> FinalScript:
+    """One linear run: planner → researcher → writer → finalizer."""
+    settings = deps.settings
+    graph = build_graph().compile()
+    out = await graph.ainvoke(
+        initial_state(topic, audience, settings.run_config()),
+        invoke_config(new_thread_id(), settings),
+        context=deps,
+    )
+    final: FinalScript = out["final_script"]
+    return final
 
 
 @app.command()
 def run(
-    topic: Annotated[str, typer.Argument(help="What the video is about")],
-    audience: Annotated[
-        str, typer.Option(help="Who it's for")
-    ] = "developers moving into AI engineering",
-    video_format: Annotated[str, typer.Option("--format", help="short | long")] = "short",
-    no_review: Annotated[
-        bool, typer.Option("--no-review", help="skip human review (Weeks 1-2)")
-    ] = False,
+    topic: Annotated[str, typer.Option(help="What the script is about")],
+    audience: Annotated[str, typer.Option(help="Who it's for")] = "developers new to AI",
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="log each node")] = False,
 ) -> None:
-    """Run the pipeline on a topic."""
-    raise NotImplementedError("Week 1 S5 — see module docstring")
+    """Run the pipeline on a topic and print the finished script as Markdown."""
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    load_dotenv()
+    try:
+        deps = build_deps(get_settings())
+    except (ValueError, RuntimeError) as exc:  # config errors: unknown provider, missing key
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    final = asyncio.run(run_pipeline(topic, audience, deps))
+    typer.echo(final.markdown)
+    out_dir = deps.settings.output_dir / final.thread_id
+    typer.echo(f"saved to {out_dir}/script.md and script.json", err=True)
 
 
 @app.command()
 def show(thread_id: str) -> None:
     """Print a run's state and history from the checkpoint."""
-    raise NotImplementedError("Week 3 S2 — see module docstring")
+    raise NotImplementedError("Week 3 — needs the checkpointer")
 
 
 @app.command()
 def mermaid() -> None:
     """Print the graph as mermaid."""
-    from proofline.graph import build_graph
-
     print(build_graph().compile().get_graph().draw_mermaid())
 
 

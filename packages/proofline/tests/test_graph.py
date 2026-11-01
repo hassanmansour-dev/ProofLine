@@ -11,7 +11,7 @@ from langgraph.types import Command
 
 from proofline.checkpointing import open_checkpointer
 from proofline.context import Deps
-from proofline.graph import build_graph, invoke_config
+from proofline.graph import LINEAR_NODES, build_graph, invoke_config
 from proofline.schemas import ExtractedFindings, Finding, HumanDecision
 from proofline.state import initial_state
 from tests.fakes import (
@@ -26,8 +26,7 @@ from tests.fakes import (
 
 pytestmark = pytest.mark.anyio
 
-W1 = pytest.mark.xfail(strict=True, reason="Week 1 S5 target", raises=NotImplementedError)
-# W2/W3 have no `raises=`: once Week 1 wiring exists they fail on assertions, not NotImplementedError.
+# Week 1 wiring is linear, so these fail on assertions until their week lands.
 W2 = pytest.mark.xfail(strict=True, reason="Week 2 target")
 W3 = pytest.mark.xfail(strict=True, reason="Week 3 target")
 
@@ -68,21 +67,29 @@ def _inputs(deps: Deps) -> Any:
 # ── Week 1 ────────────────────────────────────────────────────────────────────
 
 
-@W1
-async def test_linear_run_reaches_finalizer(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, _llm([9]))
-    app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
+async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_outline(), make_draft())
+    deps = make_deps(tmp_path, llm)  # stub researcher: no network, no LLM call
+    app = build_graph().compile()  # Week 1: no checkpointer
     cfg = invoke_config("w1", deps.settings)
-    nodes = await _stream(app, _inputs(deps), cfg, deps)
-    assert nodes == ["planner", "researcher", "writer", "critic", "finalizer"]
-    state = (await app.aget_state(cfg)).values
-    assert state["final_script"].thread_id == "w1"
+    updates = [
+        chunk
+        async for chunk in app.astream(_inputs(deps), cfg, context=deps, stream_mode="updates")
+    ]
+    assert tuple(node for chunk in updates for node in chunk) == LINEAR_NODES
+    assert [c.role for c in llm.calls] == ["planner", "writer"]
+
+    final = updates[-1]["finalizer"]["final_script"]
+    assert final.thread_id == "w1"
+    assert final.word_count <= deps.settings.max_words
+    assert final.markdown.startswith(f"# {make_draft().title}")
+    assert final.source_urls  # the draft cites the stub's sources
+    assert (deps.settings.output_dir / "w1" / "script.md").read_text() == final.markdown
 
 
-@W1
-async def test_mermaid_renders_every_node() -> None:
+async def test_mermaid_renders_the_week1_nodes() -> None:
     mermaid = build_graph().compile().get_graph().draw_mermaid()
-    for node in ("planner", "researcher", "writer", "critic", "human_review", "finalizer"):
+    for node in LINEAR_NODES:
         assert node in mermaid
 
 
@@ -92,7 +99,7 @@ async def test_mermaid_renders_every_node() -> None:
 @W2
 async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([6, 7, 8]))
-    app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
+    app = build_graph().compile(checkpointer=InMemorySaver())
     cfg = invoke_config("w2a", deps.settings)
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes.count("writer") == 3
@@ -105,7 +112,7 @@ async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
 @W2
 async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([5, 5, 5, 5]))  # max_revisions=3 → 4 drafts, then stop
-    app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
+    app = build_graph().compile(checkpointer=InMemorySaver())
     cfg = invoke_config("w2b", deps.settings)
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes.count("writer") == 4

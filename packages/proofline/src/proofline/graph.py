@@ -1,15 +1,13 @@
 """Graph wiring — no business logic here.
 
-Week 1 S5 (linear):   START → planner → researcher → writer → critic → finalizer → END
-Week 2 S1 (loop):     critic ─route_after_critic→ {"writer": writer, "human_review": <review target>}
-Week 3 S1 (human):    human_review ─route_after_human→ {writer, finalizer}
+Week 1 (now):      START → planner → researcher → writer → finalizer → END
+Week 2 (loop):     writer → critic ─route_after_critic→ {writer, human_review}
+Week 3 (human):    human_review ─route_after_human→ {writer, finalizer}
 
-`human_review=False` (CLI --no-review, Week 1-2 tests) maps the router's "human_review"
-outcome straight to finalizer and doesn't add the node — same graph otherwise.
-
-Rules: StateGraph(ScriptState, context_schema=Deps, input_schema=InputState);
-path maps on every conditional edge; researcher gets researcher.RETRY_POLICY
-(retries only SearchUnavailableError — ADR-0011; not a bare RetryPolicy).
+Rules: StateGraph(ScriptState, context_schema=Deps); path maps on every conditional
+edge; the researcher gets researcher.RETRY_POLICY (retries only SearchUnavailableError,
+ADR-0011). The input schema is the full ScriptState, not InputState: a narrower input
+schema would drop the defaults initial_state() sets for later-week fields.
 """
 
 from __future__ import annotations
@@ -19,18 +17,35 @@ import uuid
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph
+from langgraph.graph import END, START, StateGraph
 
 from proofline.config import Settings
+from proofline.context import Deps
+from proofline.nodes import finalizer, planner, researcher, writer
+from proofline.nodes.researcher import RETRY_POLICY
 from proofline.prompts import prompt_versions
-from proofline.state import InputState, ScriptState
+from proofline.state import ScriptState
+
+# Week 1 runs these, in this order.
+LINEAR_NODES = ("planner", "researcher", "writer", "finalizer")
 
 
-def build_graph(
-    *, human_review: bool = True
-) -> StateGraph[ScriptState, Any, InputState, ScriptState]:
-    """Return the uncompiled builder; callers compile with their checkpointer."""
-    raise NotImplementedError("Week 1 S5 — see module docstring")
+def build_graph() -> StateGraph[ScriptState, Deps, ScriptState, ScriptState]:
+    """Return the uncompiled builder; callers compile, with a checkpointer from Week 3."""
+    builder: StateGraph[ScriptState, Deps, ScriptState, ScriptState] = StateGraph(
+        ScriptState, context_schema=Deps
+    )
+    builder.add_node("planner", planner)
+    builder.add_node("researcher", researcher, retry_policy=RETRY_POLICY)
+    builder.add_node("writer", writer)
+    builder.add_node("finalizer", finalizer)
+
+    builder.add_edge(START, "planner")
+    builder.add_edge("planner", "researcher")
+    builder.add_edge("researcher", "writer")
+    builder.add_edge("writer", "finalizer")
+    builder.add_edge("finalizer", END)
+    return builder
 
 
 def new_thread_id() -> str:
@@ -40,16 +55,17 @@ def new_thread_id() -> str:
 def invoke_config(thread_id: str, settings: Settings) -> RunnableConfig:
     """Config for every invoke/resume: identity, recursion backstop, tracing metadata."""
     cfg = settings.run_config()
+    metadata: dict[str, Any] = {
+        "thread_id": thread_id,
+        "prompt_versions": prompt_versions(),
+        "models": {role: spec.model for role, spec in cfg.models.items()},
+    }
     return RunnableConfig(
         configurable={"thread_id": thread_id},
         recursion_limit=settings.recursion_limit,
         run_name="script-pipeline",
         tags=[settings.env],
-        metadata={
-            "thread_id": thread_id,
-            "prompt_versions": prompt_versions(),
-            "models": {role: spec.model for role, spec in cfg.models.items()},
-        },
+        metadata=metadata,
     )
 
 

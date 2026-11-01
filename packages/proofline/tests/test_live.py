@@ -19,35 +19,36 @@ CALIBRATION_TOPICS = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def _keys() -> None:
+def _require(*keys: str) -> None:
     load_dotenv()
-    missing = [k for k in ("ANTHROPIC_API_KEY", "TAVILY_API_KEY") if not os.environ.get(k)]
+    missing = [k for k in keys if not os.environ.get(k)]
     if missing:
         pytest.skip(f"missing {missing}")
 
 
-@pytest.mark.parametrize("topic", CALIBRATION_TOPICS)
-async def test_pipeline_produces_sourced_script(topic: str) -> None:
-    from langgraph.checkpoint.memory import InMemorySaver
-
-    from proofline.config import get_settings
+async def test_brief_topic_with_stub_research() -> None:
+    """The Week 1 done-when run: real model, fixed research notes."""
+    from proofline.cli import run_pipeline
+    from proofline.config import Settings
     from proofline.context import build_deps
-    from proofline.graph import build_graph, invoke_config, new_thread_id
-    from proofline.state import initial_state
 
-    settings = get_settings()
-    deps = build_deps(settings)
-    app = build_graph(human_review=False).compile(checkpointer=InMemorySaver())
-    tid = new_thread_id()
-    out = await app.ainvoke(
-        initial_state(topic, "developers new to AI", settings.run_config()),
-        invoke_config(tid, settings),
-        context=deps,
-    )
-    final = out["final_script"]
+    _require("ANTHROPIC_API_KEY")
+    deps = build_deps(Settings(researcher="stub"))
+    final = await run_pipeline("Why every AI loop needs an exit", "developers new to AI", deps)
     assert final.source_urls, "script cites no sources"
-    assert final.word_count <= settings.max_words
-    print(
-        f"\n{topic}: score={final.final_score} revisions={final.revision_count} → outputs/{tid}/script.md"
-    )
+    assert final.word_count <= deps.settings.max_words
+    print(f"\n{final.markdown}")
+
+
+@pytest.mark.parametrize("topic", CALIBRATION_TOPICS)
+async def test_web_research_produces_sourced_script(topic: str) -> None:
+    from proofline.cli import run_pipeline
+    from proofline.config import Settings
+    from proofline.context import build_deps
+
+    _require("ANTHROPIC_API_KEY", "TAVILY_API_KEY")
+    deps = build_deps(Settings(researcher="web"))
+    final = await run_pipeline(topic, "developers new to AI", deps)
+    assert final.source_urls, "script cites no sources"
+    assert final.word_count <= deps.settings.max_words
+    print(f"\n{topic}: {final.word_count} words → outputs/{final.thread_id}/script.md")
