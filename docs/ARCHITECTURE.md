@@ -64,7 +64,7 @@ Pydantic for every value that came from an LLM (ADR-0002).
 | `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic, human_review | append-only audit trail |
 
 Rule: a node writes only the fields in its row. Enforced by review and by
-contract tests in `tests/test_contracts.py`.
+contract tests in `packages/proofline/tests/test_contracts.py`.
 
 ## 4. Node contracts
 

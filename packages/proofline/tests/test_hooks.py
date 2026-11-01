@@ -9,13 +9,14 @@ from pathlib import Path
 
 import pytest
 
-HOOKS = Path(__file__).resolve().parents[1] / ".claude" / "hooks"
+ROOT = Path(__file__).resolve().parents[3]  # repo root, from packages/proofline/tests/
+HOOKS = ROOT / ".claude" / "hooks"
 
 
 def _run(
     script: str, payload: dict[str, object], project: Path | None = None
 ) -> tuple[int, str, str]:
-    env = {"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(project or HOOKS.parents[1])}
+    env = {"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(project or ROOT)}
     proc = subprocess.run(
         [sys.executable, str(HOOKS / script)],
         input=json.dumps(payload),
@@ -71,11 +72,11 @@ def test_guard_bash(command: str, expected: str | None) -> None:
         ("uv.lock", "deny"),
         (".data/checkpoints.db", "deny"),
         ("outputs/abc/script.md", "deny"),
-        ("src/proofline/nodes/planner.py", None),
+        ("packages/proofline/src/proofline/nodes/planner.py", None),
     ],
 )
 def test_protect_files(path: str, expected: str | None) -> None:
-    root = HOOKS.parents[1]
+    root = ROOT
     code, out, _ = _run(
         "protect_files.py", {"tool_name": "Write", "tool_input": {"file_path": str(root / path)}}
     )
@@ -93,7 +94,7 @@ def test_session_start_reports_current_week() -> None:
         "session_start.py", {"hook_event_name": "SessionStart", "source": "startup"}
     )
     assert code == 0
-    plan = (HOOKS.parents[1] / "docs" / "PLAN.md").read_text(encoding="utf-8")
+    plan = (ROOT / "docs" / "PLAN.md").read_text(encoding="utf-8")
     [current] = [ln for ln in plan.splitlines() if ln.startswith("#") and "◀ CURRENT" in ln]
     week = current.lstrip("# ").split(" — ")[0]  # e.g. "Week 1"
     assert f"Current plan week: **{week}" in out

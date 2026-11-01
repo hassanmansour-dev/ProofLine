@@ -37,8 +37,8 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check .
 
-      - name: Mypy (strict, src/)
-        run: uv run mypy src
+      - name: Mypy (strict, every package's src/)
+        run: uv run mypy
 
       - name: Fast tests (no network, no keys)
         run: uv run pytest -m "not live"

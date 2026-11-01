@@ -40,7 +40,7 @@ Then, without writing code:
    implemented (state.py, schemas.py, routing.py, render.py, llm.py, prompts/loader.py,
    checkpointing.py) against the architecture and ADRs. I want real disagreements,
    not a summary — anything you'd change before we lock them.
-2. Use the prompt-engineer agent to review the four prompts in src/proofline/prompts/
+2. Use the prompt-engineer agent to review the four prompts in packages/proofline/src/proofline/prompts/
    against docs/PROMPTING.md and docs/RUBRIC.md. Flag that docs/BRAND_VOICE.md is
    still TODO if it is.
 3. Run the fast suite and confirm the xfail targets per week.
@@ -67,8 +67,8 @@ Wait for my answers before changing anything.
 | `.github/workflows/ci.yml` | CI on push/PR: ruff, format check, mypy, fast tests (no keys) |
 | `.mcp.json` | LangChain docs MCP server (dev tooling only — the app itself has no MCP in Phase 1) |
 | `docs/` | Architecture, 10 ADRs, 13-week plan, rubric, prompt standards, brand voice (yours), monthly template |
-| `src/proofline/` | Contracts + infra implemented; nodes, graph wiring, CLI, API are your Week 1–3 work |
-| `tests/` | 68 passing foundation tests + 18 `xfail(strict=True)` week targets |
+| `packages/proofline/src/proofline/` | Contracts + infra implemented; nodes, graph wiring, CLI, API are your Week 1–3 work |
+| `packages/proofline/tests/` | 68 passing foundation tests + 18 `xfail(strict=True)` week targets |
 
 ## 6. Turning things off
 - Skip test-on-stop for a session: `PROOFLINE_SKIP_STOP_CHECKS=1 claude`

@@ -46,7 +46,7 @@ uv sync                                   # install (incl. dev deps)
 uv run pytest -m "not live"               # fast tests, no network, no API keys
 uv run pytest -m live                     # real LLM + search calls (costs money)
 uv run ruff check --fix . && uv run ruff format .
-uv run mypy src
+uv run mypy
 uv run proofline run "topic" --audience "devs moving into AI"   # CLI
 uv run uvicorn proofline.api:app --reload                       # API (Week 3+)
 uv run python -m proofline.graph --mermaid                      # print graph
@@ -60,7 +60,7 @@ Full detail: `docs/ARCHITECTURE.md`. Decisions: `docs/adr/`. Do not contradict
 an accepted ADR silently — propose a new ADR (`/adr`) instead.
 
 ```
-src/proofline/
+packages/proofline/src/proofline/
   state.py        ScriptState TypedDict — the single source of truth for graph state
   schemas.py      Pydantic models for every LLM output + API payloads
   config.py       Settings (pydantic-settings, env-driven): models, thresholds
@@ -75,7 +75,7 @@ src/proofline/
   checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist
   api.py          FastAPI create_app() (Week 3)
   cli.py          Typer CLI
-tests/            unit (fakes, no network) + live (marked)
+packages/proofline/tests/   unit (fakes, no network) + live (marked)
 ```
 
 Data flow rules:
@@ -114,7 +114,7 @@ Data flow rules:
 - Prompts are files, not inline strings. Every prompt has a `version:` header.
   Changing a prompt = bump its version + add a line to `prompts/CHANGELOG.md`.
   Prompt standards: `docs/PROMPTING.md`. Use the `prompt-engineer` agent.
-- Tests: unit tests use `tests/fakes.py` (FakeLLM, FakeSearch). Unit tests
+- Tests: unit tests use `packages/proofline/tests/fakes.py` (FakeLLM, FakeSearch). Unit tests
   must never hit the network. Anything that needs keys is `@pytest.mark.live`.
 - Week target tests are marked `xfail(strict=True)`. When you make one pass,
   **remove the marker** in the same change.

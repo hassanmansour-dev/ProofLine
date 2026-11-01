@@ -9,7 +9,7 @@ Project: Proofline — a multi-agent content pipeline where nothing ships withou
 
 What it does: turns a topic into a fact-checked, scored video script for Build Clearly. Planner → supervisor → parallel researchers (web, GitHub/docs) → writer → critic (1–10 rubric, revise if under 8, max 3 revisions) → independent fact-checker (different model) → human review (interrupt) → finalizer.
 
-Stack: LangGraph, Pydantic structured output, SQLite then Postgres/Supabase checkpointer, FastAPI, LangSmith tracing, my own read-only knowledge MCP server (past scripts, book chapters) plus existing search/GitHub MCP servers, DeepEval + promptfoo in CI. Package: src/proofline, managed with uv.
+Stack: LangGraph, Pydantic structured output, SQLite then Postgres/Supabase checkpointer, FastAPI, LangSmith tracing, my own read-only knowledge MCP server (past scripts, book chapters) plus existing search/GitHub MCP servers, DeepEval + promptfoo in CI. uv workspace: packages/proofline (the pipeline app) and packages/measured_evals (standalone eval + security package; never imports proofline).
 
 Plan (6 hrs/week, tracked in Jira epic GROW-1 on sanovinci.atlassian.net; full detail in docs/PLAN.md):
 Phase 1 (wks 1–4): linear flow · critic + loop guard · human-review interrupt, checkpointer, FastAPI · tracing, README

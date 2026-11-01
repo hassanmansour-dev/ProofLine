@@ -43,7 +43,7 @@ def check_prompt(path: Path, rel: str) -> str | None:
         return (
             f"You changed {rel} but its version is still {new_v.group(1)}. "
             "Bump `version:` (patch=wording, minor=behavior, major=contract) and add a line "
-            "to src/proofline/prompts/CHANGELOG.md (version, what, why). See docs/PROMPTING.md."
+            "to packages/proofline/src/proofline/prompts/CHANGELOG.md (version, what, why). See docs/PROMPTING.md."
         )
     return None
 
@@ -65,7 +65,7 @@ def main() -> None:
     if path.suffix == ".py":
         message = check_python(path)
     elif (
-        rel.startswith("src/proofline/prompts/")
+        rel.startswith("packages/proofline/src/proofline/prompts/")
         and path.suffix == ".md"
         and path.name != "CHANGELOG.md"
     ):

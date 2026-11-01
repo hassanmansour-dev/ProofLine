@@ -1,6 +1,6 @@
 # Prompt engineering standards
 
-Applies to every file in `src/proofline/prompts/`. The `prompt-engineer`
+Applies to every file in `packages/proofline/src/proofline/prompts/`. The `prompt-engineer`
 agent enforces these.
 
 ## File shape
