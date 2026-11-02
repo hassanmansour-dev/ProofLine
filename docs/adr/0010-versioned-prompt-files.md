@@ -9,7 +9,7 @@ Prompt changes are the most frequent and least reviewed change in LLM systems.
 Phase 3 needs regression checks keyed by prompt version.
 
 ## Decision
-- One file per node in `src/proofline/prompts/<node>.md` with YAML
+- One file per node in `packages/proofline/src/proofline/prompts/<node>.md` with YAML
   frontmatter: `name`, `version` (semver), `model_role`, `description`.
 - Body has a `## system` and a `## user` section; the user section uses
   `{placeholders}` filled by the loader (`str.format_map` with a strict map

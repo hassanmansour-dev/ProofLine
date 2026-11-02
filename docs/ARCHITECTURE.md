@@ -1,193 +1,207 @@
 # Architecture — Proofline
 
-Status: **Phase 1 design** (LangGraph fundamentals). Extension points for
-Phase 2/3 are marked ⟶ so the design doesn't need to be torn up later.
+Status: **Week 1, linear flow** (ADR-0012). Later weeks are marked ⟶ so the
+design doesn't need to be torn up when they land.
 
 ## 1. What it does
 
-Input: a topic, an audience, a format (`short` ≈ 60 s, `long` ≈ 8–12 min).
-Output: an approved, sourced video script for Build Clearly, saved as Markdown
-+ JSON, with the full revision history in the checkpoint.
+Input: a topic and an audience. Output: one short technical script (title, hook,
+body, call to action; at most 200 words by default) for a LinkedIn post and a
+1-minute video, with inline citations, saved as Markdown + JSON.
 
-A human (Hassan) is the final gate. The machine's job is to get a draft good
-enough that review is a 2-minute read, not a rewrite.
+A human is the final gate (Week 3). The machine's job is to get a draft good enough
+that review is a 2-minute read, not a rewrite.
 
-## 2. Graph
+## 2. Two packages, one workspace
+
+```
+packages/
+  proofline/        the pipeline app (LangGraph graph, nodes, CLI, API)
+  measured_evals/   eval + security layer: golden sets, metrics, cost budgets,
+                    prompt-injection tests (empty skeleton until Phase 3)
+```
+
+Dependencies point one way: **proofline → measured_evals**, never back.
+`measured_evals` is published as open source at launch and reused by a separate
+web app (Measured Lab), so it can't know anything about Proofline.
+`packages/measured_evals/tests/test_boundary.py` fails if it declares or imports
+`proofline`, and CI installs it alone (no app) and runs its tests (ADR-0012).
+
+## 3. Graph
+
+Week 1 (now):
 
 ```mermaid
 flowchart LR
-    START([START]) --> planner
-    planner --> researcher
-    researcher --> writer
+    START([START]) --> planner --> researcher --> writer --> finalizer --> END([END])
+```
+
+⟶ Weeks 2–3 add the critic loop and human review:
+
+```mermaid
+flowchart LR
     writer --> critic
     critic -- "score < threshold AND revisions < max" --> writer
     critic -- "score ≥ threshold OR revisions exhausted" --> human_review
     human_review -- "reject + feedback" --> writer
     human_review -- approve --> finalizer
-    finalizer --> END([END])
 ```
 
-Routing is two pure functions in `routing.py`:
+Routing is two pure functions in `routing.py` (already implemented and tested):
 
 | Router | Reads | Returns |
 |---|---|---|
-| `route_after_critic` | `critique.overall`, `revision_count`, `run_config` | `"writer"` \| `"human_review"` |
+| `route_after_critic` | `score`, `revision_count`, `run_config` | `"writer"` \| `"human_review"` |
 | `route_after_human` | `approved` | `"writer"` \| `"finalizer"` |
 
-`revision_count` = number of writer passes **after** the first draft. With
-`max_revisions=3` the critic loop produces at most 4 drafts before a human sees
-it. A human rejection always gets a rewrite (the human is the loop guard); the
-critic still scores that rewrite, and if the budget is spent it goes straight
-back to review with the critique attached.
+`revision_count` = number of writer passes **after** the first draft. Backstop:
+every invocation passes `recursion_limit` (default 40).
 
-Backstop: every invocation passes `recursion_limit=40`.
+`build_graph()` uses the full `ScriptState` as its input schema: a narrower input
+schema would drop the defaults `initial_state()` sets for later-week fields.
 
-## 3. State
+## 4. State
 
 `state.py` — `ScriptState(TypedDict, total=False)`. TypedDict for the graph,
-Pydantic for every value that came from an LLM (ADR-0002).
+Pydantic for every value (ADR-0002). `initial_state(topic, audience, run_config)`
+sets every default.
 
-| Field | Type | Written by | Notes |
+| Field | Type | Written by | Default / notes |
 |---|---|---|---|
-| `topic` | `str` | input | |
-| `audience` | `str` | input | |
-| `video_format` | `"short" \| "long"` | input | |
-| `run_config` | `RunConfig` | input (from Settings) | snapshot of thresholds/models so a resumed run behaves like it started (ADR-0004) |
-| `plan` | `Plan` | planner | angle, key questions, search queries, outline, target duration |
-| `research_notes` | `ResearchNotes` | researcher | sources with code-assigned ids `S1..Sn`, findings citing those ids, gaps |
-| `draft` | `Draft` | writer | structured script; cited ids, word count + duration derived from the narration (ADR-0011) |
-| `revision_count` | `int` | writer | 0 on first draft |
-| `critique` | `Critique` | critic | per-criterion scores + evidence; `overall` computed in Python |
-| `approved` | `bool` | human_review | |
-| `feedback` | `str \| None` | human_review | free text from the reviewer |
-| `final_script` | `FinalScript` | finalizer | rendered markdown + metadata |
-| `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic, human_review | append-only audit trail |
+| `topic`, `audience` | `str` | input | |
+| `run_config` | `RunConfig` | input | settings snapshot (models, thresholds, `max_words`, `brand_name`) so a resumed run behaves like it started (ADR-0004) |
+| `outline` | `Outline` | planner | angle, key questions, search queries, 2–4 beats |
+| `research_notes` | `ResearchNotes` | researcher | sources with code-assigned ids `S1..Sn`, findings citing them, gaps |
+| `draft` | `Draft` | writer | title/hook/body/CTA; cited ids, word count, duration derived from the text |
+| `revision_count` | `int` | writer | 0 |
+| `critique` | `Critique \| None` | critic (W2) | `None` |
+| `score` | `float \| None` | critic (W2) | `None`; = `Critique.overall`, computed in Python |
+| `approved` | `bool \| None` | human_review (W3) | `None` = not reviewed; `False` = rejected |
+| `feedback` | `str \| None` | human_review (W3) | `None` |
+| `final_script` | `FinalScript` | finalizer | rendered Markdown + metadata |
+| `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic, human_review | `[]`, append-only |
 
-Rule: a node writes only the fields in its row. Enforced by review and by
-contract tests in `tests/test_contracts.py`.
+Rule: a node writes only the fields in its row (`state.FIELD_OWNERS`, checked by
+`packages/proofline/tests/test_contracts.py`).
 
-## 4. Node contracts
+## 5. Node contracts
 
 Every node: `async def node(state: ScriptState, runtime: Runtime[Deps]) -> dict`.
 
-**planner** — reads `topic, audience, video_format`. One structured LLM call →
-`Plan` (3–5 search queries, 3–6 outline sections). `target_seconds` is set in
-code from the format, overriding the model (ADR-0011). No network besides the LLM.
+**planner** — reads `topic, audience, run_config`. One structured LLM call →
+`Outline`. Prompt gets the brand name and word limit.
 
-**researcher** — reads `plan`. Runs `plan.search_queries` concurrently against
-`deps.search` (semaphore = 4), dedupes by normalized URL, keeps the top
-`max_sources`, truncates each to `max_source_chars`. **Ids `S1..Sn` are assigned
-in code.** One structured LLM call extracts `findings` that must cite those ids;
-unknown ids are dropped and logged. Sources are passed to the LLM inside
-`<source id="S3" url="...">` tags and treated as untrusted data (ADR-0007).
-`researcher.RETRY_POLICY` on this node: 3 attempts, retrying only
-`SearchUnavailableError` (timeouts, transport errors, 5xx). One failed query
-doesn't fail the node; all failing does (ADR-0011).
-⟶ Phase 2: this node becomes a supervisor + parallel specialist researchers
-(web, docs/GitHub, dev discussions). The `ResearchNotes` contract stays the same,
-so writer/critic don't change.
+**researcher** — reads `topic, outline, run_config`. Calls
+`deps.researcher.research(topic, outline, run_config)` (the `Researcher` port) and
+then drops findings that cite unknown source ids, so every implementation gets that
+guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries only
+`SearchUnavailableError`, ADR-0011). Implementations (`research/`):
+- `StubResearcher` (default, `PROOFLINE_RESEARCHER=stub`): fixed, checked notes; no network.
+  It reports the outline's key questions as gaps (it never researched them), and the CLI
+  says research is stubbed.
+- `WebResearcher` (`PROOFLINE_RESEARCHER=web`): runs the outline's queries concurrently
+  through the `SearchClient` port (Tavily), dedupes by normalized URL, keeps the top
+  `max_sources`, truncates, **assigns `S1..Sn` in code**, and makes one structured LLM
+  call for findings. Sources reach the model inside escaped `<source>` tags, as
+  untrusted data.
+- ⟶ Week 5: a web-search agent behind the same protocol; graph.py doesn't change.
 
-**writer** — reads `plan, research_notes, draft?, critique?, approved?, feedback?`.
-First pass: write from plan + notes. Revision: fix the critique's `must_fix`
-items first; if the last human decision was a reject, the human feedback
-outranks the critique. Every factual claim must cite a source id inline (`[S3]`);
-citations live only in the narration (`Draft.cited_source_ids` is parsed from it),
-and inline citations to unknown ids are stripped and logged. Increments
-`revision_count` on revisions. Appends a `RevisionRecord(kind="draft")`.
+**writer** — reads `outline, research_notes, run_config` (+ `draft, critique,
+approved, feedback` on revisions, Week 2+). Every factual claim cites a source id
+inline (`[S3]`); citations live only in the text and are normalized, with unknown or
+unparseable ones dropped and logged; titles carry no citations. Over `max_words` →
+one more call (revision context kept) asking for a cut; the shorter draft is kept. Increments `revision_count` on revisions;
+appends a `RevisionRecord(kind="draft")`.
 
-**critic** — reads `draft, research_notes, plan, audience`. Scores against
-`docs/RUBRIC.md` (8 criteria, integer 1–10, each with quoted evidence from the
-draft and a concrete fix). `Critique.overall` is a weighted mean computed in
-Python with a **hard gate**: if `technical_accuracy < 6`, overall is capped at 6.
-`Critique` validation requires each criterion exactly once, so a malformed critique
-goes through the adapter's repair retry (ADR-0011). Low temperature. ⟶ Phase 2: an independent fact-checker agent runs before or
-beside the critic, possibly on a different model.
+**critic** (built; wired in Week 2) — scores against `docs/RUBRIC.md` (8 criteria,
+integer 1–10, each with quoted evidence and a concrete fix). Writes `critique` and
+`score`. `Critique.overall` is a weighted mean computed in Python with a **hard
+gate**: `technical_accuracy < 6` caps it at 6. Validation requires each criterion
+exactly once, so a malformed critique goes through the adapter's repair retry.
 
-**human_review** — calls `interrupt(payload)` with title, rendered draft, score,
-critique summary. Resume value: `HumanDecision{approved, feedback}`. **No side
-effects before `interrupt()`** — the node re-executes on resume (ADR-0005).
+**human_review** (Week 3) — `interrupt(payload)`; resume value `HumanDecision`.
+**No side effects before `interrupt()`**: the node re-runs on resume (ADR-0005).
 
-**finalizer** — reads `draft, research_notes, critique, revision_count,
-run_config`. Deterministic (no LLM): renders Markdown with a sources section,
-writes `outputs/<thread_id>/script.md` and `script.json` (idempotent overwrite),
-returns `FinalScript`.
-(A repurposing team fanning out from here is deliberately cut until after
-the Jan 2027 launch.)
+**finalizer** — deterministic, no LLM. Renders title, hook, body, call to action
+and the cited sources as Markdown; writes `outputs/<thread_id>/script.md` and
+`script.json` (overwrite, so retries are idempotent). `final_score` is `None` until
+the critic runs.
 
-## 5. Dependencies (runtime context)
+## 6. Dependencies (runtime context)
 
-`context.py` defines `Deps` (dataclass): `settings`, `llm: StructuredLLM`,
-`search: SearchClient`. Passed as `graph.ainvoke(..., context=deps)`.
-Nodes read `runtime.context`. Tests pass `FakeLLM` / `FakeSearch`. Nothing
-imports a client at module level (ADR-0003).
+`context.py`: `Deps(settings, llm: StructuredLLM, researcher: Researcher)`, passed as
+`graph.ainvoke(..., context=deps)`. Nodes read `runtime.context`; nothing imports a
+client at module level (ADR-0003). Tests build `Deps` with `FakeLLM`, and with
+`StubResearcher` or a `WebResearcher` over `FakeSearch`.
 
-`StructuredLLM.generate(prompt: RenderedPrompt, schema: type[T], *, role: ModelRole, run_config: RunConfig) -> T`
-— one method. The Anthropic adapter maps `role` (`planner|researcher|writer|critic`)
-to the model + temperature from `RunConfig`, uses
-`with_structured_output(..., method="json_schema")` (ADR-0011), and tags the call
-with the prompt name + version for tracing.
+`StructuredLLM.generate(prompt, schema, *, role, run_config) -> T`: one method.
+`build_llm(settings)` picks the adapter from `PROOFLINE_LLM_PROVIDER` (only
+`anthropic` today; an unknown provider or missing key fails before the run starts).
+The Anthropic adapter maps `role` to the model and temperature from `RunConfig`,
+uses `with_structured_output(..., method="json_schema")`, retries once with the
+validation error, and tags each call with the prompt name and version.
 
-## 6. Persistence
+## 7. Configuration
 
-`checkpointing.py` → `open_checkpointer(url)` async context manager:
-- `memory://` → `InMemorySaver` (tests, notebooks)
-- `sqlite:///.data/checkpoints.db` → `AsyncSqliteSaver` (local dev, Week 3)
-- `postgresql://...` → `AsyncPostgresSaver` (Supabase, end of Week 3 stretch / Phase 2)
+All from environment / `.env` (`config.Settings`, prefix `PROOFLINE_`), snapshotted
+into `RunConfig` at run start: brand name, word limit, researcher choice, model
+provider and per-role models, thresholds. See `.env.example`.
 
-All three use a `JsonPlusSerializer` with `allowed_msgpack_modules` listing every
-Pydantic model that lives in state (ADR-0006). `thread_id` = run id (UUID4).
+## 8. Persistence (Week 3)
 
-## 7. Interfaces
+`checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
+`sqlite:///…` → `AsyncSqliteSaver`, `postgresql://…` → `AsyncPostgresSaver`. All
+use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state model
+(ADR-0006). `thread_id` = run id (UUID4). Week 1 runs without a checkpointer.
 
-**CLI** (`cli.py`, Typer): `proofline run TOPIC --audience --format` runs to
-the interrupt, prints the draft + critique, prompts approve/reject in the
-terminal, resumes. `proofline show THREAD_ID`, `proofline mermaid`.
+## 9. Interfaces
 
-**API** (`api.py`, Week 3) — `create_app(deps=..., checkpointer_url=...)`; tests inject fakes + `memory://`:
+**CLI** (`cli.py`, Typer):
+- `proofline run --topic … --audience … [-v]` runs the graph and prints the Markdown
+  script (stdout); file paths go to stderr.
+- `proofline mermaid` prints the graph.
+- ⟶ Week 2 streams node updates; Week 3 adds the review prompt and `show THREAD_ID`.
+
+**API** (`api.py`, ⟶ Week 3): `create_app(deps=..., checkpointer_url=...)`.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/runs` | `StartRunRequest{topic, audience, video_format}` | `RunView` (runs to the first interrupt) |
+| POST | `/runs` | `StartRunRequest{topic, audience}` | `RunView` (runs to the first interrupt) |
 | GET | `/runs/{thread_id}` | — | `RunView` from the latest checkpoint |
 | POST | `/runs/{thread_id}/review` | `HumanDecision` | `RunView` (next interrupt or completed) |
-| GET | `/health` | — | `{status, checkpointer}` |
+| GET | `/health` | — | `{status, checkpointer}` (exists now) |
 
-`RunView{thread_id, status: awaiting_review|completed, draft?, critique?, final_script?, revision_count}`.
-Phase 1 keeps POST synchronous (it returns at the interrupt, ~1–2 min). ⟶ Phase 3:
-background execution + SSE streaming, auth, rate limits.
+## 10. Observability
 
-## 8. Observability
+Every invocation sets `run_name="script-pipeline"`, `tags=[env]`,
+`metadata={thread_id, prompt_versions, models}`; each LLM call is tagged with its
+prompt name/version. Logging: stdlib `logging`, `proofline.*` loggers, one INFO line
+per node (`proofline run -v`). ⟶ Week 4: LangSmith tracing; Phase 3: cost budgets
+and alerts via `measured_evals`.
 
-LangSmith via env (`LANGSMITH_TRACING=true`). Every invocation sets
-`run_name="script-pipeline"`, `tags=[video_format, env]`,
-`metadata={thread_id, prompt_versions, models}`. Each LLM call is tagged with
-its prompt name/version so traces can be compared when a prompt changes.
-Logging: stdlib `logging`, logger `proofline`, one line per node with
-duration and key numbers (sources kept, score, revision).
-⟶ Phase 3: per-run cost budget, loop/failure alerts, DeepEval + promptfoo.
-
-## 9. Failure behavior
+## 11. Failure behavior
 
 | Failure | Behavior |
 |---|---|
-| Search timeout / 5xx / network (all queries) | `SearchUnavailableError` → node RetryPolicy (3 attempts, backoff); then fail the run loudly |
-| Search auth / quota / bad request | not retried; fails the run immediately |
-| Search returns nothing usable | researcher returns notes with `gaps` populated; writer must state limits, critic penalizes accuracy |
-| LLM returns invalid structure | adapter retries once with the validation error appended; then raises |
-| LLM cites unknown source id | dropped in code (findings: from `source_ids`; drafts: from the narration), logged at WARNING |
-| Critic never reaches threshold | revision guard sends the best-effort draft to the human |
-| Process dies mid-run | resume from checkpoint with same `thread_id` |
+| Invalid setting / unknown provider / missing API key | CLI prints the error (no traceback) and exits 1, before any call |
+| Search timeout / 5xx / network (all queries) | `SearchUnavailableError` → RetryPolicy (3 attempts, backoff); then fails loudly |
+| Search auth / quota / bad request | not retried; fails immediately |
+| Search returns nothing usable | notes with `gaps` = the key questions; the writer says what's unclear |
+| LLM returns invalid structure | adapter retries once with the validation error; then raises |
+| LLM cites an unknown source id | dropped in code (findings and drafts), logged at WARNING |
+| Draft over the word limit | one cut requested; the shorter draft is kept (Week 2 critic scores length) |
 
-## 10. Security baseline (Phase 1)
+## 12. Security baseline
 
-- Web content = data, never instructions (prompt framing + no tools in Phase 1,
-  so injected instructions have nothing to act on).
-- Secrets only from env; `.env` is unreadable to Claude Code via hooks + deny rules.
-- No code execution of fetched content. ⟶ Phase 3 adds auth, rate limiting,
-  output checks before publishing, least-privilege MCP tools.
+- Web content is data, never instructions: escaped inside `<source>` and
+  `<research_notes>` tags, with an explicit rule in every prompt that sees it; no
+  tools in Phase 1, so injected instructions have nothing to act on.
+- Secrets only from env; `.env` is unreadable to Claude Code (hooks + deny rules).
+- ⟶ Phase 3 (`measured_evals`): prompt-injection suite, cost budgets, output checks;
+  API auth and rate limiting in the app.
 
-## 11. Repository layout
+## 13. Docs
 
-See `CLAUDE.md`. Docs: `docs/PLAN.md` (weekly plan), `docs/adr/` (decisions),
-`docs/PROMPTING.md` (prompt standards), `docs/RUBRIC.md` (critic rubric),
-`docs/BRAND_VOICE.md` (Build Clearly voice — owned by Hassan).
+`docs/PLAN.md` (weekly plan), `docs/adr/` (decisions), `docs/PROMPTING.md` (prompt
+standards), `docs/RUBRIC.md` (critic rubric), `docs/BRAND_VOICE.md` (voice, owned by
+the host; the brand name itself is `PROOFLINE_BRAND_NAME`).

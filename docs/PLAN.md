@@ -8,13 +8,18 @@ sanovinci.atlassian.net (one ticket per week, due the Sunday of that week).
 | Phase | Weeks | Theme |
 |---|---|---|
 | 1 | 1–4 | LangGraph fundamentals with production habits |
-| 2 | 5–8 | Multi-agent + read-only knowledge MCP server |
-| 3 | 9–11 | Evals, observability, security |
+| 2 | 5–8 | Multi-agent (supervisor, parallel researchers, fact-checker) + MCP servers |
+| 3 | 9–11 | Evals, cost budgets, security — built in `packages/measured_evals` |
 | Launch | 12–13 | Case study, demo video, repo public |
 
 Build-in-public videos (1 min, every two weeks, also the LinkedIn post):
 V1 Nov 8 · V2 Nov 22 · V3 Dec 6 · V4 Dec 20 · V5 Jan 3 · V6 Jan 17. Scripts
 live in Jira GROW-50…55. Note what breaks each week: it's the next video.
+
+Output: one short technical script (≤200 words) per topic, used as a LinkedIn post
+and a 1-minute video. Two packages in one uv workspace (ADR-0012): `proofline` (the
+pipeline app) and `measured_evals` (eval + security layer; never imports proofline;
+open-sourced at launch, reused by the Measured Lab web app later).
 
 Phase 1 exit criteria: a script on a real topic goes plan → research → write →
 critic loop → you reject once with feedback → rewrite → you approve → final
@@ -40,27 +45,30 @@ session start shows "Week 0".
 
 Goal: one straight pass works on a real topic. No loops yet.
 
-- [x] **S1 Contracts.** Read `state.py`, `schemas.py`, `routing.py`, `render.py`, `llm.py`,
-  `prompts/loader.py` (already implemented and tested). Review them with the
-  `langgraph-architect` agent; change anything you disagree with *now*, via an ADR.
-  Then lock them. Read the four prompts with the `prompt-engineer` agent.
-  *(Done: ADR-0011 accepted; its open items are deferred to Week 3.)*
-- [x] **S2 Planner.** Implement `nodes/planner.py` + prompt review with `prompt-engineer`.
-  Test with FakeLLM: correct role, correct schema, returns only `plan`.
-- [x] **S3 Researcher.** Review the `search.py` Tavily adapter, then implement `nodes/researcher.py`:
-  concurrent queries, URL dedupe, top-N, truncation, `S1..Sn` ids in code, drop unknown
-  ids from findings. Tests with FakeSearch for each of those behaviors.
-- [x] **S4 Writer + critic (score only) + finalizer.** Implement the three nodes. Critic
-  `overall` + accuracy gate tests. Finalizer writes `outputs/<thread_id>/script.md|json`.
-- [ ] **S5 Wire + run.** `graph.py` linear wiring (critic → finalizer for now),
-  `cli.py run --no-review`, `--mermaid`. First live run on a topic you know well.
-  Read the output critically; note 3 things the critic missed.
+- [x] **S1 Contracts.** Review the kit's contracts with the `langgraph-architect` and
+  `prompt-engineer` agents; lock them via ADR-0011 (open items deferred to Week 3).
+- [x] **S2–S4 Nodes.** planner, researcher, writer, critic (built, wired in Week 2) and
+  finalizer, each with FakeLLM / FakeSearch tests.
+- [x] **S5 Brief reset (ADR-0012).** uv workspace: `packages/proofline` + empty
+  `packages/measured_evals` (boundary-tested). State per the brief (topic, audience,
+  research_notes, draft, critique, score, revision_count, approved, feedback). One
+  short format (≤200 words, title/hook/body/CTA). Brand name from
+  `PROOFLINE_BRAND_NAME`. `Researcher` protocol with `StubResearcher` (default) and
+  `WebResearcher` (Tavily). Model factory from env. Linear graph
+  planner → researcher → writer → finalizer; `proofline run --topic --audience`;
+  end-to-end tests with a fake model; CI on both packages; README.
+- [ ] **S6 First live run.** Add `ANTHROPIC_API_KEY` to `.env`, then
+  `uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"`.
+  Read the output critically and note 3 things a critic should catch (input for Week 2).
 
-**Done when:** `uv run proofline run "What LangGraph checkpointers actually store" --no-review`
-produces a sourced script, and the Week 1 xfail tests are now plain passing tests.
+**Done when:** that command prints a finished script; `uv run pytest` passes for both
+packages (node tests + an end-to-end graph test with a fake model); ruff and mypy are
+clean in CI; the README explains the two-package design and the roadmap.
 
 **Concepts you should be able to explain after this week:** StateGraph, partial
-updates, `START`/`END`, runtime context, structured output, why ids are assigned in code.
+updates, `START`/`END`, runtime context, structured output, ports and adapters
+(Researcher, StructuredLLM), why ids are assigned in code, why the eval package
+can't import the app.
 
 ---
 
@@ -68,8 +76,9 @@ updates, `START`/`END`, runtime context, structured output, why ids are assigned
 
 Goal: the graph revises itself until good enough or out of budget.
 
-- [ ] **S1 Routing.** Wire `route_after_critic` with a path map. Table-driven tests already
-  exist in `tests/test_routing.py` — extend for edge cases (exact threshold, gate).
+- [ ] **S1 Routing.** Wire the critic after the writer and `route_after_critic` (reads
+  `score`) with a path map. Table-driven tests already exist in
+  `packages/proofline/tests/test_routing.py` — extend for edge cases (exact threshold, gate).
 - [ ] **S2 Writer revision mode.** Revision prompt path: must_fix first, keep what scored
   well, increment `revision_count`, append `history`. Test: second pass sees the critique.
 - [ ] **S3 Stream it.** CLI uses `astream(stream_mode="updates")` to print each node and
@@ -137,8 +146,8 @@ Goal: research becomes multi-agent without changing the `ResearchNotes` contract
 
 - [ ] **S1 ADR.** Supervisor design: what it decides (which researchers a topic needs),
   state it adds, how results merge into `ResearchNotes`. Revisit ADR-0001 and ADR-0003.
-- [ ] **S2 Web researcher agent.** The researcher node becomes a tool-using agent behind
-  its own port; same untrusted-data rules (ADR-0007).
+- [ ] **S2 Web researcher agent.** A tool-using agent replaces `StubResearcher` behind the
+  existing `Researcher` protocol (graph.py unchanged); same untrusted-data rules (ADR-0007).
 - [ ] **S3 Supervisor.** Routes by topic type; routing stays pure and tested.
 - [ ] **S4 Tests + live run.** Writer and critic unchanged; contract tests still green.
 
@@ -163,12 +172,12 @@ Lighter week: the pilot workshop is this week.
 
 **Done when:** unsupported claims are flagged with source gaps and the writer fixes them.
 
-## Week 8 — Knowledge MCP server, read-only (Dec 14 → 20 · GROW-12)
+## Week 8 — MCP servers: read-only knowledge (Dec 14 → 20 · GROW-12)
 
 - [ ] **S1 ADR.** Server scope: read-only tools over past scripts + book chapters. Least
   privilege, no write tools.
-- [ ] **S2** Build the server (its own package in this repo, e.g. `mcp/knowledge/`); usable
-  from Claude Desktop/Code too.
+- [ ] **S2** Build the server as its own workspace member (e.g. `packages/knowledge_mcp/`);
+  usable from Claude Desktop/Code too.
 - [ ] **S3** Pipeline loads tools through an MCP client; planner/writer use past scripts to
   avoid repeats and keep the voice.
 - [ ] **Video 4** "You probably don't need more agents" (GROW-53, post Sun Dec 20).
@@ -178,15 +187,17 @@ Lighter week: the pilot workshop is this week.
 
 ## Week 9 — Golden set (Dec 21 → 27 · GROW-13) — holiday-light
 
-- [ ] Write 20 topics in `evals/golden/`, each with audience, format and what a good script
-  must show (must-mention points, must-not-claim, target length).
+- [ ] Golden-set format and loader in `packages/measured_evals` (app-agnostic); Proofline's
+  20 topics in `packages/proofline/evals/golden/`, each with audience and what a good
+  script must show (must-mention points, must-not-claim, word limit).
 
 **Done when:** 20 topics with expected qualities are committed.
 
 ## Week 10 — Evals in CI (Dec 28 → Jan 3 · GROW-14)
 
-- [ ] **S1** DeepEval metrics: faithfulness to sources, rubric score, cost, latency.
-- [ ] **S2** promptfoo config for prompt/model regression on the golden set.
+- [ ] **S1** DeepEval metrics in `measured_evals`: faithfulness to sources, rubric score, cost, latency.
+- [ ] **S2** promptfoo config for prompt/model regression on the golden set (Proofline runs
+  it through `measured_evals`).
 - [ ] **S3** CI (GitHub Actions): eval job on PRs that touch prompts or models; fail on regression.
 - [ ] **S4** Critic vs your judgment, using `docs/calibration.md`.
 - [ ] **Video 5** "How I know my AI didn't get worse" (GROW-54, post Sun Jan 3).
@@ -195,8 +206,10 @@ Lighter week: the pilot workshop is this week.
 
 ## Week 11 — Production hardening (Jan 4 → 10 · GROW-15)
 
-- [ ] **S1** Per-run cost budget (abort when over) + loop/failure alerts.
-- [ ] **S2** Prompt-injection suite: pages with hidden instructions; assert they're ignored.
+- [ ] **S1** Per-run cost budget (abort when over) + loop/failure alerts; the budget
+  primitive lives in `measured_evals`.
+- [ ] **S2** Prompt-injection suite in `measured_evals`: pages with hidden instructions;
+  assert Proofline ignores them.
 - [ ] **S3** FastAPI auth (API key) + rate limiting; secrets only from env.
 - [ ] **S4** Output checks before finalize (citations resolve, length, banned claims).
 
@@ -214,7 +227,8 @@ Lighter week: the pilot workshop is this week.
 ## Week 13 — Public launch (Jan 18 → 24 · GROW-17)
 
 - [ ] Pre-public check: no secrets in git history, no workplace references, `.env.example` clean, licence chosen.
-- [ ] Make the repo public. Tag `v1.0.0`.
+- [ ] Make the repo public. Tag `v1.0.0`. Publish `measured-evals` to PyPI (its own README,
+  licence and version).
 - [ ] Case study live on hassanmansour.com; demo video posted; LinkedIn launch post (#3); pin to Featured.
 
 **Done when:** repo public, case study live, video posted. (Day 90.)
@@ -223,7 +237,9 @@ Lighter week: the pilot workshop is this week.
 
 ## Cut until after launch
 
-Repurposing team (LinkedIn post, YouTube description, book excerpt) and the
-Supabase content-tracker MCP server. Design rules still apply: no agent where a
+A repurposing team that fans one script out into other formats (YouTube description,
+book excerpt, long-form video) and the Supabase content-tracker MCP server. The short
+script itself is the LinkedIn post and the 1-minute video; that's the core output, not
+a repurposing step. Design rules still apply: no agent where a
 fixed edge works; no MCP server for a single-app tool; fetched content is data,
 never instructions.

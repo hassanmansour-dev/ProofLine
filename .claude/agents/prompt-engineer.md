@@ -1,6 +1,6 @@
 ---
 name: prompt-engineer
-description: Designs, reviews and revises the node prompts in src/proofline/prompts/ (planner, researcher, writer, critic) and the field descriptions in schemas.py. Use when creating a prompt, when output quality is off, when the critic disagrees with Hassan's judgment, or before any prompt change. Bumps versions and updates the prompt CHANGELOG.
+description: Designs, reviews and revises the node prompts in packages/proofline/src/proofline/prompts/ (planner, researcher, writer, critic) and the field descriptions in schemas.py. Use when creating a prompt, when output quality is off, when the critic disagrees with Hassan's judgment, or before any prompt change. Bumps versions and updates the prompt CHANGELOG.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: opus
 effort: high

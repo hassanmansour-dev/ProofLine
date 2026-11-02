@@ -1,4 +1,4 @@
-# Critic rubric (v1)
+# Critic rubric (v2)
 
 Integer scores 1–10. Every score needs a **verbatim quote** from the draft as
 evidence and a **concrete fix** (what to change, not "improve clarity").
@@ -15,8 +15,8 @@ Weights live in `schemas.CRITERION_WEIGHTS`. Overall = weighted mean, 1 dp.
 | `structure` | 1.0 | Follows the plan's outline; each section earns its place; clean transitions |
 | `audience_fit` | 1.0 | Depth and examples match the stated audience |
 | `actionability` | 1.0 | Viewer leaves with something they can do or check |
-| `voice` | 1.0 | Sounds like Build Clearly (see BRAND_VOICE.md), spoken not written |
-| `length_fit` | 1.0 | Estimated duration within ±15% of target |
+| `voice` | 1.0 | Sounds like the brand (see BRAND_VOICE.md), spoken not written |
+| `length_fit` | 1.0 | Within the word limit (default 200) and uses it well |
 
 ## Anchors
 
@@ -60,13 +60,13 @@ Weights live in `schemas.CRITERION_WEIGHTS`. Overall = weighted mean, 1 dp.
 - 3: Reads like documentation or marketing.
 - 6: Neutral, correct, forgettable.
 - 8: Matches BRAND_VOICE.md: direct, practical, honest about tradeoffs.
-- 10: 8, and has at least one line that is memorably *his*.
+- 10: 8, and has at least one line that is memorably the host's own.
 
 **length_fit**
-- 3: Off by more than 40%.
-- 6: Off by 15–40%.
-- 8: Within ±15%.
-- 10: Within ±5% and pacing varies (short punchy lines around dense parts).
+- 3: More than 25% over the word limit, or under half of it.
+- 6: Up to 25% over the limit, or padded / thin for the space it uses.
+- 8: Within the limit; no sentence could be cut without losing something.
+- 10: 8, and pacing varies (short punchy lines around dense parts).
 
 ## must_fix
 

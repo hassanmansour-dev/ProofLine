@@ -9,7 +9,7 @@ Run the definition of done and report a checklist. Don't fix things silently —
 report, then offer to fix.
 
 1. `uv run ruff check . && uv run ruff format --check .`
-2. `uv run mypy src`
+2. `uv run mypy`
 3. `uv run pytest -m "not live" -q -rxX` — list any XPASS (marker must be removed)
    and remaining xfails for the current week.
 4. `git diff HEAD --stat` and read the diff:

@@ -18,7 +18,7 @@ handles style).
 ## Process
 1. `git diff HEAD` and `git status --short` to see the change. Read every
    touched file fully, plus the callers/tests of anything whose contract changed.
-2. Run `uv run pytest -m "not live" -q` and `uv run mypy src`. Include failures.
+2. Run `uv run pytest -m "not live" -q` and `uv run mypy`. Include failures.
 3. Check against `docs/ARCHITECTURE.md` and the ADRs.
 
 ## Checklist (report only what fails)
