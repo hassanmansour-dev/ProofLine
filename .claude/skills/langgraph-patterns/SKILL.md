@@ -43,8 +43,8 @@ class Deps:
 
 
 async def planner(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
-    plan = await runtime.context.llm.generate(prompt, Plan, role="planner")
-    return {"plan": plan}  # partial update; never mutate `state`
+    outline = await runtime.context.llm.generate(prompt, Outline, role="planner")
+    return {"outline": outline}  # partial update; never mutate `state`
 
 
 builder = StateGraph(ScriptState, context_schema=Deps)
@@ -96,7 +96,7 @@ def human_review(state: ScriptState) -> dict[str, Any]:
 ## Streaming
 ```python
 async for chunk in app.astream(inputs, config, context=deps, stream_mode="updates"):
-    # {"planner": {"plan": ...}}  then ...  {"__interrupt__": (Interrupt(...),)}
+    # {"planner": {"outline": ...}}  then ...  {"__interrupt__": (Interrupt(...),)}
     for node, update in chunk.items():
         ...
 ```
@@ -105,7 +105,7 @@ async for chunk in app.astream(inputs, config, context=deps, stream_mode="update
 Unregistered Pydantic types in state warn on load today and will be blocked later:
 `Deserializing unregistered type ... Set LANGGRAPH_STRICT_MSGPACK=true ...`.
 ```python
-serde = JsonPlusSerializer(allowed_msgpack_modules=[("proofline.schemas", "Plan"), ...])
+serde = JsonPlusSerializer(allowed_msgpack_modules=[("proofline.schemas", "Outline"), ...])
 
 saver = InMemorySaver(serde=serde)
 

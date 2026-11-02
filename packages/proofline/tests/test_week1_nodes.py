@@ -45,7 +45,7 @@ def test_normalize_url_dedupes_common_variants() -> None:
 # ── planner ───────────────────────────────────────────────────────────────────
 
 
-async def test_planner_returns_only_plan_using_planner_role(tmp_path: Path) -> None:
+async def test_planner_returns_only_outline_using_planner_role(tmp_path: Path) -> None:
     llm = FakeLLM().queue(make_outline())
     deps = _deps(tmp_path, llm)
     update = await run_node("planner", planner, base_state(deps.settings), deps)
@@ -345,6 +345,9 @@ async def test_finalizer_lists_only_cited_sources(tmp_path: Path) -> None:
         ("A range [S1-S3].", "A range.", ["[S1-S3]"]),
         ("Fine [S1][S2].", "Fine [S1][S2].", []),
         ("Not a citation [see docs].", "Not a citation [see docs].", []),
+        ("Per [S3 docs] it works.", "Per [S3 docs] it works.", []),
+        ("Twice [s1][S1].", "Twice [S1].", []),
+        ("Mixed [S9][S2 notes] here.", "Mixed [S2 notes] here.", ["S9"]),
     ],
 )
 def test_writer_citation_cleanup(text: str, expected: str, dropped: list[str]) -> None:
@@ -410,3 +413,39 @@ async def test_finalizer_runs_without_a_critique(tmp_path: Path) -> None:
     assert final.final_score is None
     assert final.markdown.startswith("# Your agent crashed.")
     assert "**Add a SQLite checkpointer to one graph today.**" in final.markdown
+
+
+async def test_writer_cut_keeps_the_revision_context(tmp_path: Path) -> None:
+    long = make_draft(body="word " * 250)
+    llm = FakeLLM().queue(long, make_draft())
+    deps = _deps(tmp_path, llm)
+    state = base_state(
+        deps.settings,
+        outline=make_outline(),
+        research_notes=make_notes(3),
+        draft=make_draft(),
+        critique=make_critique(6),
+        approved=False,
+        feedback="Open with the crash story.",
+    )
+    await run_node("writer", writer, state, deps)
+    cut_prompt = llm.calls[1].prompt.user
+    assert "<human_feedback>" in cut_prompt
+    assert "<critique>" in cut_prompt
+    assert "the limit is 200" in cut_prompt
+
+
+async def test_writer_never_keeps_a_longer_cut(tmp_path: Path) -> None:
+    long = make_draft(body="word " * 250)
+    longer = make_draft(body="word " * 300)
+    deps = _deps(tmp_path, FakeLLM().queue(long, longer))
+    state = base_state(deps.settings, outline=make_outline(), research_notes=make_notes(3))
+    update = await run_node("writer", writer, state, deps)
+    assert update["draft"] == long
+
+
+async def test_writer_strips_citations_from_the_title(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, FakeLLM().queue(make_draft(title="Loops [S1] explained [S9]")))
+    state = base_state(deps.settings, outline=make_outline(), research_notes=make_notes(3))
+    update = await run_node("writer", writer, state, deps)
+    assert update["draft"].title == "Loops explained"

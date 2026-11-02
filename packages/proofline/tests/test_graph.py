@@ -72,14 +72,22 @@ async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
     deps = make_deps(tmp_path, llm)  # stub researcher: no network, no LLM call
     app = build_graph().compile()  # Week 1: no checkpointer
     cfg = invoke_config("w1", deps.settings)
-    updates = [
-        chunk
-        async for chunk in app.astream(_inputs(deps), cfg, context=deps, stream_mode="updates")
-    ]
+    updates: list[dict[str, Any]] = []
+    values: dict[str, Any] = {}
+    stream = app.astream(_inputs(deps), cfg, context=deps, stream_mode=["updates", "values"])
+    async for mode, data in stream:
+        if mode == "updates":
+            updates.append(data)
+        else:
+            values = data
     assert tuple(node for chunk in updates for node in chunk) == LINEAR_NODES
     assert [c.role for c in llm.calls] == ["planner", "writer"]
+    # initial_state() defaults survive the graph's input schema (see graph.py)
+    assert values["approved"] is None
+    assert values["critique"] is None
+    assert values["score"] is None
 
-    final = updates[-1]["finalizer"]["final_script"]
+    final = values["final_script"]
     assert final.thread_id == "w1"
     assert final.word_count <= deps.settings.max_words
     assert final.markdown.startswith(f"# {make_draft().title}")

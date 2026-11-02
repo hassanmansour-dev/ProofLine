@@ -3,8 +3,9 @@
 Week 1 runs the linear graph with no checkpointer. Week 2 streams node updates;
 Week 3 adds the review prompt (interrupt + resume) and `show THREAD_ID`.
 
-`.env` is loaded first: pydantic-settings only reads PROOFLINE_* into Settings, but the
-Anthropic, Tavily and LangSmith SDKs read their keys from the process environment.
+`.env` is loaded first, from the working directory (the same file Settings reads):
+pydantic-settings only reads PROOFLINE_* into Settings, but the Anthropic, Tavily and
+LangSmith SDKs read their keys from the process environment.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import logging
 from typing import Annotated
 
 import typer
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from proofline.config import get_settings
 from proofline.context import Deps, build_deps
@@ -49,12 +50,20 @@ def run(
         level=logging.INFO if verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
     try:
-        deps = build_deps(get_settings())
-    except (ValueError, RuntimeError) as exc:  # config errors: unknown provider, missing key
+        settings = get_settings()
+        settings.run_config()  # validate bounds now, not mid-run
+        deps = build_deps(settings)
+    except (ValueError, RuntimeError) as exc:  # bad settings, unknown provider, missing key
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    if settings.researcher == "stub":
+        typer.echo(
+            "note: research is stubbed (PROOFLINE_RESEARCHER=stub): fixed sample notes, "
+            "not research on this topic",
+            err=True,
+        )
     final = asyncio.run(run_pipeline(topic, audience, deps))
     typer.echo(final.markdown)
     out_dir = deps.settings.output_dir / final.thread_id

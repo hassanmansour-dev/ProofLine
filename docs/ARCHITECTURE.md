@@ -97,6 +97,8 @@ then drops findings that cite unknown source ids, so every implementation gets t
 guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries only
 `SearchUnavailableError`, ADR-0011). Implementations (`research/`):
 - `StubResearcher` (default, `PROOFLINE_RESEARCHER=stub`): fixed, checked notes; no network.
+  It reports the outline's key questions as gaps (it never researched them), and the CLI
+  says research is stubbed.
 - `WebResearcher` (`PROOFLINE_RESEARCHER=web`): runs the outline's queries concurrently
   through the `SearchClient` port (Tavily), dedupes by normalized URL, keeps the top
   `max_sources`, truncates, **assigns `S1..Sn` in code**, and makes one structured LLM
@@ -107,8 +109,8 @@ guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries 
 **writer** — reads `outline, research_notes, run_config` (+ `draft, critique,
 approved, feedback` on revisions, Week 2+). Every factual claim cites a source id
 inline (`[S3]`); citations live only in the text and are normalized, with unknown or
-unparseable ones dropped and logged. Over `max_words` → one more call asking for a
-cut; the result is kept either way. Increments `revision_count` on revisions;
+unparseable ones dropped and logged; titles carry no citations. Over `max_words` →
+one more call (revision context kept) asking for a cut; the shorter draft is kept. Increments `revision_count` on revisions;
 appends a `RevisionRecord(kind="draft")`.
 
 **critic** (built; wired in Week 2) — scores against `docs/RUBRIC.md` (8 criteria,
@@ -181,13 +183,13 @@ and alerts via `measured_evals`.
 
 | Failure | Behavior |
 |---|---|
-| Unknown provider / missing API key | CLI prints one line and exits 1, before any call |
+| Invalid setting / unknown provider / missing API key | CLI prints the error (no traceback) and exits 1, before any call |
 | Search timeout / 5xx / network (all queries) | `SearchUnavailableError` → RetryPolicy (3 attempts, backoff); then fails loudly |
 | Search auth / quota / bad request | not retried; fails immediately |
 | Search returns nothing usable | notes with `gaps` = the key questions; the writer says what's unclear |
 | LLM returns invalid structure | adapter retries once with the validation error; then raises |
 | LLM cites an unknown source id | dropped in code (findings and drafts), logged at WARNING |
-| Draft over the word limit | one cut requested; kept either way (Week 2 critic scores length) |
+| Draft over the word limit | one cut requested; the shorter draft is kept (Week 2 critic scores length) |
 
 ## 12. Security baseline
 

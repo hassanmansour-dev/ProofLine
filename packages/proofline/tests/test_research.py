@@ -22,6 +22,7 @@ async def test_stub_returns_fixed_cited_notes_without_network(tmp_path: Path) ->
     assert first == second
     assert first.findings
     assert all(set(f.source_ids) <= first.source_ids for f in first.findings)
+    assert first.gaps == make_outline().key_questions  # it never researched them
 
 
 async def test_researcher_node_uses_whatever_researcher_is_in_deps(tmp_path: Path) -> None:

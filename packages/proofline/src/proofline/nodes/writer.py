@@ -9,8 +9,9 @@ Steps:
     1. is_revision = "draft" in state → revision_count + 1, else 0.
        rejected_by_human = approved is False (None means not reviewed yet).
     2. Render with revision_context(...) and generate a Draft.
-    3. Over run_config.max_words → one more call with too_long_context(...); if still
-       over, keep it and log WARNING (the Week 2 critic's length_fit scores it).
+    3. Over run_config.max_words → one more call with the revision context plus
+       too_long_context(...); keep the shorter draft, and if it's still over, log
+       WARNING (the Week 2 critic's length_fit scores it).
     4. Citations live only in the text (Draft.cited_source_ids is parsed from it,
        ADR-0011): normalize them and drop ids not in research_notes, logging WARNING.
 """
@@ -42,11 +43,17 @@ _BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
 _LOOSE_ID_RE = re.compile(r"[Ss]\s*(\d+)")
 
 
-def _parse_bracket(inner: str) -> list[str] | None:
-    """Ids in one bracket, normalized ("s 3; S5" -> ["S3", "S5"]); None if unparseable (a range)."""
-    if re.sub(r"[,;\s]", "", _LOOSE_ID_RE.sub("", inner)):
-        return None
-    return [f"S{n}" for n in _LOOSE_ID_RE.findall(inner)]
+def _parse_bracket(inner: str) -> list[str] | str | None:
+    """Classify one bracket's contents.
+
+    list -> citation ids, normalized ("s 3; S5" -> ["S3", "S5"])
+    None -> a malformed citation (a range like "S1-S3"): dropped
+    str  -> not a citation at all ("S3 docs"): kept verbatim
+    """
+    leftover = re.sub(r"[,;\s]", "", _LOOSE_ID_RE.sub("", inner))
+    if not leftover:
+        return [f"S{n}" for n in _LOOSE_ID_RE.findall(inner)]
+    return inner if re.search(r"[A-Za-z]", leftover) else None
 
 
 def _clean_citations(text: str, known: set[str], dropped: list[str]) -> str:
@@ -58,17 +65,17 @@ def _clean_citations(text: str, known: set[str], dropped: list[str]) -> str:
             ids = [i.strip() for b in brackets for i in b.split(",")]
             if all(i in known for i in ids):
                 return m.group(0)  # canonical and known: leave untouched
-        kept: list[str] = []
+        pieces: list[str] = []
         for inner in brackets:
             parsed = _parse_bracket(inner)
-            if parsed is None:
+            if isinstance(parsed, str):
+                pieces.append(f"[{parsed}]")
+            elif parsed is None:
                 dropped.append(f"[{inner}]")
-                continue
-            kept.extend(i for i in parsed if i in known)
-            dropped.extend(i for i in parsed if i not in known)
-        if not kept:
-            return ""
-        return m.group("space") + "".join(f"[{i}]" for i in dict.fromkeys(kept))
+            else:
+                pieces += [c for i in parsed if i in known and (c := f"[{i}]") not in pieces]
+                dropped.extend(i for i in parsed if i not in known)
+        return m.group("space") + "".join(pieces) if pieces else ""
 
     cleaned = _CITATION_RUN_RE.sub(rebuild, text)
     return cleaned.strip() if cleaned != text and text == text.strip() else cleaned
@@ -79,8 +86,12 @@ def _without_unknown_citations(draft: Draft, known: set[str]) -> tuple[Draft, li
     dropped: list[str] = []
     cleaned = draft.model_copy(
         update={
-            field: _clean_citations(getattr(draft, field), known, dropped)
-            for field in ("hook", "body", "call_to_action")
+            **{
+                field: _clean_citations(getattr(draft, field), known, dropped)
+                for field in ("hook", "body", "call_to_action")
+            },
+            # titles aren't spoken or cited: strip every citation from them
+            "title": _clean_citations(draft.title, set(), dropped),
         }
     )
     return (cleaned if cleaned != draft else draft), dropped
@@ -116,8 +127,10 @@ async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
     draft = await deps.llm.generate(prompt_with(context), Draft, role="writer", run_config=cfg)
     if draft.word_count > cfg.max_words:
         log.warning("writer: %d words > %d, asking for a cut", draft.word_count, cfg.max_words)
-        shorten = too_long_context(draft, cfg.max_words)
-        draft = await deps.llm.generate(prompt_with(shorten), Draft, role="writer", run_config=cfg)
+        # keep the revision context: a cut must not undo the host's or critic's asks
+        shorten = "\n\n".join(filter(None, [context, too_long_context(draft, cfg.max_words)]))
+        cut = await deps.llm.generate(prompt_with(shorten), Draft, role="writer", run_config=cfg)
+        draft = min(draft, cut, key=lambda d: d.word_count)  # never keep a longer "cut"
         if draft.word_count > cfg.max_words:
             log.warning("writer: still %d words after one cut; keeping it", draft.word_count)
 

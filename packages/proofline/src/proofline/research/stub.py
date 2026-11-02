@@ -40,7 +40,13 @@ _FINDINGS = (
 
 
 class StubResearcher:
-    """Returns the same notes for every topic. Swap in WebResearcher for real research."""
+    """Returns the same notes for every topic. Swap in WebResearcher for real research.
+
+    It never researched the outline's questions, so it reports all of them as gaps: the
+    writer then says what's unclear instead of filling in uncited claims.
+    """
 
     async def research(self, topic: str, outline: Outline, run_config: RunConfig) -> ResearchNotes:
-        return ResearchNotes(sources=list(_SOURCES), findings=list(_FINDINGS), gaps=[])
+        return ResearchNotes(
+            sources=list(_SOURCES), findings=list(_FINDINGS), gaps=list(outline.key_questions)
+        )

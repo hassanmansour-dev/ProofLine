@@ -46,5 +46,6 @@ jobs:
 
       - name: measured_evals stands alone (installed without proofline)
         run: >-
-          uv run --isolated --no-project --with ./packages/measured_evals --with pytest
+          uv run --isolated --no-project --reinstall-package measured-evals
+          --with ./packages/measured_evals --with pytest
           python -m pytest -q -p no:cacheprovider packages/measured_evals/tests
