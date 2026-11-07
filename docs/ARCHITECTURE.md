@@ -1,6 +1,6 @@
 # Architecture — Proofline
 
-Status: **Week 1, linear flow** (ADR-0012). Later weeks are marked ⟶ so the
+Status: **Week 1, linear flow** (ADR-0012). This describes the content pipeline, which becomes the Measured Ops content agent (ADR-0013); the Measured Ops architecture is added from step C1. Later weeks are marked ⟶ so the
 design doesn't need to be torn up when they land.
 
 ## 1. What it does

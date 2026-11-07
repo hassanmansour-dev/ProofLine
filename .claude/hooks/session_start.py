@@ -17,7 +17,7 @@ def current_week() -> str:
     for line in plan.read_text(encoding="utf-8").splitlines():
         if line.startswith("#") and "◀ CURRENT" in line:
             return re.sub(r"^#+\s*", "", line).replace("◀ CURRENT", "").strip()
-    return "none marked — ask Hassan which week we're in"
+    return "none marked — ask Hassan which step we're on"
 
 
 def git(*args: str) -> str:
@@ -33,10 +33,12 @@ def main() -> None:
     log = git("log", "--oneline", "-5")
 
     print("## Session context (from .claude/hooks/session_start.py)")
-    print(f"- Current plan week: **{current_week()}** — scope is docs/PLAN.md for that week.")
-    print("- Phase 1 (weeks 1-4) scope rule: no multi-agent, no supervisor, no MCP inside the app.")
+    print(f"- Current plan step: **{current_week()}** — scope is that step in docs/PLAN.md.")
     print(
-        "- Guardrail: own time and equipment only; no employer or client code, data or names. Repo goes public at launch."
+        "- Scope rule: build only the current step; one new agent at a time; real-world actions go through the approval policy."
+    )
+    print(
+        "- Guardrail: own time and equipment only; no employer or client code, data or names. Repo is public: demo data only; private data lives in measured-ops-private."
     )
     print(f"- Branch: {branch}")
     if status_lines:

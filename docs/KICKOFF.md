@@ -15,7 +15,7 @@ uv sync                                                 # creates .venv + uv.loc
 cp .env.example .env                                    # fill in the two required keys
 uv run pytest -m "not live"                             # expect: all pass, 18 xfailed
 git add -A && git commit -m "chore: project kickoff kit"
-gh repo create proofline --private --source . --push   # private until the Jan 24 launch
+gh repo create proofline --public --source . --push    # public from the start (ADR-0013); private data lives in measured-ops-private
 ```
 
 ## 3. First Claude Code session
