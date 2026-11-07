@@ -2,7 +2,7 @@
 
 Runs the outline's queries concurrently through the SearchClient port (Tavily in
 production), dedupes and ranks the results, assigns ids S1..Sn in code, and asks the
-LLM for findings that cite those ids (ADR-0007, ADR-0011). Week 5 replaces this with
+LLM for findings that cite those ids (ADR-0007, ADR-0011). Content agent v1 (GROW-9) replaces this with
 a web-search agent behind the same Researcher protocol.
 """
 

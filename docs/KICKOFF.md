@@ -1,5 +1,9 @@
 # Kickoff — from zip to first Claude Code session (~30 min)
 
+> Historical: how the repo was first set up, under the original week-by-week plan.
+> The current plan is ordered steps in `docs/PLAN.md` (ADR-0013); start a session
+> with `/week <step>`, for example `/week C1`.
+
 ## 1. Prerequisites
 - `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`), `git`, `gh` (optional)
 - `python3` on PATH — the Claude Code hooks are stdlib Python scripts
@@ -15,7 +19,7 @@ uv sync                                                 # creates .venv + uv.loc
 cp .env.example .env                                    # fill in the two required keys
 uv run pytest -m "not live"                             # expect: all pass, 18 xfailed
 git add -A && git commit -m "chore: project kickoff kit"
-gh repo create proofline --private --source . --push   # private until the Jan 24 launch
+gh repo create proofline --public --source . --push    # public from the start (ADR-0013); private data lives in measured-ops-private
 ```
 
 ## 3. First Claude Code session

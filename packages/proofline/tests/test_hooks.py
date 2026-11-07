@@ -89,12 +89,12 @@ def test_stop_hook_never_blocks_twice() -> None:
     assert code == 0
 
 
-def test_session_start_reports_current_week() -> None:
+def test_session_start_reports_current_step() -> None:
     code, out, _ = _run(
         "session_start.py", {"hook_event_name": "SessionStart", "source": "startup"}
     )
     assert code == 0
     plan = (ROOT / "docs" / "PLAN.md").read_text(encoding="utf-8")
     [current] = [ln for ln in plan.splitlines() if ln.startswith("#") and "◀ CURRENT" in ln]
-    week = current.lstrip("# ").split(" — ")[0]  # e.g. "Week 1"
-    assert f"Current plan week: **{week}" in out
+    step = current.lstrip("# ").replace("◀ CURRENT", "").strip()  # e.g. "C1 · Contract (GROW-80)"
+    assert f"Current plan step: **{step}**" in out

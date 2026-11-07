@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     max_sources: int = 8
     results_per_query: int = 5
     max_source_chars: int = 4000
-    # stub = fixed notes, no network (Week 1 default); web = Tavily search + LLM extraction
+    # stub = fixed notes, no network (default); web = Tavily search + LLM extraction
     researcher: Literal["stub", "web"] = "stub"
     search_concurrency: int = Field(default=4, ge=1)
     recursion_limit: int = 40

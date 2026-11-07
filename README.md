@@ -10,12 +10,13 @@ short technical script with inline citations, and formats the result: a title, a
 hook, a body and a call to action, under 200 words. The same script works as a
 LinkedIn post and as a 1-minute video about AI engineering.
 
-Built in public, October 2026 → January 2027. This is Week 1: the linear flow. The
-[roadmap](#roadmap) shows where it goes next: a critic loop, human review, an API,
-tracing, parallel research agents, a fact-checker, MCP servers, then evals in CI,
-cost budgets and prompt-injection defenses.
+Built in public. **Proofline v1 is Measured Ops** ([ADR-0013](docs/adr/0013-measured-ops-is-proofline-v1.md)):
+a LangGraph supervisor with specialist agents that runs a real work plan, with a
+human approving anything public, any deploy, any spend and any message to a real
+person. This content pipeline is its first slice. Today the linear flow works end to
+end; the [roadmap](#roadmap) shows what comes next, in order.
 
-## How it works (Week 1)
+## How it works today
 
 ```mermaid
 flowchart LR
@@ -25,7 +26,7 @@ flowchart LR
 | Node | Does | Output |
 |---|---|---|
 | **planner** | Picks one angle for this audience; writes answerable questions, search queries and 2–4 beats | `Outline` (structured output) |
-| **researcher** | Calls whatever `Researcher` is configured: fixed notes this week, a web-search agent from Week 5 | `ResearchNotes` with source ids `S1..Sn` assigned in code |
+| **researcher** | Calls whatever `Researcher` is configured: fixed notes this week, a web-search agent in the content agent's v1 | `ResearchNotes` with source ids `S1..Sn` assigned in code |
 | **writer** | Writes the script from the outline and notes; every claim cites a source; asks itself for one cut if it runs over the limit | `Draft` (title, hook, body, call to action) |
 | **finalizer** | Renders Markdown with the cited sources; saves `outputs/<run-id>/script.md` and `script.json` | `FinalScript` |
 
@@ -45,8 +46,8 @@ Things a reviewer may want to check:
 
 ```
 packages/
-  proofline/        the pipeline app: graph, nodes, CLI (API from Week 3)
-  measured_evals/   the eval + security layer (skeleton now; built in weeks 9–11)
+  proofline/        the pipeline app: graph, nodes, CLI (API from C2)
+  measured_evals/   the eval + security layer (interface in C1; metrics and CI later)
 ```
 
 The evaluation and security code lives in its own installable package,
@@ -58,7 +59,7 @@ The evaluation and security code lives in its own installable package,
 - **Evals have to be independent of what they judge.** A metric that reaches into
   the pipeline's internals ends up grading itself.
 - **Splitting later is expensive.** Starting split costs one `pyproject.toml`;
-  untangling the imports in Week 10 would cost a week.
+  untangling the imports later would cost far more.
 
 The boundary is enforced, not just intended. `packages/measured_evals/tests/test_boundary.py`
 fails if the package declares or imports `proofline`, and CI installs
@@ -107,23 +108,22 @@ push and pull request.
 
 ## Roadmap
 
-| Week | Dates | Milestone |
-|---|---|---|
-| **1** | Oct 26 – Nov 1 | **Linear flow**, two-package workspace, CLI, CI ◀ now |
-| 2 | Nov 2 – 8 | Critic scores against a rubric; the writer revises until good enough, with a revision guard |
-| 3 | Nov 9 – 15 | Human review via `interrupt()`; checkpointer (resume after a crash); FastAPI endpoint |
-| 4 | Nov 16 – 22 | LangSmith tracing, run report, full README · `v0.1.0` |
-| 5 | Nov 23 – 29 | Supervisor + web-search researcher agent (replaces the stub, same interface) |
-| 6 | Nov 30 – Dec 6 | Parallel researcher agents (web, docs/GitHub) with fan-out and merge |
-| 7 | Dec 7 – 13 | Independent fact-checker agent on a different model |
-| 8 | Dec 14 – 20 | MCP servers: read-only knowledge over past scripts · `v0.2.0` |
-| 9 | Dec 21 – 27 | Golden set of 20 topics (`measured_evals`) |
-| 10 | Dec 28 – Jan 3 | DeepEval metrics + promptfoo regression checks in CI |
-| 11 | Jan 4 – 10 | Cost budgets, prompt-injection suite, API auth and rate limiting · `v0.3.0` |
-| 12 | Jan 11 – 17 | Case study + demo video |
-| 13 | Jan 18 – 24 | Public launch: repo public, `measured-evals` on PyPI · `v1.0.0` |
+Ordered steps, no dates. Each starts when the steps it depends on are done.
 
-Week-by-week detail: [`docs/PLAN.md`](docs/PLAN.md). Architecture:
+| Step | Milestone |
+|---|---|
+| ✅ | Linear flow, two-package workspace (`proofline` + `measured_evals`), CLI, CI |
+| **C1** ◀ now | Contract: shared state, agent interface, approval actions, eval interface |
+| C0 | One-command bootstrap (repo, database, hosting, env) and the private ops repo |
+| C2 | Supervisor skeleton with checkpointer, approval interrupt, end-to-end test in CI |
+| C3–C7 | Approval inbox (mobile), MCP tools, orchestrator, eval/guard node with tracing and cost |
+| C8 | Content agent: one topic → post, clip script, lesson outline, scored and waiting for approval |
+| C9–C10 | A week of real use, then scheduled runs with budget caps and a kill switch |
+| C11 | More agents, one at a time, same recipe |
+| Evals | Golden set, DeepEval + promptfoo regression checks in CI, injection suite, budgets, auth |
+| Launch | Case study, demo video, `measured-evals` on PyPI · `v1.0.0` |
+
+Step detail: [`docs/PLAN.md`](docs/PLAN.md). Architecture:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Repository layout

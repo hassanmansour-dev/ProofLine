@@ -4,7 +4,7 @@ Contract (docs/ARCHITECTURE.md §4):
     reads:   topic, outline, run_config
     writes:  research_notes
     deps:    runtime.context.researcher (StubResearcher by default; WebResearcher with
-             PROOFLINE_RESEARCHER=web; a web-search agent in Week 5)
+             PROOFLINE_RESEARCHER=web; a web-search agent in GROW-9)
 The node owns the one guarantee every implementation must meet: findings cite only
 source ids that exist (ADR-0007). graph.py wires it with RETRY_POLICY below.
 """

@@ -1,9 +1,9 @@
-"""FastAPI app. Week 3 S3. Contract in docs/ARCHITECTURE.md §7.
+"""FastAPI app. Step C2 (approval inbox in C4; ADR-0014 decides whether these endpoints stay). Contract in docs/ARCHITECTURE.md §7.
 
 `create_app(deps=..., checkpointer_url=...)` is the seam tests use (fakes + memory://);
 `app = create_app()` is what uvicorn serves with real deps from .env.
 
-Implementation notes for Week 3:
+Implementation notes for C2:
 - lifespan: dotenv.load_dotenv(); open_checkpointer(url) once; compile build_graph() once;
   build_deps() unless injected; store on app.state; close on shutdown.
   (httpx ASGITransport doesn't run lifespan — tests enter app.router.lifespan_context(app).)
@@ -34,7 +34,7 @@ def create_app(*, deps: Deps | None = None, checkpointer_url: str | None = None)
     async def health() -> dict[str, Any]:
         return {"status": "ok", "checkpointer": url.split(":", 1)[0]}
 
-    # Week 3 S3: lifespan + /runs endpoints go here.
+    # C2: lifespan + /runs endpoints go here.
     return api
 
 

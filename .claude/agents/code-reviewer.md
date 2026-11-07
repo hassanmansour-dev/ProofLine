@@ -41,7 +41,7 @@ handles style).
 - New behavior without a test; test that hits the network without `@pytest.mark.live`.
 - `xfail(strict=True)` marker left on a test that now passes.
 **Scope**
-- Anything Phase 2/3 (agents, supervisor, MCP in app, eval frameworks) in Phase 1.
+- Anything outside the current `docs/PLAN.md` step, or a step whose dependencies aren't done (e.g. a new agent before C10, two new agents at once).
 
 ## Output
 ```

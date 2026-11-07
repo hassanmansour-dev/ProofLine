@@ -1,245 +1,178 @@
-# Plan — Proofline (13 weeks, Oct 26, 2026 → Jan 24, 2027)
+# Plan — Proofline v1 = Measured Ops
 
-Cadence: ~4 evening sessions per week, 60–90 min each (about 6 hrs/week).
-Each session below is sized for one sitting. Move the `◀ CURRENT` marker as
-you go; Claude Code reads it to know the scope. Jira: epic GROW-1 on
-sanovinci.atlassian.net (one ticket per week, due the Sunday of that week).
+**Order, not dates.** Hassan's available time changes week to week, so this plan
+has no due dates: steps run in the order below, and a step starts when the steps
+it depends on are done. Move the `◀ CURRENT` marker to the step being worked on;
+the session-start hook and Claude Code read it to know the scope.
 
-| Phase | Weeks | Theme |
+Jira: epic **GROW-69** on sanovinci.atlassian.net. Every step lists its ticket and
+what it waits on. Dependencies are also set as "blocked by" links in Jira.
+
+## Scope (ADR-0013)
+
+**Measured Ops is Proofline's v1 scope, not a second project.** Measured Ops is a
+LangGraph supervisor with specialist agents that runs Hassan's work plan, with a
+human approving anything that has real impact. Proofline, the eval-gated content
+pipeline, is its first slice: the content agent, the eval/guard node and the
+approval inbox. One build, one flagship.
+
+Two repos:
+
+| Repo | Visibility | Holds |
 |---|---|---|
-| 1 | 1–4 | LangGraph fundamentals with production habits |
-| 2 | 5–8 | Multi-agent (supervisor, parallel researchers, fact-checker) + MCP servers |
-| 3 | 9–11 | Evals, cost budgets, security — built in `packages/measured_evals` |
-| Launch | 12–13 | Case study, demo video, repo public |
+| `proofline` (this one) | Public | Contracts, the orchestrator, agents with a **demo config and sample data**, the approval inbox, and `measured_evals` (published as open source) |
+| `measured-ops-private` | Private (created in C0) | Real config and policy values, prompts tuned to real accounts, calendar (personal only, never work), prospect lists, learner data, traces with personal data. Depends on `proofline` as a package |
 
-Build-in-public videos (1 min, every two weeks, also the LinkedIn post):
-V1 Nov 8 · V2 Nov 22 · V3 Dec 6 · V4 Dec 20 · V5 Jan 3 · V6 Jan 17. Scripts
-live in Jira GROW-50…55. Note what breaks each week: it's the next video.
+Nothing private is ever committed here. Pre-commit secret and PII scan on this repo.
 
-Output: one short technical script (≤200 words) per topic, used as a LinkedIn post
-and a 1-minute video. Two packages in one uv workspace (ADR-0012): `proofline` (the
-pipeline app) and `measured_evals` (eval + security layer; never imports proofline;
-open-sourced at launch, reused by the Measured Lab web app later).
+## Already built (Week 0–1 of the earlier plan)
 
-Phase 1 exit criteria: a script on a real topic goes plan → research → write →
-critic loop → you reject once with feedback → rewrite → you approve → final
-Markdown with real sources, resumable after a process kill, callable via API,
-traced in LangSmith, explained in a README.
+Kept and reused, not thrown away:
 
----
+- [x] Repo on personal GitHub, uv workspace with two packages (ADR-0012):
+  `packages/proofline` and a standalone, boundary-tested `packages/measured_evals`
+- [x] Contracts locked for the content pipeline (ADR-0011), versioned prompts
+- [x] Nodes: planner, researcher (stub + Tavily web), writer, critic, finalizer, with
+  fake-model tests; linear graph; `proofline run --topic --audience`
+- [x] Checkpointer factory and API module scaffolding; CI (ruff, mypy, pytest) on both packages
+- [x] Pre-public check (2026-11-07): full history has no secrets, no `.env`, no
+  workplace references. Re-run before launch (L2).
 
-## Week 0 — Setup (Oct 29–30, ~45 min)
+The content pipeline above becomes the seed of the **content agent** (C8). Its
+critic becomes the first rubric in the eval/guard node (C7).
 
-- [x] Create repo `proofline` on your personal GitHub (private until launch), unzip this kit into it, first commit
-- [ ] `uv sync`, copy `.env.example` → `.env`, add `ANTHROPIC_API_KEY`, `TAVILY_API_KEY`
-- [ ] Open Claude Code in the repo and paste the kickoff prompt from `docs/KICKOFF.md`
-- [x] Fast suite runs: routing + schema tests pass, Week 1 targets show as `xfailed`
-- [ ] Fill in `docs/BRAND_VOICE.md` (15 min, your words — the writer and critic depend on it)
-
-**Done when:** `uv run pytest -m "not live"` is green with xfails, and Claude Code
-session start shows "Week 0".
+Open from the earlier Week 0–1:
+- [ ] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it)
+- [ ] First live run with a real key (input for the content agent's rubric)
 
 ---
 
-## Week 1 — Linear end to end (Oct 26 → Nov 1 · GROW-5) ◀ CURRENT
+## Phase 1 — Build the evidence
 
-Goal: one straight pass works on a real topic. No loops yet.
+### C1 · Contract (GROW-80) ◀ CURRENT
 
-- [x] **S1 Contracts.** Review the kit's contracts with the `langgraph-architect` and
-  `prompt-engineer` agents; lock them via ADR-0011 (open items deferred to Week 3).
-- [x] **S2–S4 Nodes.** planner, researcher, writer, critic (built, wired in Week 2) and
-  finalizer, each with FakeLLM / FakeSearch tests.
-- [x] **S5 Brief reset (ADR-0012).** uv workspace: `packages/proofline` + empty
-  `packages/measured_evals` (boundary-tested). State per the brief (topic, audience,
-  research_notes, draft, critique, score, revision_count, approved, feedback). One
-  short format (≤200 words, title/hook/body/CTA). Brand name from
-  `PROOFLINE_BRAND_NAME`. `Researcher` protocol with `StubResearcher` (default) and
-  `WebResearcher` (Tavily). Model factory from env. Linear graph
-  planner → researcher → writer → finalizer; `proofline run --topic --audience`;
-  end-to-end tests with a fake model; CI on both packages; README.
-- [ ] **S6 First live run.** Add `ANTHROPIC_API_KEY` to `.env`, then
-  `uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"`.
-  Read the output critically and note 3 things a critic should catch (input for Week 2).
+Waits on: nothing. **Everything else builds on this.**
 
-**Done when:** that command prints a finished script; `uv run pytest` passes for both
-packages (node tests + an end-to-end graph test with a fake model); ruff and mypy are
-clean in CI; the README explains the two-package design and the roadmap.
+- [ ] Pydantic models: `OpsState`, `Task`, `AgentResult`, `PendingAction` (type,
+  target, preview, eval scores, risk level)
+- [ ] Agent interface: every agent is a subgraph, `Task` → `AgentResult`
+- [ ] Approval policy table as config; unknown action types default to approval
+- [ ] Eval package interface stubbed in `measured_evals`: `evaluate(output, context) → EvalScores`
+- [ ] ADR-0014: where the Measured Ops code lives in this workspace (new
+  `packages/measured_ops` member, or inside `proofline`), and the public/private split
+- [ ] Same ADR: what happens to the content pipeline's own human review and run API.
+  The supervisor's approval gate (C2) and the inbox (C4) cover approval, so
+  `nodes/human_review.py`, the `/runs` endpoints in `api.py` and the CLI review
+  prompt (all still stubs) either stay inside the content agent or are dropped.
+  Relabel or remove their `C2 target` xfail tests to match
 
-**Concepts you should be able to explain after this week:** StateGraph, partial
-updates, `START`/`END`, runtime context, structured output, ports and adapters
-(Researcher, StructuredLLM), why ids are assigned in code, why the eval package
-can't import the app.
+**Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 
----
+### C0 · One-command bootstrap (GROW-91)
 
-## Week 2 — Critic loop + guard (Nov 2 → 8 · GROW-6)
+Waits on: C1.
 
-Goal: the graph revises itself until good enough or out of budget.
+- [ ] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
+  `--dry-run`, teardown for throwaway projects; production always asks
+- [ ] First use: create `measured-ops-private` and wire it to depend on this repo
+- [ ] Pre-commit secret + PII scan on this repo
 
-- [ ] **S1 Routing.** Wire the critic after the writer and `route_after_critic` (reads
-  `score`) with a path map. Table-driven tests already exist in
-  `packages/proofline/tests/test_routing.py` — extend for edge cases (exact threshold, gate).
-- [ ] **S2 Writer revision mode.** Revision prompt path: must_fix first, keep what scored
-  well, increment `revision_count`, append `history`. Test: second pass sees the critique.
-- [ ] **S3 Stream it.** CLI uses `astream(stream_mode="updates")` to print each node and
-  score as it happens. Watch a loop live.
-- [ ] **S4 Calibrate the critic.** Run 3 topics. For each final draft, score it yourself on
-  the rubric *before* reading the critic's scores. Note per-criterion gaps in
-  `docs/calibration.md`. Adjust the critic prompt (bump version + changelog). This
-  is the seed of Phase 3's "critic vs your judgment" eval.
+**Done when:** a new project reaches a preview URL with working Supabase in one
+command, a second run changes nothing, and the private repo exists.
 
-- [ ] **Video 1** (record Sat Nov 7, post Sun Nov 8): "Why I'm building Proofline in public" (GROW-50).
+### C2 · Skeleton + end-to-end harness (GROW-81)
 
-**Done when:** a loop of ≥2 revisions is visible in the CLI stream; guard tests prove the
-loop ends at the threshold and at `max_revisions`; recursion limit never hit.
+Waits on: C1, C0.
 
-**Concepts:** conditional edges, path maps, cycles, reducers (`history`), recursion limit,
-stream modes.
+- [ ] Supervisor graph with a stub echo agent, Supabase (Postgres) checkpointer,
+  interrupt before any `PendingAction`
+- [ ] CI e2e test: task in → stub agent → approval interrupt → resume → done
 
----
+**Done when:** e2e test green in CI. Every later step keeps it green and adds its own case.
 
-## Week 3 — Interrupt, checkpointer, FastAPI (Nov 9 → 15 · GROW-7)
+After C2, two branches run **in parallel**:
 
-Goal: a human is in the loop, runs survive restarts, there's an API.
+| Branch A — tools and planning | Branch B — inbox and quality |
+|---|---|
+| **C3** Review policy table on phone (GROW-82) | **C4** Approval inbox v0, mobile (GROW-83) |
+| **C5** MCP tools: Jira + personal calendar, read/write split (GROW-84) · waits on C3 | **C7** Eval/guard node v0 using `measured_evals`: quality, injection, PII; tracing + cost per agent (GROW-86) · waits on C4 |
+| **C6** Orchestrator: weekly plan by order and available time, never deadlines (GROW-85) · waits on C5 | |
 
-- [ ] **S1 Human review.** `nodes/human_review.py` with `interrupt()`; `route_after_human`.
-  CLI prompts approve/reject + feedback and resumes with `Command(resume=...)`.
-  Test with `InMemorySaver`: reject → writer → critic → review → approve → finalizer.
-- [ ] **S2 Checkpointer.** `checkpointing.py` memory + SQLite with the serde allowlist.
-  Test: run to interrupt, close saver, reopen, resume with same `thread_id` → completes.
-  `proofline show THREAD_ID` prints history from the checkpoint.
-- [ ] **S3 API.** `api.py` `create_app()`: lifespan opens the checkpointer + compiles once;
-  `POST /runs`, `GET /runs/{id}`, `POST /runs/{id}/review`. `tests/test_api.py` is the contract.
-- [ ] **S4 Stretch: Supabase Postgres.** `AsyncPostgresSaver` behind the same factory;
-  run the resume test against it. (Skip without guilt if the week ran long.)
+### C8 · Content agent v0 (GROW-87)
 
-**Done when:** kill the process at the review step, restart, resume via API, get the
-final script.
+Waits on: C6 and C7. **First useful slice: get it live as early as possible.**
 
-**Concepts:** `interrupt` vs breakpoints, node re-execution on resume, `Command`,
-thread_id, checkpoint history / time travel (`aget_state_history`).
+- [ ] One topic → LinkedIn post + clip script + lesson outline, built from the
+  existing pipeline nodes; output goes through the eval node to the inbox
+- [ ] Never publishes. LinkedIn posts stay approved drafts Hassan pastes himself
+- [ ] Trace and judge-agreement logging on from day one
 
----
+**Done when:** e2e passes and the first real draft appears in the inbox.
 
-## Week 4 — Tracing, README, build post #1 (Nov 16 → 22 · GROW-8)
+Unlocks: README v1 + build post #1 (GROW-8, can start after C2), the workshop deck
+with real traces (GROW-34), and the case study's traces (GROW-16).
 
-Goal: it's observable, explainable, and published.
+### C9 · A week of real use (GROW-88)
 
-- [ ] **S1 Tracing.** LangSmith env, run metadata (thread_id, prompt versions, models),
-  tags. Run one full flow with a reject. In LangSmith: find the slowest node, the most
-  expensive call, total tokens/cost. Write the numbers in `docs/run-report.md`.
-- [ ] **S2 README.** Use `/readme`: problem, diagram, design decisions (link ADRs), how to
-  run, what's next. Screenshots of the trace and the CLI stream.
-- [ ] **S3 Video 2.** "Every AI loop needs an exit" (GROW-51, post Sun Nov 22). Bonus:
-  generate the script *with Proofline* and approve it through the API before recording.
-  Doubles as LinkedIn build post #1.
-- [ ] **S4 Retro + tag.** `docs/retro-phase1.md`: what worked, what was hard, what
-  Phase 2 must change. Tag `v0.1.0`.
+Waits on: C8. Approve or edit 5+ drafts on the phone; log what's wrong as comments.
+Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 
-**Done when:** README + Video 2 published; `v0.1.0` tagged. (Day-30 checkpoint.)
+### C10 · Staging as scheduled jobs (GROW-89)
 
----
+Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
+**Done when:** it runs unattended for 3 days with digests arriving.
 
-## Week 5 — Supervisor + web researcher (Nov 23 → 29 · GROW-9)
+### C11 · Remaining build agents, one at a time (GROW-90)
 
-Goal: research becomes multi-agent without changing the `ResearchNotes` contract.
+Waits on: C10. Same recipe each: contract → e2e case → eval thresholds → one
+week of phone review → enable. Never two new agents at once. Order:
 
-- [ ] **S1 ADR.** Supervisor design: what it decides (which researchers a topic needs),
-  state it adds, how results merge into `ResearchNotes`. Revisit ADR-0001 and ADR-0003.
-- [ ] **S2 Web researcher agent.** A tool-using agent replaces `StubResearcher` behind the
-  existing `Researcher` protocol (graph.py unchanged); same untrusted-data rules (ADR-0007).
-- [ ] **S3 Supervisor.** Routes by topic type; routing stays pure and tested.
-- [ ] **S4 Tests + live run.** Writer and critic unchanged; contract tests still green.
+1. **Academy agent** (GROW-75) · also waits on the Maktab MCP server (GROW-93),
+   built in the Maktab repo, which waits on the Academy institution (GROW-61)
+2. **Proofline build agent + Measured Index agent** (GROW-77)
+3. **Admin agent** (GROW-79)
 
-**Done when:** the supervisor routes research by topic type and downstream nodes didn't change.
+### Evals and hardening
 
-## Week 6 — GitHub/docs researcher, parallel fan-out (Nov 30 → Dec 6 · GROW-10)
+- **Content agent v1** (GROW-9) · waits on C9: parallel researchers, independent
+  fact-checker, read-only knowledge MCP server
+- **Golden set, 20 topics** (GROW-13) · waits on C9: seeded from real edits;
+  doubles as Measured Lab's first exercises
+- **DeepEval + promptfoo in CI, publish `measured-evals`** (GROW-14) · waits on GROW-13.
+  Measured Lab v0 (GROW-68) and Measured Index #1 (GROW-67) wait on this
+- **Production hardening** (GROW-15): cost budgets, injection suite, auth, rate limits
 
-- [ ] **S1** GitHub/docs researcher agent (own port, fakes first).
-- [ ] **S2** Parallel fan-out (`Send` or parallel edges) + reducer merge; dedupe across researchers.
-- [ ] **S3** Failure isolation: one researcher failing doesn't kill the run.
-- [ ] **Video 3** "Why my AI waits for my approval" (GROW-52, post Sun Dec 6).
+### Launch
 
-**Done when:** researchers run in parallel and results merge with stable `S1..Sn` ids.
+- **L1 Case study + demo video** (GROW-16) · waits on C8 traces; demo uses the
+  public demo config, no private data on screen
+- **L2 Public launch** (GROW-17) · waits on L1 and GROW-14: re-run the pre-public
+  check, choose a licence, tag `v1.0.0`, publish `measured-evals`, case study on
+  hassanmansour.com, build post #3. **This gate opens Phase 2.**
 
-## Week 7 — Independent fact-checker (Dec 7 → 13 · GROW-11)
+## Phase 2 — Use the evidence (after L2)
 
-Lighter week: the pilot workshop is this week.
+Outreach agent (GROW-76) and the next waves (GROW-95 to GROW-98), each gated in Jira
+on what it depends on.
 
-- [ ] **S1 ADR.** Fact-checker placement (before or beside the critic); different model from the writer.
-- [ ] **S2** Fact-checker: each claim → supported / unsupported / contradicted, with source ids.
-- [ ] **S3** Unsupported claims feed the writer's `must_fix` and the critic's accuracy gate.
+## Build-in-public videos
 
-**Done when:** unsupported claims are flagged with source gaps and the writer fixes them.
+One-minute videos, also the LinkedIn post, each recorded when the build reaches it:
 
-## Week 8 — MCP servers: read-only knowledge (Dec 14 → 20 · GROW-12)
+| Video | Ticket | Waits on |
+|---|---|---|
+| 1 · Why I'm building this in public | GROW-50 | nothing (ready now) |
+| 2 · Why my AI waits for my approval | GROW-52 | C2 (approval interrupt) |
+| 3 · Every AI loop needs an exit | GROW-51 | C8 (content agent's critic loop) |
+| 4 · You probably don't need more agents | GROW-53 | content agent v1 (GROW-9) |
+| 5 · How I know my AI didn't get worse | GROW-54 | evals in CI (GROW-14) |
+| 6 · Can someone hijack my agent? | GROW-55 | hardening (GROW-15) |
 
-- [ ] **S1 ADR.** Server scope: read-only tools over past scripts + book chapters. Least
-  privilege, no write tools.
-- [ ] **S2** Build the server as its own workspace member (e.g. `packages/knowledge_mcp/`);
-  usable from Claude Desktop/Code too.
-- [ ] **S3** Pipeline loads tools through an MCP client; planner/writer use past scripts to
-  avoid repeats and keep the voice.
-- [ ] **Video 4** "You probably don't need more agents" (GROW-53, post Sun Dec 20).
-  Doubles as LinkedIn build post #2.
-
-**Done when:** the pipeline pulls knowledge via MCP. Tag `v0.2.0`. (Day-60 checkpoint.)
-
-## Week 9 — Golden set (Dec 21 → 27 · GROW-13) — holiday-light
-
-- [ ] Golden-set format and loader in `packages/measured_evals` (app-agnostic); Proofline's
-  20 topics in `packages/proofline/evals/golden/`, each with audience and what a good
-  script must show (must-mention points, must-not-claim, word limit).
-
-**Done when:** 20 topics with expected qualities are committed.
-
-## Week 10 — Evals in CI (Dec 28 → Jan 3 · GROW-14)
-
-- [ ] **S1** DeepEval metrics in `measured_evals`: faithfulness to sources, rubric score, cost, latency.
-- [ ] **S2** promptfoo config for prompt/model regression on the golden set (Proofline runs
-  it through `measured_evals`).
-- [ ] **S3** CI (GitHub Actions): eval job on PRs that touch prompts or models; fail on regression.
-- [ ] **S4** Critic vs your judgment, using `docs/calibration.md`.
-- [ ] **Video 5** "How I know my AI didn't get worse" (GROW-54, post Sun Jan 3).
-
-**Done when:** CI fails on a deliberate regression and passes after the fix.
-
-## Week 11 — Production hardening (Jan 4 → 10 · GROW-15)
-
-- [ ] **S1** Per-run cost budget (abort when over) + loop/failure alerts; the budget
-  primitive lives in `measured_evals`.
-- [ ] **S2** Prompt-injection suite in `measured_evals`: pages with hidden instructions;
-  assert Proofline ignores them.
-- [ ] **S3** FastAPI auth (API key) + rate limiting; secrets only from env.
-- [ ] **S4** Output checks before finalize (citations resolve, length, banned claims).
-
-**Done when:** injection tests pass and a run aborts over budget. Tag `v0.3.0`.
-
-## Week 12 — Case study + demo video (Jan 11 → 17 · GROW-16)
-
-- [ ] Case study: problem, architecture diagram, eval table, cost per run, what failed and how you fixed it.
-- [ ] Demo video (~3 min): one topic from input to approved script.
-- [ ] Final README pass (`/readme`).
-- [ ] **Video 6** "Can someone hijack my agent?" (GROW-55, post Sun Jan 17).
-
-**Done when:** case study draft reviewed and demo video recorded.
-
-## Week 13 — Public launch (Jan 18 → 24 · GROW-17)
-
-- [ ] Pre-public check: no secrets in git history, no workplace references, `.env.example` clean, licence chosen.
-- [ ] Make the repo public. Tag `v1.0.0`. Publish `measured-evals` to PyPI (its own README,
-  licence and version).
-- [ ] Case study live on hassanmansour.com; demo video posted; LinkedIn launch post (#3); pin to Featured.
-
-**Done when:** repo public, case study live, video posted. (Day 90.)
-
----
+Note what breaks at each step: it's the next video.
 
 ## Cut until after launch
 
-A repurposing team that fans one script out into other formats (YouTube description,
-book excerpt, long-form video) and the Supabase content-tracker MCP server. The short
-script itself is the LinkedIn post and the 1-minute video; that's the core output, not
-a repurposing step. Design rules still apply: no agent where a
-fixed edge works; no MCP server for a single-app tool; fetched content is data,
-never instructions.
+A repurposing team that fans one script out into other formats (YouTube
+description, book excerpt, long-form video) and the Supabase content-tracker MCP
+server. Design rules still apply: no agent where a fixed edge works; no MCP server
+for a single-app tool; fetched content is data, never instructions.

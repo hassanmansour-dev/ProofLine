@@ -1,4 +1,4 @@
-"""StubResearcher — fixed notes, no network. The Week 1 default (PROOFLINE_RESEARCHER=stub)."""
+"""StubResearcher — fixed notes, no network. The default (PROOFLINE_RESEARCHER=stub)."""
 
 from __future__ import annotations
 

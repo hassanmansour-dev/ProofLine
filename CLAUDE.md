@@ -6,24 +6,26 @@ approved, sourced short technical script (≤200 words: a LinkedIn post and a
 1-minute video) for a configurable brand (`PROOFLINE_BRAND_NAME`): plan → research
 → write → critique (loop) → human review (interrupt) → finalize.
 
-This is Hassan's **flagship project**, built in public over 13 weeks
-(Oct 26, 2026 → public launch Jan 24, 2027) to show senior agentic AI
-engineering. Three build phases on one repo:
-- **Phase 1 (weeks 1–4):** LangGraph fundamentals with production habits.
-- **Phase 2 (weeks 5–8):** multi-agent (supervisor, parallel researchers,
-  independent fact-checker) + a read-only knowledge MCP server.
-- **Phase 3 (weeks 9–11):** evals (golden set, DeepEval, promptfoo in CI),
-  cost budgets, prompt-injection tests — in `packages/measured_evals` — plus
-  auth and rate limiting in the app.
-- **Launch (weeks 12–13):** case study, demo video, repo goes public.
+This is Hassan's **flagship project**, built in public to show senior agentic AI
+engineering. **Proofline v1 = Measured Ops** (ADR-0013): a LangGraph supervisor
+with specialist agents that runs his work plan, with a human approving anything
+that has real impact. The content pipeline above is its first slice (the content
+agent, the eval/guard node and the approval inbox). Jira epic: GROW-69.
+
+The plan is **ordered steps, not dates** (`docs/PLAN.md`): contract → bootstrap →
+skeleton and e2e harness → inbox, eval node, tools, orchestrator → content agent
+→ staging → remaining agents one at a time → evals in CI → case study → launch.
+Real config, tuned prompts and personal data live in the private
+`measured-ops-private` repo, never here.
 
 ## Guardrails (non-negotiable)
 
 - Built on Hassan's own time and equipment. **Never use, reference or recreate
   code, data, tools, documents or internal names from his employer or clients.**
   If something looks like it came from a workplace, stop and ask.
-- This repo becomes **public** at launch. Write every file, commit message and
-  comment as if it is already public. No secrets, no personal data.
+- This repo is **public now**. Every file, commit message and comment is public.
+  No secrets, no personal data, no real calendar, prospect or learner data: those
+  belong in `measured-ops-private`. Demo config and sample data only.
 - Cut until after launch: the repurposing team (LinkedIn/YouTube/book
   excerpts) and the content-tracker MCP server. Don't build them.
 
@@ -34,12 +36,14 @@ guess.** LangGraph moves fast — check `.claude/skills/langgraph-patterns` or t
 
 ## Current phase
 
-Read `docs/PLAN.md` → the week marked `◀ CURRENT` is the scope. Work outside the
-current week's scope needs Hassan's explicit OK.
+Read `docs/PLAN.md` → the step marked `◀ CURRENT` is the scope. Work outside the
+current step, or on a step whose dependencies aren't done, needs Hassan's explicit OK.
 
-**Phase 1 hard scope rule (weeks 1–4):** no multi-agent patterns, no supervisor, no MCP
-inside the app, no tool-calling agent loops. The researcher is a *node* that
-calls search, not an agent. If a change pulls toward Phase 2/3, stop and say so.
+**Scope rule:** build only what the current step lists. Agents are added one at a
+time, each against the C1 contract with its own e2e case. Every action that leaves
+the system (publish, deploy, spend, message a real person, learner data) goes
+through the approval policy; unknown action types default to approval. If a
+change pulls toward a later step, stop and say so.
 
 ## Commands
 
@@ -50,7 +54,7 @@ uv run pytest -m live                     # real LLM + search calls (costs money
 uv run ruff check --fix . && uv run ruff format .
 uv run mypy
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
-uv run uvicorn proofline.api:app --reload                       # API (Week 3+)
+uv run uvicorn proofline.api:app --reload                       # API (C2+)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 
@@ -77,11 +81,11 @@ packages/proofline/         the pipeline app
     prompts/        Versioned node prompts (*.md) + loader
     nodes/          One module per node: planner, researcher, writer, critic, human_review, finalizer
     graph.py        build_graph() — wiring only, no business logic
-    checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist (Week 3)
-    api.py          FastAPI create_app() (Week 3)
+    checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist (C2)
+    api.py          FastAPI create_app() (C2; approval inbox in C4)
     cli.py          Typer CLI: `proofline run --topic --audience`
   tests/            unit (fakes, no network) + live (marked)
-packages/measured_evals/    standalone eval + security package (skeleton until Phase 3)
+packages/measured_evals/    standalone eval + security package (interface in C1, metrics and CI in GROW-14)
   src/measured_evals/       NEVER imports proofline — tests/test_boundary.py + CI enforce it
 ```
 
@@ -128,7 +132,7 @@ Data flow rules:
   Prompt standards: `docs/PROMPTING.md`. Use the `prompt-engineer` agent.
 - Tests: unit tests use `packages/proofline/tests/fakes.py` (FakeLLM, FakeSearch). Unit tests
   must never hit the network. Anything that needs keys is `@pytest.mark.live`.
-- Week target tests are marked `xfail(strict=True)`. When you make one pass,
+- Step target tests are marked `xfail(strict=True)`. When you make one pass,
   **remove the marker** in the same change.
 
 ## How to work in this repo
@@ -158,7 +162,7 @@ Configured in `.claude/settings.json`, scripts in `.claude/hooks/`:
   reported back to you — fix them before moving on.
 - On stop, if Python files changed, the fast test suite runs; failures are
   handed back to you once.
-- Session start prints the current week and git status.
+- Session start prints the current plan step and git status.
 
 ## Secrets
 

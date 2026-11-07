@@ -262,7 +262,7 @@ class FinalScript(_Model):
     estimated_seconds: int
     revision_count: int
     final_score: float | None = Field(
-        default=None, description="Critic's overall score; None when no critic ran (Week 1)."
+        default=None, description="Critic's overall score; None when no critic ran (linear flow)."
     )
     source_urls: list[str]
     prompt_versions: dict[str, str]
