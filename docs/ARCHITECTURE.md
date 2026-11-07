@@ -140,7 +140,8 @@ client at module level (ADR-0003). Tests build `Deps` with `FakeLLM`, and with
 `StructuredLLM.generate(prompt, schema, *, role, run_config) -> T`: one method.
 `build_llm(settings)` picks the adapter from `PROOFLINE_LLM_PROVIDER` (only
 `anthropic` today; an unknown provider or missing key fails before the run starts).
-The Anthropic adapter maps `role` to the model and temperature from `RunConfig`,
+The Anthropic adapter maps `role` to the model and token limit from `RunConfig` (no
+temperature by default, ADR-0015),
 uses `with_structured_output(..., method="json_schema")`, retries once with the
 validation error, and tags each call with the prompt name and version.
 

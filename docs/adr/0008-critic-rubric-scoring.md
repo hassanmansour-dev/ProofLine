@@ -1,6 +1,7 @@
 # ADR-0008: Critic scores per criterion with evidence; overall computed in Python with an accuracy gate
 
 - Status: accepted
+- Amended by ADR-0015: no temperature is sent; the "critic temperature 0" line no longer applies.
 - Date: 2026-10-20
 - Phase/Week: P1W2
 

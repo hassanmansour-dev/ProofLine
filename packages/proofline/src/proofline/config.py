@@ -52,12 +52,11 @@ class Settings(BaseSettings):
             max_words=self.max_words,
             brand_name=self.brand_name,
             models={
-                "planner": ModelSpec(model=self.planner_model, temperature=0.3, max_tokens=2048),
-                "researcher": ModelSpec(
-                    model=self.researcher_model, temperature=0.0, max_tokens=4096
-                ),
-                "writer": ModelSpec(model=self.writer_model, temperature=0.7, max_tokens=8192),
-                "critic": ModelSpec(model=self.critic_model, temperature=0.0, max_tokens=4096),
+                # No temperature: current Claude models reject it (ADR-0015).
+                "planner": ModelSpec(model=self.planner_model, max_tokens=2048),
+                "researcher": ModelSpec(model=self.researcher_model, max_tokens=4096),
+                "writer": ModelSpec(model=self.writer_model, max_tokens=8192),
+                "critic": ModelSpec(model=self.critic_model, max_tokens=4096),
             },
         )
 
