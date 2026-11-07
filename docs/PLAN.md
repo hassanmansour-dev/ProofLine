@@ -157,10 +157,18 @@ on what it depends on.
 
 ## Build-in-public videos
 
-One-minute videos, also the LinkedIn post, in this order (GROW-50 to GROW-55):
-why I'm building this in public → every AI loop needs an exit → why my AI waits for
-my approval → you probably don't need more agents → how I know my AI didn't get
-worse → can someone hijack my agent? Note what breaks each step: it's the next video.
+One-minute videos, also the LinkedIn post, each recorded when the build reaches it:
+
+| Video | Ticket | Waits on |
+|---|---|---|
+| 1 · Why I'm building this in public | GROW-50 | nothing (ready now) |
+| 2 · Why my AI waits for my approval | GROW-52 | C2 (approval interrupt) |
+| 3 · Every AI loop needs an exit | GROW-51 | C8 (content agent's critic loop) |
+| 4 · You probably don't need more agents | GROW-53 | content agent v1 (GROW-9) |
+| 5 · How I know my AI didn't get worse | GROW-54 | evals in CI (GROW-14) |
+| 6 · Can someone hijack my agent? | GROW-55 | hardening (GROW-15) |
+
+Note what breaks at each step: it's the next video.
 
 ## Cut until after launch
 
