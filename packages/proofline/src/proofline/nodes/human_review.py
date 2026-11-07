@@ -1,4 +1,4 @@
-"""human_review — interrupt for approve/reject. Week 3 S1 (ADR-0005).
+"""human_review — interrupt for approve/reject. Step C2 (ADR-0005); ADR-0014 decides whether it stays or the supervisor's approval gate replaces it.
 
 Contract (docs/ARCHITECTURE.md §4):
     reads:   draft, critique, revision_count
@@ -25,4 +25,4 @@ from proofline.state import ScriptState
 
 
 def human_review(state: ScriptState) -> dict[str, Any]:
-    raise NotImplementedError("Week 3 S1 — see module docstring")
+    raise NotImplementedError("C2 — see module docstring")

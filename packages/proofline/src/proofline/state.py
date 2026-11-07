@@ -41,10 +41,10 @@ class ScriptState(TypedDict, total=False):
     # writer
     draft: Draft
     revision_count: int
-    # critic (Week 2)
+    # critic (C8)
     critique: Critique | None
     score: float | None
-    # human_review (Week 3)
+    # human_review (C2)
     approved: bool | None
     feedback: str | None
     # finalizer

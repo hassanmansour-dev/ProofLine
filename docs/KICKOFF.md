@@ -1,5 +1,9 @@
 # Kickoff — from zip to first Claude Code session (~30 min)
 
+> Historical: how the repo was first set up, under the original week-by-week plan.
+> The current plan is ordered steps in `docs/PLAN.md` (ADR-0013); start a session
+> with `/week <step>`, for example `/week C1`.
+
 ## 1. Prerequisites
 - `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`), `git`, `gh` (optional)
 - `python3` on PATH — the Claude Code hooks are stdlib Python scripts

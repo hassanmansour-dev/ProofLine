@@ -16,7 +16,7 @@ human approving anything public, any deploy, any spend and any message to a real
 person. This content pipeline is its first slice. Today the linear flow works end to
 end; the [roadmap](#roadmap) shows what comes next, in order.
 
-## How it works (Week 1)
+## How it works today
 
 ```mermaid
 flowchart LR
@@ -59,7 +59,7 @@ The evaluation and security code lives in its own installable package,
 - **Evals have to be independent of what they judge.** A metric that reaches into
   the pipeline's internals ends up grading itself.
 - **Splitting later is expensive.** Starting split costs one `pyproject.toml`;
-  untangling the imports in Week 10 would cost a week.
+  untangling the imports later would cost far more.
 
 The boundary is enforced, not just intended. `packages/measured_evals/tests/test_boundary.py`
 fails if the package declares or imports `proofline`, and CI installs

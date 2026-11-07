@@ -1,8 +1,8 @@
 """Graph wiring — no business logic here.
 
-Week 1 (now):      START → planner → researcher → writer → finalizer → END
-Week 2 (loop):     writer → critic ─route_after_critic→ {writer, human_review}
-Week 3 (human):    human_review ─route_after_human→ {writer, finalizer}
+Built now:         START → planner → researcher → writer → finalizer → END
+C8 (loop):         writer → critic ─route_after_critic→ {writer, human_review}
+C2 (human):        human_review ─route_after_human→ {writer, finalizer}
 
 Rules: StateGraph(ScriptState, context_schema=Deps); path maps on every conditional
 edge; the researcher gets researcher.RETRY_POLICY (retries only SearchUnavailableError,
@@ -26,12 +26,12 @@ from proofline.nodes.researcher import RETRY_POLICY
 from proofline.prompts import prompt_versions
 from proofline.state import ScriptState
 
-# Week 1 runs these, in this order.
+# The linear flow runs these, in this order.
 LINEAR_NODES = ("planner", "researcher", "writer", "finalizer")
 
 
 def build_graph() -> StateGraph[ScriptState, Deps, ScriptState, ScriptState]:
-    """Return the uncompiled builder; callers compile, with a checkpointer from Week 3."""
+    """Return the uncompiled builder; callers compile, with a checkpointer from C2."""
     builder: StateGraph[ScriptState, Deps, ScriptState, ScriptState] = StateGraph(
         ScriptState, context_schema=Deps
     )

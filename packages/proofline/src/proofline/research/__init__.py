@@ -1,7 +1,7 @@
 """The Researcher port: topic + outline → ResearchNotes (ADR-0012).
 
 The graph's researcher node depends only on this protocol, so the implementation
-can change (stub today, a web-search agent in Week 5) without touching graph.py.
+can change (stub today, a web-search agent in GROW-9) without touching graph.py.
 Implementations assign source ids S1..Sn; the node still drops findings that cite
 ids it doesn't know, so every implementation gets the same guarantee (ADR-0007).
 """

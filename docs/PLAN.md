@@ -60,6 +60,11 @@ Waits on: nothing. **Everything else builds on this.**
 - [ ] Eval package interface stubbed in `measured_evals`: `evaluate(output, context) → EvalScores`
 - [ ] ADR-0014: where the Measured Ops code lives in this workspace (new
   `packages/measured_ops` member, or inside `proofline`), and the public/private split
+- [ ] Same ADR: what happens to the content pipeline's own human review and run API.
+  The supervisor's approval gate (C2) and the inbox (C4) cover approval, so
+  `nodes/human_review.py`, the `/runs` endpoints in `api.py` and the CLI review
+  prompt (all still stubs) either stay inside the content agent or are dropped.
+  Relabel or remove their `C2 target` xfail tests to match
 
 **Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 

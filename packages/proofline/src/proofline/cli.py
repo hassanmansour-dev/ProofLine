@@ -1,7 +1,7 @@
 """CLI: `proofline run --topic ... --audience ...` prints the finished script.
 
-Week 1 runs the linear graph with no checkpointer. Week 2 streams node updates;
-Week 3 adds the review prompt (interrupt + resume) and `show THREAD_ID`.
+Today it runs the linear graph with no checkpointer. Streaming node updates, the
+review prompt (interrupt + resume) and `show THREAD_ID` come with C2/C8 (docs/PLAN.md).
 
 `.env` is loaded first, from the working directory (the same file Settings reads):
 pydantic-settings only reads PROOFLINE_* into Settings, but the Anthropic, Tavily and
@@ -73,7 +73,7 @@ def run(
 @app.command()
 def show(thread_id: str) -> None:
     """Print a run's state and history from the checkpoint."""
-    raise NotImplementedError("Week 3 — needs the checkpointer")
+    raise NotImplementedError("C2 — needs the checkpointer")
 
 
 @app.command()

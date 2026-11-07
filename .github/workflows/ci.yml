@@ -1,7 +1,7 @@
 # Fast checks on every push and PR, across both workspace packages
 # (packages/proofline, packages/measured_evals): lint, format, types, unit tests.
 # No secrets and no network calls beyond installing deps — live tests are excluded.
-# Evals (DeepEval, promptfoo) get their own workflow in Week 10.
+# Evals (DeepEval, promptfoo) get their own workflow in GROW-14.
 name: CI
 
 on:

@@ -1,7 +1,10 @@
 # Architecture — Proofline
 
-Status: **Week 1, linear flow** (ADR-0012). This describes the content pipeline, which becomes the Measured Ops content agent (ADR-0013); the Measured Ops architecture is added from step C1. Later weeks are marked ⟶ so the
-design doesn't need to be torn up when they land.
+Status: **linear flow built** (ADR-0012). This describes the content pipeline, which
+becomes the Measured Ops content agent (ADR-0013); the Measured Ops architecture
+(supervisor, approval gate and inbox, tools) is added from step C1. Planned parts
+are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
+need to be torn up when they land.
 
 ## 1. What it does
 
@@ -9,7 +12,7 @@ Input: a topic and an audience. Output: one short technical script (title, hook,
 body, call to action; at most 200 words by default) for a LinkedIn post and a
 1-minute video, with inline citations, saved as Markdown + JSON.
 
-A human is the final gate (Week 3). The machine's job is to get a draft good enough
+A human is the final gate (the approval gate in C2, the inbox in C4). The machine's job is to get a draft good enough
 that review is a 2-minute read, not a rewrite.
 
 ## 2. Two packages, one workspace
@@ -18,7 +21,7 @@ that review is a 2-minute read, not a rewrite.
 packages/
   proofline/        the pipeline app (LangGraph graph, nodes, CLI, API)
   measured_evals/   eval + security layer: golden sets, metrics, cost budgets,
-                    prompt-injection tests (empty skeleton until Phase 3)
+                    prompt-injection tests (interface in C1; metrics in GROW-14)
 ```
 
 Dependencies point one way: **proofline → measured_evals**, never back.
@@ -29,14 +32,14 @@ web app (Measured Lab), so it can't know anything about Proofline.
 
 ## 3. Graph
 
-Week 1 (now):
+Built now:
 
 ```mermaid
 flowchart LR
     START([START]) --> planner --> researcher --> writer --> finalizer --> END([END])
 ```
 
-⟶ Weeks 2–3 add the critic loop and human review:
+⟶ The critic loop (C8, content agent) and human approval (C2/C4) add:
 
 ```mermaid
 flowchart LR
@@ -74,10 +77,10 @@ sets every default.
 | `research_notes` | `ResearchNotes` | researcher | sources with code-assigned ids `S1..Sn`, findings citing them, gaps |
 | `draft` | `Draft` | writer | title/hook/body/CTA; cited ids, word count, duration derived from the text |
 | `revision_count` | `int` | writer | 0 |
-| `critique` | `Critique \| None` | critic (W2) | `None` |
-| `score` | `float \| None` | critic (W2) | `None`; = `Critique.overall`, computed in Python |
-| `approved` | `bool \| None` | human_review (W3) | `None` = not reviewed; `False` = rejected |
-| `feedback` | `str \| None` | human_review (W3) | `None` |
+| `critique` | `Critique \| None` | critic (C8) | `None` |
+| `score` | `float \| None` | critic (C8) | `None`; = `Critique.overall`, computed in Python |
+| `approved` | `bool \| None` | human_review (C2) | `None` = not reviewed; `False` = rejected |
+| `feedback` | `str \| None` | human_review (C2) | `None` |
 | `final_script` | `FinalScript` | finalizer | rendered Markdown + metadata |
 | `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic, human_review | `[]`, append-only |
 
@@ -104,22 +107,22 @@ guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries 
   `max_sources`, truncates, **assigns `S1..Sn` in code**, and makes one structured LLM
   call for findings. Sources reach the model inside escaped `<source>` tags, as
   untrusted data.
-- ⟶ Week 5: a web-search agent behind the same protocol; graph.py doesn't change.
+- ⟶ Content agent v1 (GROW-9): a web-search agent behind the same protocol; graph.py doesn't change.
 
 **writer** — reads `outline, research_notes, run_config` (+ `draft, critique,
-approved, feedback` on revisions, Week 2+). Every factual claim cites a source id
+approved, feedback` on revisions, from C8). Every factual claim cites a source id
 inline (`[S3]`); citations live only in the text and are normalized, with unknown or
 unparseable ones dropped and logged; titles carry no citations. Over `max_words` →
 one more call (revision context kept) asking for a cut; the shorter draft is kept. Increments `revision_count` on revisions;
 appends a `RevisionRecord(kind="draft")`.
 
-**critic** (built; wired in Week 2) — scores against `docs/RUBRIC.md` (8 criteria,
+**critic** (built; wired in C8) — scores against `docs/RUBRIC.md` (8 criteria,
 integer 1–10, each with quoted evidence and a concrete fix). Writes `critique` and
 `score`. `Critique.overall` is a weighted mean computed in Python with a **hard
 gate**: `technical_accuracy < 6` caps it at 6. Validation requires each criterion
 exactly once, so a malformed critique goes through the adapter's repair retry.
 
-**human_review** (Week 3) — `interrupt(payload)`; resume value `HumanDecision`.
+**human_review** (⟶ C2; ADR-0014 decides whether it stays in this graph or moves to the supervisor's approval gate) — `interrupt(payload)`; resume value `HumanDecision`.
 **No side effects before `interrupt()`**: the node re-runs on resume (ADR-0005).
 
 **finalizer** — deterministic, no LLM. Renders title, hook, body, call to action
@@ -147,12 +150,12 @@ All from environment / `.env` (`config.Settings`, prefix `PROOFLINE_`), snapshot
 into `RunConfig` at run start: brand name, word limit, researcher choice, model
 provider and per-role models, thresholds. See `.env.example`.
 
-## 8. Persistence (Week 3)
+## 8. Persistence (⟶ C2)
 
 `checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
 `sqlite:///…` → `AsyncSqliteSaver`, `postgresql://…` → `AsyncPostgresSaver`. All
 use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state model
-(ADR-0006). `thread_id` = run id (UUID4). Week 1 runs without a checkpointer.
+(ADR-0006). `thread_id` = run id (UUID4). The linear flow runs without a checkpointer.
 
 ## 9. Interfaces
 
@@ -160,9 +163,9 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 - `proofline run --topic … --audience … [-v]` runs the graph and prints the Markdown
   script (stdout); file paths go to stderr.
 - `proofline mermaid` prints the graph.
-- ⟶ Week 2 streams node updates; Week 3 adds the review prompt and `show THREAD_ID`.
+- ⟶ Streaming node updates, the review prompt and `show THREAD_ID` come with C2/C8.
 
-**API** (`api.py`, ⟶ Week 3): `create_app(deps=..., checkpointer_url=...)`.
+**API** (`api.py`, ⟶ C2, approval inbox in C4; ADR-0014 decides whether these run endpoints stay or the inbox replaces them): `create_app(deps=..., checkpointer_url=...)`.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -176,8 +179,8 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 Every invocation sets `run_name="script-pipeline"`, `tags=[env]`,
 `metadata={thread_id, prompt_versions, models}`; each LLM call is tagged with its
 prompt name/version. Logging: stdlib `logging`, `proofline.*` loggers, one INFO line
-per node (`proofline run -v`). ⟶ Week 4: LangSmith tracing; Phase 3: cost budgets
-and alerts via `measured_evals`.
+per node (`proofline run -v`). ⟶ C7: tracing and cost per agent; GROW-15: cost
+budgets and alerts via `measured_evals`.
 
 ## 11. Failure behavior
 
@@ -189,19 +192,20 @@ and alerts via `measured_evals`.
 | Search returns nothing usable | notes with `gaps` = the key questions; the writer says what's unclear |
 | LLM returns invalid structure | adapter retries once with the validation error; then raises |
 | LLM cites an unknown source id | dropped in code (findings and drafts), logged at WARNING |
-| Draft over the word limit | one cut requested; the shorter draft is kept (Week 2 critic scores length) |
+| Draft over the word limit | one cut requested; the shorter draft is kept (the critic, wired in C8, scores length) |
 
 ## 12. Security baseline
 
 - Web content is data, never instructions: escaped inside `<source>` and
   `<research_notes>` tags, with an explicit rule in every prompt that sees it; no
-  tools in Phase 1, so injected instructions have nothing to act on.
+  tools in the linear flow, so injected instructions have nothing to act on. From
+  C5, tool writes go through the approval policy.
 - Secrets only from env; `.env` is unreadable to Claude Code (hooks + deny rules).
-- ⟶ Phase 3 (`measured_evals`): prompt-injection suite, cost budgets, output checks;
+- ⟶ GROW-14/15 (`measured_evals`): prompt-injection suite, cost budgets, output checks;
   API auth and rate limiting in the app.
 
 ## 13. Docs
 
-`docs/PLAN.md` (weekly plan), `docs/adr/` (decisions), `docs/PROMPTING.md` (prompt
+`docs/PLAN.md` (ordered steps), `docs/adr/` (decisions), `docs/PROMPTING.md` (prompt
 standards), `docs/RUBRIC.md` (critic rubric), `docs/BRAND_VOICE.md` (voice, owned by
 the host; the brand name itself is `PROOFLINE_BRAND_NAME`).

@@ -52,4 +52,4 @@ description: Scores a draft against the rubric with evidence.
 1. Edit the prompt, bump `version` (patch = wording, minor = behavior, major = contract).
 2. Add a line to `prompts/CHANGELOG.md`: version, what, why, evidence (trace link or topic).
 3. Run `uv run pytest -m live -k <node>` on the 3 calibration topics; compare scores.
-4. Phase 3: the golden set and promptfoo replace step 3.
+4. From GROW-14: the golden set and promptfoo replace step 3.

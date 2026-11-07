@@ -1,4 +1,4 @@
-"""API tests. /health works now; the run flow is the Week 3 S3 target.
+"""API tests. /health works now; the run flow is the C2 target.
 
 Uses create_app(deps=fakes, checkpointer_url="memory://") — never the real module-level app,
 so implementing api.py can't accidentally make this suite call paid APIs.
@@ -49,7 +49,7 @@ async def test_health(client: AsyncClient) -> None:
     assert r.json() == {"status": "ok", "checkpointer": "memory"}
 
 
-@pytest.mark.xfail(strict=True, reason="Week 3 S3 target")
+@pytest.mark.xfail(strict=True, reason="C2 target")
 async def test_run_review_complete_flow(client: AsyncClient) -> None:
     r = await client.post("/runs", json={"topic": "LangGraph checkpointers"})
     assert r.status_code == 200

@@ -1,4 +1,4 @@
-"""critic — Draft → Critique + score. Not wired until Week 2 (critic loop).
+"""critic — Draft → Critique + score. Not wired until C8 (critic loop in the content agent).
 
 Contract (docs/ARCHITECTURE.md §4, ADR-0008):
     reads:   audience, run_config, outline, research_notes, draft, revision_count

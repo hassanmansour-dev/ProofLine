@@ -1,4 +1,4 @@
-"""Graph-level acceptance tests, Weeks 1-3. Remove each xfail marker as the week lands."""
+"""Graph-level acceptance tests. Remove each xfail marker when its docs/PLAN.md step lands."""
 
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from tests.fakes import (
 
 pytestmark = pytest.mark.anyio
 
-# Week 1 wiring is linear, so these fail on assertions until their week lands.
-W2 = pytest.mark.xfail(strict=True, reason="Week 2 target")
-W3 = pytest.mark.xfail(strict=True, reason="Week 3 target")
+# The wiring is linear today, so these fail on assertions until their step lands.
+C8_TARGET = pytest.mark.xfail(strict=True, reason="C8 target")
+C2_TARGET = pytest.mark.xfail(strict=True, reason="C2 target")
 
 
 def _llm(critic_scores: list[int], drafts: int | None = None) -> FakeLLM:
@@ -64,13 +64,13 @@ def _inputs(deps: Deps) -> Any:
     )
 
 
-# ── Week 1 ────────────────────────────────────────────────────────────────────
+# ── Linear flow ────────────────────────────────────────────────────────────────────
 
 
 async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
     llm = FakeLLM().queue(make_outline(), make_draft())
     deps = make_deps(tmp_path, llm)  # stub researcher: no network, no LLM call
-    app = build_graph().compile()  # Week 1: no checkpointer
+    app = build_graph().compile()  # linear flow: no checkpointer
     cfg = invoke_config("w1", deps.settings)
     updates: list[dict[str, Any]] = []
     values: dict[str, Any] = {}
@@ -104,7 +104,7 @@ async def test_mermaid_renders_the_week1_nodes() -> None:
 # ── Week 2 ────────────────────────────────────────────────────────────────────
 
 
-@W2
+@C8_TARGET
 async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([6, 7, 8]))
     app = build_graph().compile(checkpointer=InMemorySaver())
@@ -117,7 +117,7 @@ async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     assert [h.kind for h in state["history"]].count("critique") == 3
 
 
-@W2
+@C8_TARGET
 async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([5, 5, 5, 5]))  # max_revisions=3 → 4 drafts, then stop
     app = build_graph().compile(checkpointer=InMemorySaver())
@@ -130,7 +130,7 @@ async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
 # ── Week 3 ────────────────────────────────────────────────────────────────────
 
 
-@W3
+@C2_TARGET
 async def test_reject_then_approve(tmp_path: Path) -> None:
     llm = _llm([9, 9])
     deps = _deps(tmp_path, llm)
@@ -153,7 +153,7 @@ async def test_reject_then_approve(tmp_path: Path) -> None:
     assert [h.kind for h in done["history"]].count("human") == 2
 
 
-@W3
+@C2_TARGET
 async def test_resume_after_process_restart_sqlite(tmp_path: Path) -> None:
     url = f"sqlite:///{tmp_path / 'cp.db'}"
     deps = _deps(tmp_path, _llm([9]))

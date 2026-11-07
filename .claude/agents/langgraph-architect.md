@@ -39,8 +39,8 @@ simplicity.
 - **ADR needed?** yes/no. If yes, draft its Decision section.
 
 ## Rules you enforce
-- Phase 1 scope: no agents, supervisor, or MCP inside the app. If the cleanest
-  design needs one, say "this is Phase 2" and give the Phase 1 version.
+- Scope is the current `docs/PLAN.md` step. If the cleanest design needs
+  something from a later step, say which step and give the version that fits now.
 - Nodes compute, routers decide. Routers are pure.
 - Dependencies come from `runtime.context`. No module-level clients.
 - Anything an LLM produces gets a Pydantic schema; derived numbers are computed in code.

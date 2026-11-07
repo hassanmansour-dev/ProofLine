@@ -1,6 +1,6 @@
 ---
 name: readme
-description: Write or refresh README.md as a portfolio-grade project page (Week 4) — problem, diagram, decisions, how to run, numbers, what's next.
+description: Write or refresh README.md as a portfolio-grade project page (GROW-8, after C2) — problem, diagram, decisions, how to run, numbers, what's next.
 disable-model-invocation: true
 ---
 
@@ -19,6 +19,6 @@ Structure:
    Only measured numbers; if missing, leave a TODO, never estimate.
 6. Run it: prerequisites, `.env`, CLI, API, tests.
 7. Project layout (short).
-8. What's next (Phase 2/3 bullets).
+8. What's next (the next steps from `docs/PLAN.md`).
 
 Keep it under ~200 lines. Show the draft to Hassan before overwriting an existing README.

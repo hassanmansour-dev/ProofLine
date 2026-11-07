@@ -16,7 +16,7 @@ report, then offer to fix.
    - New behavior has a test? New LLM output has a schema?
    - Prompt files changed → version bumped + CHANGELOG line?
    - New state model → in `checkpointing.STATE_MODELS`?
-   - Anything Phase 2/3 (agents, supervisor, MCP in app)?
+   - Anything from a later `docs/PLAN.md` step than the current one?
 5. Docs: does `docs/ARCHITECTURE.md` still describe the code? Is the PLAN box ticked?
    Did a decision change architecture/deps/contracts without an ADR?
 

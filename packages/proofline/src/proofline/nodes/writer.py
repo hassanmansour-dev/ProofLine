@@ -1,4 +1,4 @@
-"""writer — outline + notes (+ critique/feedback) → Draft. Week 1 (first draft), Week 2 (revisions).
+"""writer — outline + notes (+ critique/feedback) → Draft. First draft now; revisions from C8.
 
 Contract (docs/ARCHITECTURE.md §4):
     reads:   topic, audience, run_config, outline, research_notes,
@@ -11,7 +11,7 @@ Steps:
     2. Render with revision_context(...) and generate a Draft.
     3. Over run_config.max_words → one more call with the revision context plus
        too_long_context(...); keep the shorter draft, and if it's still over, log
-       WARNING (the Week 2 critic's length_fit scores it).
+       WARNING (the critic's length_fit scores it once wired in C8).
     4. Citations live only in the text (Draft.cited_source_ids is parsed from it,
        ADR-0011): normalize them and drop ids not in research_notes, logging WARNING.
 """
