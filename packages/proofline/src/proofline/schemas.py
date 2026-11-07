@@ -34,7 +34,8 @@ class _Model(BaseModel):
 
 class ModelSpec(_Model):
     model: str
-    temperature: float = Field(ge=0.0, le=1.0)
+    # None = not sent. Current Claude models reject `temperature` (ADR-0015).
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     max_tokens: int = Field(default=4096, gt=0)
 
 

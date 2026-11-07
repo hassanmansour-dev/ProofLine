@@ -5,7 +5,8 @@ validated Pydantic object back. The adapter owns model selection, tracing tags,
 and one repair retry when the model's output doesn't validate.
 
 `build_llm(settings)` picks the adapter from PROOFLINE_LLM_PROVIDER; model names and
-temperatures per role come from PROOFLINE_*_MODEL via RunConfig. Adding a provider =
+token limits per role come from PROOFLINE_*_MODEL via RunConfig (no temperature by
+default, ADR-0015). Adding a provider =
 one adapter class + one entry in PROVIDERS (+ its langchain-* package).
 """
 

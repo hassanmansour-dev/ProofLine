@@ -3,7 +3,7 @@
 Contract (docs/ARCHITECTURE.md §4, ADR-0008):
     reads:   audience, run_config, outline, research_notes, draft, revision_count
     writes:  critique, score, history
-    LLM:     prompts/critic.md, role="critic", schema=Critique (temperature 0 via RunConfig)
+    LLM:     prompts/critic.md, role="critic", schema=Critique (no temperature, ADR-0015)
 Notes:
     score = critique.overall, computed in Python with the accuracy gate, never the model's.
     Critique's validator enforces each criterion exactly once, so a bad output goes

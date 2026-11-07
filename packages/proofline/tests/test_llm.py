@@ -88,3 +88,16 @@ def test_build_llm_fails_early_without_an_api_key(
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY is not set"):
         build_llm(make_settings(tmp_path))
+
+
+def test_run_config_sends_no_temperature_by_default(settings: Settings) -> None:
+    # Current Claude models reject `temperature` (400: "deprecated for this model").
+    assert all(spec.temperature is None for spec in settings.run_config().models.values())
+
+
+def test_client_omits_temperature_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    from proofline.schemas import ModelSpec
+
+    client = AnthropicLLM()._client(ModelSpec(model="claude-test", max_tokens=128))
+    assert client.temperature is None  # None is dropped from the request payload
