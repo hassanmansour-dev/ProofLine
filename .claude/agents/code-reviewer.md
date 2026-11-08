@@ -25,7 +25,7 @@ handles style).
 **LangGraph**
 - Node mutates `state` instead of returning a partial dict.
 - Node writes a field it doesn't own (see ARCHITECTURE §3 table).
-- Side effect before `interrupt()` in `human_review` (re-runs on resume).
+- Side effect before `interrupt()` in the supervisor's approval gate (re-runs on resume).
 - New Pydantic type in state not added to `checkpointing.STATE_MODELS`.
 - Accumulating list without a reducer; reducer on a field that should overwrite.
 - Conditional edge without a path map; router doing I/O or reading settings.

@@ -4,7 +4,8 @@
 the evals and a human sign-off.** It turns a topic and an audience into an
 approved, sourced short technical script (≤200 words: a LinkedIn post and a
 1-minute video) for a configurable brand (`PROOFLINE_BRAND_NAME`): plan → research
-→ write → critique (loop) → human review (interrupt) → finalize.
+→ write → critique (loop) → finalize, then human approval in the supervisor's
+gate and inbox (ADR-0014).
 
 This is Hassan's **flagship project**, built in public to show senior agentic AI
 engineering. **Proofline v1 = Measured Ops** (ADR-0013): a LangGraph supervisor
@@ -49,12 +50,12 @@ change pulls toward a later step, stop and say so.
 
 ```bash
 uv sync                                   # install (incl. dev deps)
-uv run pytest -m "not live"               # fast tests, both packages, no network, no keys
+uv run pytest -m "not live"               # fast tests, all packages, no network, no keys
 uv run pytest -m live                     # real LLM + search calls (costs money)
 uv run ruff check --fix . && uv run ruff format .
 uv run mypy
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
-uv run uvicorn proofline.api:app --reload                       # API (C2+)
+uv run uvicorn proofline.api:app --reload                       # API (/health only until C4)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 
@@ -67,7 +68,7 @@ an accepted ADR silently — propose a new ADR (`/adr`) instead.
 
 ```
 pyproject.toml              uv workspace root: dev tools + shared ruff/mypy/pytest config
-packages/proofline/         the pipeline app
+packages/proofline/         the content pipeline (becomes the content agent in C8)
   src/proofline/
     state.py        ScriptState TypedDict + initial_state() defaults — the graph's source of truth
     schemas.py      Pydantic models for every LLM output, state value and API payload
@@ -79,17 +80,24 @@ packages/proofline/         the pipeline app
     routing.py      PURE routing functions (no I/O). Fully unit-tested.
     render.py       Deterministic text: state objects → prompt blocks, final Markdown
     prompts/        Versioned node prompts (*.md) + loader
-    nodes/          One module per node: planner, researcher, writer, critic, human_review, finalizer
+    nodes/          One module per node: planner, researcher, writer, critic, finalizer
     graph.py        build_graph() — wiring only, no business logic
     checkpointing.py  Checkpointer factory (memory | sqlite | postgres) + serde allowlist (C2)
-    api.py          FastAPI create_app() (C2; approval inbox in C4)
+    api.py          FastAPI create_app(): /health only (ADR-0014)
     cli.py          Typer CLI: `proofline run --topic --audience`
   tests/            unit (fakes, no network) + live (marked)
-packages/measured_evals/    standalone eval + security package (interface in C1, metrics and CI in GROW-14)
-  src/measured_evals/       NEVER imports proofline — tests/test_boundary.py + CI enforce it
+packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER imports proofline
+  src/measured_ops/
+    contracts.py    Task, AgentResult, PendingAction, ApprovalDecision, OpsState + serde allowlist
+    agent.py        Agent protocol: subgraph with input {"task"} → output {"result"}; run_agent()
+    policy.py       ApprovalPolicy + load_policy(); config/approval_policy.demo.toml (demo values)
+packages/measured_evals/    standalone eval + security package (evaluate() stub in C1, metrics in GROW-14)
+  src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
 ```
 
-Package rule: dependencies point one way, `proofline` → `measured_evals`. Anything
+Package rule: dependencies point one way, `proofline` → `measured_ops` → `measured_evals`.
+Agents are injected into the supervisor, never imported by it. Approval belongs to
+the supervisor's gate and inbox, not to any agent's graph (ADR-0014). Anything
 generic (metrics, golden-set format, budgets, injection checks) goes in
 `measured_evals` with no reference to Proofline's schemas; Proofline adapts its
 types to it.
@@ -108,7 +116,7 @@ Data flow rules:
 ## LangGraph pitfalls this repo has hit or will hit
 
 1. `interrupt()` **re-runs the whole node on resume.** Code before `interrupt()`
-   must be idempotent and side-effect-free. Keep `human_review` tiny.
+   must be idempotent and side-effect-free. Keep the supervisor's approval gate (C2) tiny.
 2. Pydantic objects stored in state must be in the checkpointer's
    `allowed_msgpack_modules` (see `checkpointing.py`), or deserialization warns
    now and will fail in a future LangGraph version. New state model ⇒ register it.

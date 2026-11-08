@@ -1,6 +1,6 @@
 # ADR-0005: Human review with `interrupt()` in a dedicated tiny node
 
-- Status: accepted
+- Status: superseded by ADR-0014 (2026-11-08)
 - Date: 2026-10-20
 - Phase/Week: P1W3
 

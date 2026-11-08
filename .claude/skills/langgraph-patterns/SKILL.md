@@ -68,6 +68,19 @@ builder.add_conditional_edges("human_review", route_after_human, ["writer", "fin
 Router signature: `def route_after_critic(state: ScriptState) -> Literal["writer", "human_review"]`.
 A list or dict both work; the dict makes intent explicit. `END` is valid as a destination.
 
+## Subgraph with its own input/output schema (agent interface, ADR-0014)
+Verified on langgraph 1.2.16 (2026-11-08).
+```python
+builder = StateGraph(PrivateState, input_schema=AgentInput, output_schema=AgentOutput)
+graph = builder.compile()  # no checkpointer: inside a parent it uses the parent's
+out = await graph.ainvoke(
+    {"task": task}
+)  # out == {"result": AgentResult(...)}, private keys dropped
+graph.get_input_jsonschema()["properties"].keys()  # {"task"}
+graph.get_output_jsonschema()["properties"].keys()  # {"result"}
+```
+Type: `CompiledStateGraph[StateT, ContextT, InputT, OutputT]` (`langgraph.graph.state`).
+
 ## Compile, config, recursion limit
 ```python
 app = builder.compile(checkpointer=saver)

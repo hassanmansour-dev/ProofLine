@@ -42,13 +42,20 @@ Things a reviewer may want to check:
 - **Prompts are versioned files** with a changelog (`packages/proofline/src/proofline/prompts/`).
 - **Decisions are recorded** as ADRs in [`docs/adr/`](docs/adr/).
 
-## Two packages, one repo
+## Three packages, one repo
 
 ```
 packages/
-  proofline/        the pipeline app: graph, nodes, CLI (API from C2)
-  measured_evals/   the eval + security layer (interface in C1; metrics and CI later)
+  proofline/        the content pipeline: graph, nodes, CLI (the content agent from C8)
+  measured_ops/     Measured Ops: contracts, agent interface, approval policy
+                    (supervisor and approval gate from C2, inbox from C4)
+  measured_evals/   the eval + security layer (evaluate() interface; metrics and CI later)
 ```
+
+Every agent is a LangGraph subgraph that takes a `Task` and returns an
+`AgentResult` with the actions it proposes. A policy table decides which actions run
+on their own and which wait for a human; an action type the table doesn't know
+always waits. Details: [ADR-0014](docs/adr/0014-measured-ops-package-and-approval-ownership.md).
 
 The evaluation and security code lives in its own installable package,
 `measured-evals`, from day one, and **it never imports Proofline**:
@@ -62,16 +69,16 @@ The evaluation and security code lives in its own installable package,
   untangling the imports later would cost far more.
 
 The boundary is enforced, not just intended. `packages/measured_evals/tests/test_boundary.py`
-fails if the package declares or imports `proofline`, and CI installs
+fails if the package declares or imports `proofline` or `measured_ops`, and CI installs
 `measured_evals` on its own, without the app, and runs its tests. Dependencies point
-one way: `proofline` → `measured_evals`. Details: [ADR-0012](docs/adr/0012-workspace-split-and-week1-reset.md).
+one way: `proofline` → `measured_ops` → `measured_evals`. Details: [ADR-0012](docs/adr/0012-workspace-split-and-week1-reset.md).
 
 ## Run it
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
-uv sync                                   # installs both packages + dev tools
+uv sync                                   # installs all three packages + dev tools
 cp .env.example .env                      # add ANTHROPIC_API_KEY
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
 ```
@@ -103,7 +110,7 @@ uv run mypy                   # strict, on both packages
 
 Unit tests never touch the network: nodes run inside a real one-node graph with a
 fake model, and their updates are read back from a checkpointer, so serialization
-problems show up in tests. CI runs ruff, mypy and pytest on both packages on every
+problems show up in tests. CI runs ruff, mypy and pytest on every package on every
 push and pull request.
 
 ## Roadmap
@@ -131,6 +138,7 @@ Step detail: [`docs/PLAN.md`](docs/PLAN.md). Architecture:
 ```
 packages/proofline/src/proofline/   state, schemas, nodes/, research/, prompts/, graph, cli
 packages/proofline/tests/           unit tests (fakes) + live tests
+packages/measured_ops/              contracts, agent interface, approval policy (+ demo table)
 packages/measured_evals/            standalone eval + security package
 docs/                               plan, architecture, ADRs, rubric, prompting standards
 .claude/                            Claude Code setup: hooks, review agents, skills

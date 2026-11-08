@@ -1,6 +1,6 @@
 ---
 name: new-node
-description: Implement a graph node end to end following the repo contract — test first, prompt, node, wiring, docs. Use for planner, researcher, writer, critic, human_review, finalizer.
+description: Implement a graph node end to end following the repo contract — test first, prompt, node, wiring, docs. Use for planner, researcher, writer, critic, finalizer, and the supervisor's nodes from C2.
 disable-model-invocation: true
 argument-hint: "[node-name]"
 ---
