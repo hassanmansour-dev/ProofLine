@@ -43,7 +43,8 @@ these packages. No code path here reads a private file by default.
 **3. The contract.**
 - `OpsState` is a `TypedDict` with Pydantic values, as ADR-0002 set for
   `ScriptState`: `task`, `results` (append reducer), `pending_actions` (replaced by
-  the gate), `decisions` (append reducer). Every value type is listed in
+  the gate; no reducer, so C2 must give it a single owner or a reducer before
+  agents run in parallel), `decisions` (append reducer). Every value type is listed in
   `contracts.STATE_TYPES`, from which the checkpointer's serde allowlist is built
   (ADR-0006); a strict-msgpack round-trip test pins it.
 - `Task`, `AgentResult`, `PendingAction` (type, target, preview, eval scores, risk
@@ -56,6 +57,9 @@ these packages. No code path here reads a private file by default.
   private. `check_agent_graph` rejects a graph with any other input or output keys;
   `run_agent` rejects a result for another task or agent. Agents only *propose*
   actions (`AgentResult.actions`); they never execute anything that leaves the system.
+- **Agents never score themselves.** `PendingAction.eval_scores` is written only
+  by the eval node (C7); `run_agent` rejects an action that arrives with scores
+  (the ADR-0008 rule: derived numbers don't come from the thing being judged).
 - **Approval policy** is a TOML table (`version = 1`, `[actions]` rows of
   `"auto"` or `"approval"`), read with the standard library's `tomllib` (no new
   dependency). Two rules no table overrides: an unlisted action type needs
@@ -76,8 +80,12 @@ these packages. No code path here reads a private file by default.
 - A rejection doesn't loop inside an agent: the inbox records an
   `ApprovalDecision`, and a rejection with feedback becomes a **new `Task`** for
   the same agent with `feedback` set and `parent_id` pointing at the task it
-  revises. The content pipeline keeps `feedback` as an *input* field; the writer
-  revises with it as before.
+  revises. The content pipeline keeps `feedback` as an *input* field. **Gap for
+  C8:** today the writer only uses feedback when there is a previous `draft` in
+  state (`render.revision_context` returns nothing without one), and a revision
+  Task starts a fresh run. C8 either passes the previous draft in `Task.inputs`
+  or gives `revision_context` a feedback-only branch, with a test. This also
+  settles ADR-0011's open question about `approved`: the field is gone.
 - The `C2 target` tests: `test_reject_then_approve` (proofline graph) and
   `test_run_review_complete_flow` (API) are deleted. The resume-after-restart case
   moves to `packages/measured_ops/tests/test_ops_e2e.py` as the supervisor's

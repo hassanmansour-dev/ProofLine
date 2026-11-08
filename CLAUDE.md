@@ -71,7 +71,7 @@ pyproject.toml              uv workspace root: dev tools + shared ruff/mypy/pyte
 packages/proofline/         the content pipeline (becomes the content agent in C8)
   src/proofline/
     state.py        ScriptState TypedDict + initial_state() defaults — the graph's source of truth
-    schemas.py      Pydantic models for every LLM output, state value and API payload
+    schemas.py      Pydantic models for every LLM output and state value
     config.py       Settings (pydantic-settings, PROOFLINE_* env): brand, word limit, models, ...
     context.py      Deps (settings, llm, researcher) passed as LangGraph runtime context
     llm.py          StructuredLLM port + Anthropic adapter + build_llm() factory (env-driven)
@@ -118,7 +118,8 @@ Data flow rules:
 1. `interrupt()` **re-runs the whole node on resume.** Code before `interrupt()`
    must be idempotent and side-effect-free. Keep the supervisor's approval gate (C2) tiny.
 2. Pydantic objects stored in state must be in the checkpointer's
-   `allowed_msgpack_modules` (see `checkpointing.py`), or deserialization warns
+   `allowed_msgpack_modules` (`checkpointing.py` for ScriptState,
+   `measured_ops.contracts.STATE_TYPES` for OpsState), or deserialization warns
    now and will fail in a future LangGraph version. New state model ⇒ register it.
 3. List fields that accumulate across nodes need a reducer
    (`Annotated[list[X], operator.add]`); otherwise the last write wins.

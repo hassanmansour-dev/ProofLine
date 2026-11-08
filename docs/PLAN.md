@@ -52,6 +52,10 @@ What the first live run surfaced (fix in the step named, not before):
   and the words-per-minute estimate → C8
 - Weak hook → fill in `docs/BRAND_VOICE.md` (above)
 
+From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only if
+the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
+`render.revision_context`), with a test.
+
 ---
 
 ## Phase 1 — Build the evidence

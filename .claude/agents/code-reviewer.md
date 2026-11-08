@@ -24,9 +24,10 @@ handles style).
 ## Checklist (report only what fails)
 **LangGraph**
 - Node mutates `state` instead of returning a partial dict.
-- Node writes a field it doesn't own (see ARCHITECTURE §3 table).
+- Node writes a field it doesn't own (see ARCHITECTURE §4 table).
 - Side effect before `interrupt()` in the supervisor's approval gate (re-runs on resume).
-- New Pydantic type in state not added to `checkpointing.STATE_MODELS`.
+- New Pydantic type in state not added to `schemas.STATE_MODELS` (ScriptState) or
+  `measured_ops.contracts.STATE_TYPES` (OpsState).
 - Accumulating list without a reducer; reducer on a field that should overwrite.
 - Conditional edge without a path map; router doing I/O or reading settings.
 - Missing `recursion_limit` / thread_id handling in an entry point.

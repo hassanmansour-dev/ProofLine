@@ -102,10 +102,10 @@ The voice the writer follows lives in [`docs/BRAND_VOICE.md`](docs/BRAND_VOICE.m
 ## Develop
 
 ```bash
-uv run pytest                 # both packages; live tests skip without API keys
+uv run pytest                 # every package; live tests skip without API keys
 uv run pytest -m live         # real model + search calls (costs money)
 uv run ruff check . && uv run ruff format --check .
-uv run mypy                   # strict, on both packages
+uv run mypy                   # strict, on every package
 ```
 
 Unit tests never touch the network: nodes run inside a real one-node graph with a

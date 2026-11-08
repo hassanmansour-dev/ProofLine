@@ -2,7 +2,7 @@
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014). Sections 3–11 describe the content pipeline, which becomes the Measured
-Ops content agent (ADR-0013). Section 14 describes Measured Ops itself: the
+Ops content agent (ADR-0013). Section 13 describes Measured Ops itself: the
 contract, the agent interface and the approval policy, with the supervisor, gate
 and inbox to follow. Planned parts
 are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
@@ -223,12 +223,12 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | Model | Fields | Rules |
 |---|---|---|
 | `Task` | `id`, `agent`, `goal`, `inputs` (JSON), `feedback`, `parent_id`, `created_at` | `agent` is snake_case; `feedback` needs a `parent_id` (a revision) |
-| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` is `None` until C7 |
+| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` written only by the eval node (C7), never by the agent |
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
 
 `OpsState` (TypedDict, ADR-0002): `task`; `results` and `decisions` with
-`operator.add` reducers; `pending_actions` (replaced by the gate).
+`operator.add` reducers; `pending_actions` (no reducer: C2 gives it one owner).
 `initial_ops_state(task)` sets every field. `contracts.SERDE_ALLOWLIST` is built
 from `STATE_TYPES` and must be passed to the supervisor's checkpointer (ADR-0006).
 
@@ -236,7 +236,8 @@ from `STATE_TYPES` and must be passed to the supervisor's checkpointer (ADR-0006
 `StateGraph(PrivateState, input_schema=AgentInput, output_schema=AgentOutput)`:
 input `{"task": Task}`, output `{"result": AgentResult}`, private state hidden.
 `check_agent_graph(graph)` rejects other input/output keys; `run_agent(agent,
-graph, task)` invokes it and rejects a result for another task or agent. Agents
+graph, task)` invokes it and rejects a result for another task or agent, or one
+whose actions carry eval scores (agents never score themselves). Agents
 propose actions; they never execute anything that leaves the system.
 
 **Approval policy** (`policy.py`). A TOML table, `version = 1`, `[actions]` rows of

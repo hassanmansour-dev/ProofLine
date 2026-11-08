@@ -61,11 +61,10 @@ Inside a node: `runtime.execution_info.thread_id`, `.checkpoint_id`, `.node_atte
 ## Conditional edges with a path map
 ```python
 builder.add_conditional_edges(
-    "critic", route_after_critic, {"writer": "writer", "human_review": "human_review"}
+    "critic", route_after_critic, {"writer": "writer", "finalizer": "finalizer"}
 )
-builder.add_conditional_edges("human_review", route_after_human, ["writer", "finalizer"])
 ```
-Router signature: `def route_after_critic(state: ScriptState) -> Literal["writer", "human_review"]`.
+Router signature: `def route_after_critic(state: ScriptState) -> Literal["writer", "finalizer"]`.
 A list or dict both work; the dict makes intent explicit. `END` is valid as a destination.
 
 ## Subgraph with its own input/output schema (agent interface, ADR-0014)
@@ -73,9 +72,8 @@ Verified on langgraph 1.2.16 (2026-11-08).
 ```python
 builder = StateGraph(PrivateState, input_schema=AgentInput, output_schema=AgentOutput)
 graph = builder.compile()  # no checkpointer: inside a parent it uses the parent's
-out = await graph.ainvoke(
-    {"task": task}
-)  # out == {"result": AgentResult(...)}, private keys dropped
+# out == {"result": AgentResult(...)}: private keys are dropped
+out = await graph.ainvoke({"task": task})
 graph.get_input_jsonschema()["properties"].keys()  # {"task"}
 graph.get_output_jsonschema()["properties"].keys()  # {"result"}
 ```
@@ -94,16 +92,20 @@ config = {
 ```
 
 ## Human-in-the-loop
+Approval lives only in the supervisor's gate (ADR-0014), never in an agent's graph.
+The `interrupt()` API itself (verified 2026-10-20) looks like this; the gate node
+is built in C2:
 ```python
-def human_review(state: ScriptState) -> dict[str, Any]:
-    decision = interrupt({"title": state["draft"].title, "score": state["critique"].overall})
-    d = HumanDecision.model_validate(decision)
-    return {"approved": d.approved, "feedback": d.feedback}
+def approval_gate(state: OpsState) -> dict[str, Any]:
+    action = state["pending_actions"][0]
+    raw = interrupt({"action_id": action.id, "type": action.type, "preview": action.preview})
+    decision = ApprovalDecision.model_validate(raw)
+    return {"decisions": [decision], "pending_actions": state["pending_actions"][1:]}
 ```
 - First run returns `result["__interrupt__"] == (Interrupt(value=..., id=...),)`.
-- From a checkpoint: `snap = await app.aget_state(config)`; `snap.next == ("human_review",)`;
-  `snap.interrupts` holds the `Interrupt` objects; `snap.values` is the state.
-- Resume: `await app.ainvoke(Command(resume={"approved": False, "feedback": "..."}), config, context=deps)`.
+- From a checkpoint: `snap = await app.aget_state(config)`; `snap.next` names the
+  interrupted node; `snap.interrupts` holds the `Interrupt` objects; `snap.values` is the state.
+- Resume: `await app.ainvoke(Command(resume=decision.model_dump()), config, context=deps)`.
 - **The node re-runs from its first line on resume.** Nothing with side effects before `interrupt()`.
 
 ## Streaming

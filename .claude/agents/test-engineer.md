@@ -1,6 +1,6 @@
 ---
 name: test-engineer
-description: Writes and fixes pytest tests for nodes, routers, the graph, checkpointing and the API using the fakes in packages/proofline/tests/fakes.py. Use when a task needs tests first (TDD), when coverage of a behavior is missing, or when a test is flaky. Edits files under packages/*/tests/ only.
+description: Writes and fixes pytest tests for nodes, routers, the graph, checkpointing and the API using the fakes in packages/proofline/tests/fakes.py and packages/measured_ops/tests/ops_fakes.py. Use when a task needs tests first (TDD), when coverage of a behavior is missing, or when a test is flaky. Edits files under packages/*/tests/ only.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 effort: high
@@ -21,8 +21,11 @@ change instead of making it.
 - **Table-driven** for routers and score math (`pytest.mark.parametrize` with ids).
 - **Graph-level tests** compile the real graph with `InMemorySaver`, run with fakes,
   and assert on the node sequence (from `astream(stream_mode="updates")`) and final state.
-- **Interrupt tests**: run to interrupt, assert payload, resume with
-  `Command(resume=...)`, assert next step. Include a "reject then approve" path.
+- **Interrupt tests** (supervisor gate, C2+): run to interrupt, assert payload, resume
+  with `Command(resume=ApprovalDecision(...).model_dump())`, assert next step. Include
+  a "reject with feedback → revision Task" path. Agents never interrupt (ADR-0014).
+- **Agent tests**: build the agent's subgraph, run it through `measured_ops.run_agent`
+  with a `Task`, assert on the `AgentResult` (`ops_fakes.EchoAgent` is the reference).
 - **Persistence tests**: SQLite in `tmp_path`; open → run to interrupt → close →
   reopen → resume → completes.
 - **Async**: `@pytest.mark.anyio` (backend fixture already set to asyncio in conftest).
