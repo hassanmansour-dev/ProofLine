@@ -1192,8 +1192,10 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiosqlite" },
     { name = "anyio" },
     { name = "httpx" },
+    { name = "langgraph-checkpoint-sqlite" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -1209,8 +1211,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anyio", specifier = ">=4.6" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1.2" },
     { name = "mypy", specifier = ">=2.4" },
     { name = "pytest", specifier = ">=9.1" },
     { name = "ruff", specifier = ">=0.17" },

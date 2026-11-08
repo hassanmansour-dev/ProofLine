@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from ops_fakes import EchoAgent, LeakyAgent, make_task
+from ops_fakes import (
+    EchoAgent,
+    LeakyAgent,
+    NoOutputSchemaAgent,
+    SelfScoringAgent,
+    make_task,
+)
 
 from measured_ops import Agent, AgentContractError, AgentResult, check_agent_graph, run_agent
 
@@ -21,6 +27,17 @@ def test_conforming_graph_passes_the_check() -> None:
 def test_graph_without_schemas_fails_the_check() -> None:
     with pytest.raises(AgentContractError, match="input_schema=AgentInput"):
         check_agent_graph(LeakyAgent().build())
+
+
+def test_graph_without_output_schema_fails_the_check() -> None:
+    with pytest.raises(AgentContractError, match="output_schema=AgentOutput"):
+        check_agent_graph(NoOutputSchemaAgent().build())
+
+
+async def test_run_agent_rejects_self_scored_actions() -> None:
+    agent = SelfScoringAgent()
+    with pytest.raises(AgentContractError, match="scored its own actions"):
+        await run_agent(agent, agent.build(), make_task())
 
 
 async def test_output_is_only_the_result() -> None:

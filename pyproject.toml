@@ -26,6 +26,8 @@ dev = [
     "ruff>=0.17",
     "mypy>=2.4",
     "types-pyyaml",
+    "aiosqlite>=0.22.1",
+    "langgraph-checkpoint-sqlite>=3.1.2",
 ]
 
 [tool.ruff]

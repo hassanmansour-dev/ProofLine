@@ -65,7 +65,7 @@ def test_task_inputs_must_be_json() -> None:
 
 
 def test_pending_action_carries_the_five_contract_fields() -> None:
-    action = make_action("t1")
+    action = make_action("t1", eval_scores=EvalScores({"quality": 0.8}))
     assert (action.type, action.target, action.preview, action.risk_level) == (
         "publish_public",
         "linkedin",
@@ -75,8 +75,8 @@ def test_pending_action_carries_the_five_contract_fields() -> None:
     assert isinstance(action.eval_scores, EvalScores)
 
 
-def test_eval_scores_are_optional_until_the_eval_node() -> None:
-    assert make_action("t1", eval_scores=None).eval_scores is None
+def test_eval_scores_are_empty_until_the_eval_node() -> None:
+    assert make_action("t1").eval_scores is None
 
 
 @pytest.mark.parametrize(

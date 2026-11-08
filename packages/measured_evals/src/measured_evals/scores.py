@@ -36,6 +36,8 @@ class EvalScores:
         for name, value in self.scores.items():
             if not name:
                 raise ValueError("metric names must be non-empty")
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise ValueError(f"score for {name!r} must be a number, got {value!r}")
             if math.isnan(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"score for {name!r} must be in [0, 1], got {value}")
         # copy, so a caller mutating its own dict can't change this result

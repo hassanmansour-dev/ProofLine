@@ -23,7 +23,6 @@ def make_action(task_id: str, **overrides: Any) -> PendingAction:
         "target": "linkedin",
         "preview": "A draft post.",
         "risk_level": "medium",
-        "eval_scores": EvalScores({"quality": 0.8}),
     }
     fields.update(overrides)
     return PendingAction(**fields)
@@ -60,6 +59,40 @@ class EchoAgent:
         builder.add_node("propose", _propose)
         builder.add_edge(START, "draft")
         builder.add_edge("draft", "propose")
+        builder.add_edge("propose", END)
+        return builder.compile()
+
+
+class NoOutputSchemaAgent:
+    """Declares its input but not its output, so private keys would leak out."""
+
+    name = "no_output"
+
+    def build(self) -> AgentGraph:
+        builder = StateGraph(_EchoState, input_schema=AgentInput)
+        builder.add_node("draft", _draft)
+        builder.add_node("propose", _propose)
+        builder.add_edge(START, "draft")
+        builder.add_edge("draft", "propose")
+        builder.add_edge("propose", END)
+        return builder.compile()  # type: ignore[return-value]
+
+
+class SelfScoringAgent(EchoAgent):
+    """Breaks the contract: attaches its own eval scores to the action it proposes."""
+
+    def build(self) -> AgentGraph:
+        async def propose(state: _EchoState) -> dict[str, Any]:
+            task = state["task"]
+            action = make_action(task.id, eval_scores=EvalScores({"quality": 1.0}))
+            result = AgentResult(
+                task_id=task.id, agent="echo", status="succeeded", summary="x", actions=(action,)
+            )
+            return {"result": result}
+
+        builder = StateGraph(_EchoState, input_schema=AgentInput, output_schema=AgentOutput)
+        builder.add_node("propose", propose)
+        builder.add_edge(START, "propose")
         builder.add_edge("propose", END)
         return builder.compile()
 

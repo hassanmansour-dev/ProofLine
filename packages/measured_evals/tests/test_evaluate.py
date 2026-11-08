@@ -38,6 +38,12 @@ def test_scores_must_be_in_unit_range(bad: float) -> None:
         EvalScores({"quality": bad})
 
 
+@pytest.mark.parametrize("bad", [True, "0.9", None])
+def test_scores_must_be_numbers(bad: object) -> None:
+    with pytest.raises(ValueError, match="must be a number"):
+        EvalScores({"quality": bad})  # type: ignore[dict-item]
+
+
 def test_threshold_must_be_in_unit_range() -> None:
     with pytest.raises(ValueError, match="threshold"):
         EvalScores({"quality": 0.5}, threshold=2.0)

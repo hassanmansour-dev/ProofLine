@@ -20,7 +20,7 @@ from measured_ops.contracts import SERDE_ALLOWLIST
 pytestmark = pytest.mark.anyio
 
 TASK = make_task(inputs={"topic": "evals", "tags": ["a", "b"]})
-ACTION = make_action(TASK.id)
+ACTION = make_action(TASK.id, eval_scores=EvalScores({"quality": 0.8}))
 
 
 async def _write(state: OpsState) -> dict[str, Any]:

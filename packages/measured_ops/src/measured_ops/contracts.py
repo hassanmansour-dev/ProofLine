@@ -50,7 +50,7 @@ class _Model(BaseModel):
 
 
 class Task(_Model):
-    """One unit of work for one agent."""
+    """One unit of work for one agent. Frozen but not hashable (dict field): key by `id`."""
 
     id: str = Field(default_factory=new_id, min_length=1)
     agent: str = Field(pattern=NAME_PATTERN, description="Name of the agent that runs it.")
@@ -98,7 +98,11 @@ class PendingAction(_Model):
         description="What the human sees before approving: the text, diff or summary.",
     )
     eval_scores: EvalScores | None = Field(
-        default=None, description="Scores from measured_evals; None until the eval node (C7)."
+        default=None,
+        description=(
+            "Scores from measured_evals, written only by the eval node (C7), never by the "
+            "proposing agent: run_agent rejects actions that arrive with scores (ADR-0008)."
+        ),
     )
     risk_level: RiskLevel = Field(
         description="The agent's risk call. 'high' always needs approval, whatever the policy."
@@ -154,7 +158,9 @@ class OpsState(TypedDict, total=False):
 
     task: Task  # the task in flight
     results: Annotated[list[AgentResult], operator.add]  # one per agent run, append-only
-    pending_actions: list[PendingAction]  # waiting at the gate; the gate replaces the list
+    # waiting at the gate. No reducer: last write wins, so C2 must give it one owner
+    # (or a reducer) before agents can run in parallel.
+    pending_actions: list[PendingAction]
     decisions: Annotated[list[ApprovalDecision], operator.add]  # append-only audit trail
 
 

@@ -93,4 +93,10 @@ async def run_agent(
             f"agent {agent.name!r} returned a result for task {result.task_id} "
             f"(agent {result.agent!r}), expected task {task.id}"
         )
+    self_scored = [a.id for a in result.actions if a.eval_scores is not None]
+    if self_scored:
+        raise AgentContractError(
+            f"agent {agent.name!r} scored its own actions {self_scored}: "
+            "eval_scores are written only by the eval node"
+        )
     return result
