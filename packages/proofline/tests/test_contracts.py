@@ -34,5 +34,5 @@ def test_initial_state_sets_a_default_for_every_later_week_field(tmp_path: Path)
     state = initial_state("topic", "audience", make_settings(tmp_path).run_config())
     assert state["revision_count"] == 0
     assert state["history"] == []
-    for field in ("critique", "score", "approved", "feedback"):
+    for field in ("critique", "score", "feedback"):
         assert state[field] is None  # type: ignore[literal-required]

@@ -1,7 +1,7 @@
 """CLI: `proofline run --topic ... --audience ...` prints the finished script.
 
-Today it runs the linear graph with no checkpointer. Streaming node updates, the
-review prompt (interrupt + resume) and `show THREAD_ID` come with C2/C8 (docs/PLAN.md).
+It runs the linear graph with no checkpointer. There is no review prompt: approval
+happens in the supervisor's gate and inbox (C2, C4; ADR-0014).
 
 `.env` is loaded first, from the working directory (the same file Settings reads):
 pydantic-settings only reads PROOFLINE_* into Settings, but the Anthropic, Tavily and
