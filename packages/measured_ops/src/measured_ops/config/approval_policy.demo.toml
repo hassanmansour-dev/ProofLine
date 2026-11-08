@@ -1,0 +1,25 @@
+# Demo approval policy (public). Real values live in measured-ops-private and are
+# loaded with measured_ops.policy.load_policy(path). Rows from Jira GROW-69.
+#
+# "auto": the supervisor runs the action without asking.
+# "approval": the action waits in the approval inbox for a human.
+# Action types not listed here always need approval, and so does any action an
+# agent marks risk_level = "high", whatever its row says.
+
+version = 1
+
+[actions]
+# internal work: nothing leaves the system
+draft_content = "auto"
+research = "auto"
+schedule_internal_block = "auto"
+triage_ticket = "auto"
+run_tests = "auto"
+run_evals = "auto"
+
+# real impact: public under Hassan's name, production, money, real people, learner data
+publish_public = "approval"
+deploy_production = "approval"
+spend_money = "approval"
+message_person = "approval"
+change_learner_data = "approval"
