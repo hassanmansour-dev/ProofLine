@@ -60,7 +60,7 @@ the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
 
 ## Phase 1 — Build the evidence
 
-### C1 · Contract (GROW-80) ◀ CURRENT
+### C1 · Contract (GROW-80) ✅ (PR #5)
 
 Waits on: nothing. **Everything else builds on this.**
 
@@ -82,9 +82,14 @@ Waits on: nothing. **Everything else builds on this.**
 
 **Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 
-### C0 · One-command bootstrap (GROW-91)
+### C0 · One-command bootstrap (GROW-91) ◀ CURRENT
 
-Waits on: C1.
+Waits on: C1 (done).
+
+**Runs on Hassan's Ubuntu machine, not in a cloud session.** It needs Docker
+(local Postgres), the GitHub, Supabase and Vercel CLIs logged in to his accounts,
+and real secrets, none of which a cloud session has or should have. A cloud
+session can review the script or write its tests, but doesn't run it.
 
 - [ ] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
   `--dry-run`, teardown for throwaway projects; production always asks
