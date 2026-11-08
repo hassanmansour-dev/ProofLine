@@ -1,8 +1,10 @@
 """Graph wiring — no business logic here.
 
 Built now:         START → planner → researcher → writer → finalizer → END
-C8 (loop):         writer → critic ─route_after_critic→ {writer, human_review}
-C2 (human):        human_review ─route_after_human→ {writer, finalizer}
+C8 (loop):         writer → critic ─route_after_critic→ {writer, finalizer}
+
+No human review node: this graph becomes the content agent (C8), and the
+supervisor's approval gate (C2) and inbox (C4) handle approval (ADR-0014).
 
 Rules: StateGraph(ScriptState, context_schema=Deps); path maps on every conditional
 edge; the researcher gets researcher.RETRY_POLICY (retries only SearchUnavailableError,

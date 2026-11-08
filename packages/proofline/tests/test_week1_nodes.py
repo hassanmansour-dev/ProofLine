@@ -425,7 +425,6 @@ async def test_writer_cut_keeps_the_revision_context(tmp_path: Path) -> None:
         research_notes=make_notes(3),
         draft=make_draft(),
         critique=make_critique(6),
-        approved=False,
         feedback="Open with the crash story.",
     )
     await run_node("writer", writer, state, deps)

@@ -1,19 +1,9 @@
-"""FastAPI app. Step C2 (approval inbox in C4; ADR-0014 decides whether these endpoints stay). Contract in docs/ARCHITECTURE.md §7.
+"""FastAPI app: /health only (ADR-0014).
 
-`create_app(deps=..., checkpointer_url=...)` is the seam tests use (fakes + memory://);
-`app = create_app()` is what uvicorn serves with real deps from .env.
-
-Implementation notes for C2:
-- lifespan: dotenv.load_dotenv(); open_checkpointer(url) once; compile build_graph() once;
-  build_deps() unless injected; store on app.state; close on shutdown.
-  (httpx ASGITransport doesn't run lifespan — tests enter app.router.lifespan_context(app).)
-- POST /runs (StartRunRequest): thread_id = new_thread_id(); ainvoke(initial_state(...),
-  invoke_config(...), context=deps) → returns at the interrupt → RunView(status="awaiting_review").
-- GET /runs/{thread_id}: aget_state; 404 if the thread has no checkpoint (snapshot.values empty);
-  status: snapshot.interrupts → awaiting_review; "final_script" in values → completed; else running.
-- POST /runs/{thread_id}/review (HumanDecision): 404 unknown, 409 unless awaiting_review;
-  ainvoke(Command(resume=decision.model_dump()), ...) → RunView.
-- Keep handlers thin: a small `RunService` (graph + deps + settings) does the work.
+The run/review endpoints this module once planned are dropped: the content pipeline
+becomes the content agent (C8), and the supervisor's approval gate (C2) and the
+approval inbox (C4) handle runs and approval in measured_ops. This module stays
+until C4 decides where the inbox app lives.
 """
 
 from __future__ import annotations
@@ -34,7 +24,6 @@ def create_app(*, deps: Deps | None = None, checkpointer_url: str | None = None)
     async def health() -> dict[str, Any]:
         return {"status": "ok", "checkpointer": url.split(":", 1)[0]}
 
-    # C2: lifespan + /runs endpoints go here.
     return api
 
 

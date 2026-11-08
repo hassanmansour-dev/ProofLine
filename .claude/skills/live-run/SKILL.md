@@ -9,8 +9,8 @@ Live run for: $ARGUMENTS
 
 1. Confirm with Hassan before running — this calls Anthropic (and Tavily when
    `PROOFLINE_RESEARCHER=web`).
-2. Run `uv run proofline run --topic "<topic>" --audience "<audience>" -v`; once the checkpointer lands (C2)
-   Hassan answers the review prompt himself.
+2. Run `uv run proofline run --topic "<topic>" --audience "<audience>" -v`. There is no
+   review prompt: approval happens in the supervisor's gate and inbox (C2/C4, ADR-0014).
 3. Read `outputs/<thread_id>/script.md` and `script.json`.
 4. Report in under 20 lines:
    - Score per revision and the criterion that moved most

@@ -42,8 +42,19 @@ The content pipeline above becomes the seed of the **content agent** (C8). Its
 critic becomes the first rubric in the eval/guard node (C7).
 
 Open from the earlier Week 0–1:
-- [ ] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it)
-- [ ] First live run with a real key (input for the content agent's rubric)
+- [ ] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it).
+  The first live run's hook was weak because this file is still empty
+- [x] First live run with a real key (input for the content agent's rubric)
+
+What the first live run surfaced (fix in the step named, not before):
+- The writer describes the critic loop as live, but it isn't wired until C8 → C8
+- 195 words is too long for a 1-minute video: revisit the default `max_words`
+  and the words-per-minute estimate → C8
+- Weak hook → fill in `docs/BRAND_VOICE.md` (above)
+
+From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only if
+the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
+`render.revision_context`), with a test.
 
 ---
 
@@ -53,18 +64,21 @@ Open from the earlier Week 0–1:
 
 Waits on: nothing. **Everything else builds on this.**
 
-- [ ] Pydantic models: `OpsState`, `Task`, `AgentResult`, `PendingAction` (type,
-  target, preview, eval scores, risk level)
-- [ ] Agent interface: every agent is a subgraph, `Task` → `AgentResult`
-- [ ] Approval policy table as config; unknown action types default to approval
-- [ ] Eval package interface stubbed in `measured_evals`: `evaluate(output, context) → EvalScores`
-- [ ] ADR-0014: where the Measured Ops code lives in this workspace (new
-  `packages/measured_ops` member, or inside `proofline`), and the public/private split
-- [ ] Same ADR: what happens to the content pipeline's own human review and run API.
+- [x] Pydantic models: `OpsState`, `Task`, `AgentResult`, `PendingAction` (type,
+  target, preview, eval scores, risk level). `OpsState` is a TypedDict with
+  Pydantic values (ADR-0002); `ApprovalDecision` added as the gate's resume value
+- [x] Agent interface: every agent is a subgraph, `Task` → `AgentResult`
+- [x] Approval policy table as config; unknown action types default to approval
+- [x] Eval package interface stubbed in `measured_evals`: `evaluate(output, context) → EvalScores`
+- [x] ADR-0014: where the Measured Ops code lives in this workspace (new
+  `packages/measured_ops` member, or inside `proofline`), and the public/private split.
+  **Decided: new `packages/measured_ops` member**; `proofline` → `measured_ops` → `measured_evals`
+- [x] Same ADR: what happens to the content pipeline's own human review and run API.
   The supervisor's approval gate (C2) and the inbox (C4) cover approval, so
   `nodes/human_review.py`, the `/runs` endpoints in `api.py` and the CLI review
   prompt (all still stubs) either stay inside the content agent or are dropped.
-  Relabel or remove their `C2 target` xfail tests to match
+  Relabel or remove their `C2 target` xfail tests to match. **Decided: dropped**;
+  the restart case is now the supervisor's `C2 target` e2e test in `measured_ops`
 
 **Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 

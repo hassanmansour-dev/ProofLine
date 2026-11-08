@@ -7,12 +7,10 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command
 
-from proofline.checkpointing import open_checkpointer
 from proofline.context import Deps
 from proofline.graph import LINEAR_NODES, build_graph, invoke_config
-from proofline.schemas import ExtractedFindings, Finding, HumanDecision
+from proofline.schemas import ExtractedFindings, Finding
 from proofline.state import initial_state
 from tests.fakes import (
     FakeLLM,
@@ -28,7 +26,6 @@ pytestmark = pytest.mark.anyio
 
 # The wiring is linear today, so these fail on assertions until their step lands.
 C8_TARGET = pytest.mark.xfail(strict=True, reason="C8 target")
-C2_TARGET = pytest.mark.xfail(strict=True, reason="C2 target")
 
 
 def _llm(critic_scores: list[int], drafts: int | None = None) -> FakeLLM:
@@ -83,7 +80,7 @@ async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
     assert tuple(node for chunk in updates for node in chunk) == LINEAR_NODES
     assert [c.role for c in llm.calls] == ["planner", "writer"]
     # initial_state() defaults survive the graph's input schema (see graph.py)
-    assert values["approved"] is None
+    assert values["feedback"] is None
     assert values["critique"] is None
     assert values["score"] is None
 
@@ -125,48 +122,3 @@ async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
     nodes = await _stream(app, _inputs(deps), cfg, deps)
     assert nodes.count("writer") == 4
     assert nodes[-1] == "finalizer"
-
-
-# ── Week 3 ────────────────────────────────────────────────────────────────────
-
-
-@C2_TARGET
-async def test_reject_then_approve(tmp_path: Path) -> None:
-    llm = _llm([9, 9])
-    deps = _deps(tmp_path, llm)
-    app = build_graph().compile(checkpointer=InMemorySaver())
-    cfg = invoke_config("w3a", deps.settings)
-
-    first = await app.ainvoke(_inputs(deps), cfg, context=deps)
-    [intr] = first["__interrupt__"]
-    assert intr.value["score"] == make_critique(9).overall
-
-    reject = HumanDecision(approved=False, feedback="Open with the crash story.")
-    second = await app.ainvoke(Command(resume=reject.model_dump()), cfg, context=deps)
-    assert "__interrupt__" in second
-    assert "<human_feedback>" in llm.calls_for("writer")[-1].prompt.user
-
-    done = await app.ainvoke(
-        Command(resume=HumanDecision(approved=True).model_dump()), cfg, context=deps
-    )
-    assert done["final_script"].revision_count == 1
-    assert [h.kind for h in done["history"]].count("human") == 2
-
-
-@C2_TARGET
-async def test_resume_after_process_restart_sqlite(tmp_path: Path) -> None:
-    url = f"sqlite:///{tmp_path / 'cp.db'}"
-    deps = _deps(tmp_path, _llm([9]))
-    cfg = invoke_config("w3b", deps.settings)
-
-    async with open_checkpointer(url) as saver:
-        await build_graph().compile(checkpointer=saver).ainvoke(_inputs(deps), cfg, context=deps)
-
-    async with open_checkpointer(url) as saver:  # "new process"
-        app = build_graph().compile(checkpointer=saver)
-        snap = await app.aget_state(cfg)
-        assert snap.next == ("human_review",)
-        done = await app.ainvoke(
-            Command(resume=HumanDecision(approved=True).model_dump()), cfg, context=deps
-        )
-    assert done["final_script"].thread_id == "w3b"

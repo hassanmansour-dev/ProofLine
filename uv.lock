@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "measured-evals",
+    "measured-ops",
     "proofline",
     "proofline-workspace",
 ]
@@ -913,6 +914,25 @@ version = "0.0.1"
 source = { editable = "packages/measured_evals" }
 
 [[package]]
+name = "measured-ops"
+version = "0.0.1"
+source = { editable = "packages/measured_ops" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "measured-evals" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "langchain-core", specifier = ">=1.6" },
+    { name = "langgraph", specifier = ">=1.2.16,<2" },
+    { name = "measured-evals", editable = "packages/measured_evals" },
+    { name = "pydantic", specifier = ">=2.14" },
+]
+
+[[package]]
 name = "mypy"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1166,13 +1186,16 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "measured-evals" },
+    { name = "measured-ops" },
     { name = "proofline" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiosqlite" },
     { name = "anyio" },
     { name = "httpx" },
+    { name = "langgraph-checkpoint-sqlite" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -1182,13 +1205,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "measured-evals", editable = "packages/measured_evals" },
+    { name = "measured-ops", editable = "packages/measured_ops" },
     { name = "proofline", editable = "packages/proofline" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anyio", specifier = ">=4.6" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1.2" },
     { name = "mypy", specifier = ">=2.4" },
     { name = "pytest", specifier = ">=9.1" },
     { name = "ruff", specifier = ">=0.17" },

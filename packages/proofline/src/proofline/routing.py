@@ -6,22 +6,21 @@ from typing import Literal
 
 from proofline.state import ScriptState
 
-AfterCritic = Literal["writer", "human_review"]
-AfterHuman = Literal["writer", "finalizer"]
+AfterCritic = Literal["writer", "finalizer"]
 
 
 def route_after_critic(state: ScriptState) -> AfterCritic:
-    """Revise while below threshold and budget remains; otherwise hand to the human."""
+    """Revise while below threshold and budget remains; otherwise finish.
+
+    Human approval is not part of this graph: the supervisor gates the content
+    agent's proposed actions (ADR-0014).
+    """
     cfg = state["run_config"]
     score = state.get("score")
     if score is None:
         raise ValueError("route_after_critic: no score in state; the critic sets it")
     if score >= cfg.score_threshold:
-        return "human_review"
+        return "finalizer"
     if state.get("revision_count", 0) >= cfg.max_revisions:
-        return "human_review"
+        return "finalizer"
     return "writer"
-
-
-def route_after_human(state: ScriptState) -> AfterHuman:
-    return "finalizer" if state.get("approved") is True else "writer"

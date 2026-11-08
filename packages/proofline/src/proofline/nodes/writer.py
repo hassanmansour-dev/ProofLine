@@ -2,12 +2,12 @@
 
 Contract (docs/ARCHITECTURE.md §4):
     reads:   topic, audience, run_config, outline, research_notes,
-             draft?, critique?, approved?, feedback?, revision_count?
+             draft?, critique?, feedback?, revision_count?
     writes:  draft, revision_count, history
     LLM:     prompts/writer.md, role="writer", schema=Draft
 Steps:
     1. is_revision = "draft" in state → revision_count + 1, else 0.
-       rejected_by_human = approved is False (None means not reviewed yet).
+       rejected_by_human = feedback is set (it comes in with a revision Task, ADR-0014).
     2. Render with revision_context(...) and generate a Draft.
     3. Over run_config.max_words → one more call with the revision context plus
        too_long_context(...); keep the shorter draft, and if it's still over, log
@@ -105,7 +105,7 @@ async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
 
     is_revision = "draft" in state
     revision_count = state.get("revision_count", 0) + 1 if is_revision else 0
-    rejected_by_human = state.get("approved") is False
+    rejected_by_human = state.get("feedback") is not None
     brand_voice = await asyncio.to_thread(deps.settings.brand_voice_path.read_text, "utf-8")
     template = load_prompt("writer")
 

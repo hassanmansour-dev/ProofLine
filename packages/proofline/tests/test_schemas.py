@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from proofline.schemas import Critique, Draft, RunView, Source
+from proofline.schemas import Critique, Draft, Source
 from tests.fakes import make_critique, make_draft
 
 
@@ -65,14 +65,3 @@ def test_source_id_pattern_enforced() -> None:
 @pytest.mark.parametrize("model", [make_draft(), make_critique(7)], ids=["draft", "critique"])
 def test_models_round_trip_json(model: Draft | Critique) -> None:
     assert type(model).model_validate_json(model.model_dump_json()) == model
-
-
-def test_run_view_round_trip() -> None:
-    view = RunView(
-        thread_id="t",
-        status="awaiting_review",
-        draft=make_draft(),
-        critique=make_critique(7),
-        score=7.0,
-    )
-    assert RunView.model_validate_json(view.model_dump_json()) == view

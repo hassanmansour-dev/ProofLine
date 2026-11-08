@@ -239,16 +239,11 @@ class Critique(_Model):
         return value
 
 
-# ── Human review / history / final output ─────────────────────────────────────
-
-
-class HumanDecision(_Model):
-    approved: bool
-    feedback: str | None = Field(default=None, max_length=4000)
+# ── History / final output ────────────────────────────────────────────────────
 
 
 class RevisionRecord(_Model):
-    kind: Literal["draft", "critique", "human"]
+    kind: Literal["draft", "critique"]
     revision: int
     score: float | None = None
     note: str = ""
@@ -268,24 +263,6 @@ class FinalScript(_Model):
     source_urls: list[str]
     prompt_versions: dict[str, str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-# ── API payloads ──────────────────────────────────────────────────────────────
-
-
-class StartRunRequest(_Model):
-    topic: str = Field(min_length=3, max_length=300)
-    audience: str = Field(default="developers new to AI", min_length=3, max_length=300)
-
-
-class RunView(_Model):
-    thread_id: str
-    status: Literal["awaiting_review", "completed", "running"]
-    revision_count: int = 0
-    score: float | None = None
-    draft: Draft | None = None
-    critique: Critique | None = None
-    final_script: FinalScript | None = None
 
 
 # Every Pydantic model that can appear in ScriptState — the checkpointer's serde

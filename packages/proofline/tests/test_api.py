@@ -1,4 +1,4 @@
-"""API tests. /health works now; the run flow is the C2 target.
+"""API tests: /health only. Run and review endpoints were dropped (ADR-0014).
 
 Uses create_app(deps=fakes, checkpointer_url="memory://") — never the real module-level app,
 so implementing api.py can't accidentally make this suite call paid APIs.
@@ -47,22 +47,3 @@ async def test_health(client: AsyncClient) -> None:
     r = await client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok", "checkpointer": "memory"}
-
-
-@pytest.mark.xfail(strict=True, reason="C2 target")
-async def test_run_review_complete_flow(client: AsyncClient) -> None:
-    r = await client.post("/runs", json={"topic": "LangGraph checkpointers"})
-    assert r.status_code == 200
-    run = r.json()
-    assert run["status"] == "awaiting_review"
-    assert run["score"] == make_critique(9).overall
-    tid = run["thread_id"]
-
-    assert (await client.get(f"/runs/{tid}")).json()["status"] == "awaiting_review"
-
-    r = await client.post(f"/runs/{tid}/review", json={"approved": True})
-    assert r.json()["status"] == "completed"
-    assert r.json()["final_script"]["thread_id"] == tid
-
-    assert (await client.post(f"/runs/{tid}/review", json={"approved": True})).status_code == 409
-    assert (await client.get("/runs/does-not-exist")).status_code == 404

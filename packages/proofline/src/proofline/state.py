@@ -10,7 +10,7 @@ TypedDict for the graph, Pydantic for every value (ADR-0002). Defaults live in
 from __future__ import annotations
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 
 from proofline.schemas import (
     Critique,
@@ -27,6 +27,9 @@ class InputState(TypedDict):
     topic: str
     audience: str
     run_config: RunConfig
+    # a human's feedback on an earlier draft; set when a rejected action comes back
+    # as a revision Task (ADR-0014). Nothing in this graph writes it.
+    feedback: NotRequired[str | None]
 
 
 class ScriptState(TypedDict, total=False):
@@ -44,17 +47,15 @@ class ScriptState(TypedDict, total=False):
     # critic (C8)
     critique: Critique | None
     score: float | None
-    # human_review (C2)
-    approved: bool | None
-    feedback: str | None
+    feedback: str | None  # input, see InputState
     # finalizer
     final_script: FinalScript
-    # append-only audit trail (writer, critic, human_review)
+    # append-only audit trail (writer, critic)
     history: Annotated[list[RevisionRecord], operator.add]
 
 
 def initial_state(topic: str, audience: str, run_config: RunConfig) -> ScriptState:
-    """A new run's state: the inputs plus a default for every field later weeks use."""
+    """A new run's state: the inputs plus a default for every field later steps use."""
     return ScriptState(
         topic=topic,
         audience=audience,
@@ -62,8 +63,7 @@ def initial_state(topic: str, audience: str, run_config: RunConfig) -> ScriptSta
         revision_count=0,
         critique=None,
         score=None,
-        approved=None,  # None = not reviewed yet; False = rejected
-        feedback=None,
+        feedback=None,  # set from a revision Task once the content agent exists (C8)
         history=[],
     )
 
@@ -74,6 +74,5 @@ FIELD_OWNERS: dict[str, frozenset[str]] = {
     "researcher": frozenset({"research_notes"}),
     "writer": frozenset({"draft", "revision_count", "history"}),
     "critic": frozenset({"critique", "score", "history"}),
-    "human_review": frozenset({"approved", "feedback", "history"}),
     "finalizer": frozenset({"final_script"}),
 }
