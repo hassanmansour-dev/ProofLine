@@ -3,8 +3,10 @@
 #
 # "auto": the supervisor runs the action without asking.
 # "approval": the action waits in the approval inbox for a human.
-# Action types not listed here always need approval, and so does any action an
-# agent marks risk_level = "high", whatever its row says.
+# "never": the action is blocked and logged. It never reaches the inbox, and no
+#          approval can unblock it.
+# Action types not listed here always need approval. An action an agent marks
+# risk_level = "high" needs approval even on an "auto" row; risk never lowers "never".
 
 version = 1
 
@@ -23,3 +25,7 @@ deploy_production = "approval"
 spend_money = "approval"
 message_person = "approval"
 change_learner_data = "approval"
+
+# never: blocked whatever the risk level or the human says
+bulk_export_personal_data = "never"
+act_outside_own_systems = "never"

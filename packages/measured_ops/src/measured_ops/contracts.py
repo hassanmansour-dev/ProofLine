@@ -8,7 +8,7 @@ Flow (supervisor from C2, inbox from C4):
     Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
                                    │
                     policy.decide(action) ── "auto" ──▶ run
-                                   │
+                                   │      └──── "never" ──▶ blocked + logged (no inbox)
                                "approval" ──▶ inbox ──▶ ApprovalDecision
                                                            │
                                      rejected + feedback ──▶ new Task(parent_id=...)
@@ -162,11 +162,12 @@ class OpsState(TypedDict, total=False):
     # (or a reducer) before agents can run in parallel.
     pending_actions: list[PendingAction]
     decisions: Annotated[list[ApprovalDecision], operator.add]  # append-only audit trail
+    blocked: Annotated[list[PendingAction], operator.add]  # "never" actions, append-only audit
 
 
 def initial_ops_state(task: Task) -> OpsState:
     """A new supervisor run: the task plus a default for every field."""
-    return OpsState(task=task, results=[], pending_actions=[], decisions=[])
+    return OpsState(task=task, results=[], pending_actions=[], decisions=[], blocked=[])
 
 
 # Every type that can appear in OpsState. The checkpointer's serde allowlist is

@@ -54,8 +54,8 @@ packages/
 
 Every agent is a LangGraph subgraph that takes a `Task` and returns an
 `AgentResult` with the actions it proposes. A policy table decides which actions run
-on their own and which wait for a human; an action type the table doesn't know
-always waits. Details: [ADR-0014](docs/adr/0014-measured-ops-package-and-approval-ownership.md).
+on their own, which wait for a human, and which are never allowed (blocked and
+logged; no approval unblocks them). An action type the table doesn't know always waits. Details: [ADR-0014](docs/adr/0014-measured-ops-package-and-approval-ownership.md).
 
 The evaluation and security code lives in its own installable package,
 `measured-evals`, from day one, and **it never imports Proofline**:

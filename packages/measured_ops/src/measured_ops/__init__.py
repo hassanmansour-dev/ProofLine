@@ -23,11 +23,12 @@ from measured_ops.contracts import (
     Task,
     initial_ops_state,
 )
-from measured_ops.policy import ApprovalPolicy, Decision, load_policy
+from measured_ops.policy import ActionBlockedError, ApprovalPolicy, Decision, load_policy
 
 __version__ = version("measured-ops")
 
 __all__ = [
+    "ActionBlockedError",
     "Agent",
     "AgentContractError",
     "AgentGraph",

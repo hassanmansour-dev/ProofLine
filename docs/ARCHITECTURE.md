@@ -212,7 +212,7 @@ budgets and alerts via `measured_evals`.
 Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
                                │
                policy.decide(action) ── "auto" ──▶ run            (C2)
-                               │
+                               │      └── "never" ──▶ blocked + logged, no inbox
                            "approval" ──▶ inbox ──▶ ApprovalDecision   (C2 gate, C4 inbox)
                                                        │
                                  rejected + feedback ──▶ new Task(feedback, parent_id)
@@ -227,8 +227,8 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
 
-`OpsState` (TypedDict, ADR-0002): `task`; `results` and `decisions` with
-`operator.add` reducers; `pending_actions` (no reducer: C2 gives it one owner).
+`OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions` and `blocked`
+with `operator.add` reducers; `pending_actions` (no reducer: C2 gives it one owner).
 `initial_ops_state(task)` sets every field. `contracts.SERDE_ALLOWLIST` is built
 from `STATE_TYPES` and must be passed to the supervisor's checkpointer (ADR-0006).
 
@@ -241,10 +241,18 @@ whose actions carry eval scores (agents never score themselves). Agents
 propose actions; they never execute anything that leaves the system.
 
 **Approval policy** (`policy.py`). A TOML table, `version = 1`, `[actions]` rows of
-`"auto"` or `"approval"`. `load_policy()` reads the public demo table bundled at
-`measured_ops/config/approval_policy.demo.toml` (rows from GROW-69);
-`load_policy(path)` reads the private one. `decide(action)`: `risk_level="high"` →
-approval; listed type → its row; **unlisted type → approval**.
+`"auto"`, `"approval"` or `"never"`. `load_policy()` reads the public demo table
+bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, plus
+`bulk_export_personal_data` and `act_outside_own_systems` as `"never"`);
+`load_policy(path)` reads the private one. `decide(action)`:
+
+1. row is `"never"` → **never**: blocked, logged at WARNING, recorded in
+   `OpsState.blocked`, never sent to the inbox (risk level can't change this);
+2. `risk_level="high"` → approval;
+3. listed type → its row; **unlisted type → approval**.
+
+`check_decision(action, decision)` raises `ActionBlockedError` if a human approval
+targets a blocked action; the gate (C2) and inbox (C4) call it before acting.
 
 **Evals** (`measured_evals.evaluate(output, context) -> EvalScores`, async). Plain
 text and a plain mapping in, so the package knows no app types. `EvalScores`:

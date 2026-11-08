@@ -44,7 +44,7 @@ these packages. No code path here reads a private file by default.
 - `OpsState` is a `TypedDict` with Pydantic values, as ADR-0002 set for
   `ScriptState`: `task`, `results` (append reducer), `pending_actions` (replaced by
   the gate; no reducer, so C2 must give it a single owner or a reducer before
-  agents run in parallel), `decisions` (append reducer). Every value type is listed in
+  agents run in parallel), `decisions` and `blocked` (append reducers). Every value type is listed in
   `contracts.STATE_TYPES`, from which the checkpointer's serde allowlist is built
   (ADR-0006); a strict-msgpack round-trip test pins it.
 - `Task`, `AgentResult`, `PendingAction` (type, target, preview, eval scores, risk
@@ -61,9 +61,18 @@ these packages. No code path here reads a private file by default.
   by the eval node (C7); `run_agent` rejects an action that arrives with scores
   (the ADR-0008 rule: derived numbers don't come from the thing being judged).
 - **Approval policy** is a TOML table (`version = 1`, `[actions]` rows of
-  `"auto"` or `"approval"`), read with the standard library's `tomllib` (no new
-  dependency). Two rules no table overrides: an unlisted action type needs
-  approval, and so does any action with `risk_level = "high"`.
+  `"auto"`, `"approval"` or `"never"`), read with the standard library's
+  `tomllib` (no new dependency).
+  - `"auto"` runs without asking; `"approval"` waits in the inbox.
+  - `"never"` is **blocked and logged** (WARNING on `measured_ops.policy`, and
+    recorded in `OpsState.blocked`, append-only). It never reaches the inbox, and
+    no approval can unblock it: `ApprovalPolicy.check_decision` raises
+    `ActionBlockedError` for an approval of a blocked action, and the gate (C2) and
+    inbox (C4) must call it before acting on any decision.
+  - Rules no table overrides: an unlisted action type needs approval; an action
+    with `risk_level = "high"` needs approval even on an `"auto"` row; risk can
+    only tighten, so it never lowers `"never"`.
+  - Demo `"never"` rows: `bulk_export_personal_data`, `act_outside_own_systems`.
 - **`measured_evals.evaluate(output: str, context: Mapping | None) -> EvalScores`**,
   async (real metrics call judge models). `EvalScores` is a frozen stdlib dataclass
   (scores in [0, 1], a threshold, the evaluator's name), so `measured_evals` keeps
@@ -121,6 +130,9 @@ these packages. No code path here reads a private file by default.
   standalone review flow; until C2 there is no approval path at all (nothing
   leaves the system before then anyway). Any checkpoint holding the removed
   `approved` field or `"human"` history records won't load (none exist).
+- C2 must classify actions (`policy.decide`) in a node *before* the gate, not
+  inside it: `decide` logs blocked actions, and code before `interrupt()` re-runs
+  on resume.
 - Revisit when: an agent needs to propose an action that can't be expressed as
   type/target/preview, or the policy needs conditions beyond type and risk level
   (for example, eval scores below threshold forcing approval, likely in C7).

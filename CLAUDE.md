@@ -43,7 +43,8 @@ current step, or on a step whose dependencies aren't done, needs Hassan's explic
 **Scope rule:** build only what the current step lists. Agents are added one at a
 time, each against the C1 contract with its own e2e case. Every action that leaves
 the system (publish, deploy, spend, message a real person, learner data) goes
-through the approval policy; unknown action types default to approval. If a
+through the approval policy; unknown action types default to approval, and
+"never" actions are blocked outright (no approval unblocks them). If a
 change pulls toward a later step, stop and say so.
 
 ## Commands

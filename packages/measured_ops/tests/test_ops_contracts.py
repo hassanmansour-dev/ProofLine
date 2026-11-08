@@ -169,12 +169,13 @@ def test_initial_ops_state_sets_every_field() -> None:
     state = initial_ops_state(task)
     assert set(state) == set(typing.get_type_hints(OpsState))
     assert state["task"] is task
-    assert state["results"] == state["pending_actions"] == state["decisions"] == []
+    for field in ("results", "pending_actions", "decisions", "blocked"):
+        assert state[field] == [], field  # type: ignore[literal-required]
 
 
 def test_accumulating_fields_have_reducers() -> None:
     hints = typing.get_type_hints(OpsState, include_extras=True)
-    for field in ("results", "decisions"):
+    for field in ("results", "decisions", "blocked"):
         assert typing.get_origin(hints[field]) is typing.Annotated, field
 
 
