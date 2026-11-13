@@ -82,7 +82,7 @@ Waits on: nothing. **Everything else builds on this.**
 
 **Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 
-### C0 · One-command bootstrap (GROW-91) ◀ CURRENT
+### C0 · One-command bootstrap (GROW-91) ✅ (PR #8)
 
 Waits on: C1 (done).
 
@@ -94,11 +94,13 @@ session can review the script or write its tests, but doesn't run it.
 The bootstrap lives in its own private repo, **`sanovinci/sanovinci-bootstrap`**,
 because it's reused by every SanoVinci project. This repo only links to it.
 
-- [ ] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
+- [x] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
   `--dry-run`, teardown for throwaway projects; production always asks.
-  Built (`sanovinci new` / `sanovinci teardown`, tested against a fake world).
-  Open: a fresh end-to-end run after tearing down the smoke test (needs Hassan's
-  terminal: teardown and Vercel's first deploy both ask)
+  `sanovinci new` / `sanovinci teardown`, tested against a fake world. Proven
+  2026-11-13: teardown, then one fresh `new` reached a preview URL with local
+  Postgres (asking once, for Vercel's first deploy), and a second run printed
+  `No changes.`
+- [x] Proofline's own local Postgres: `proofline-pg` on 127.0.0.1:55432
 - [x] First use: `sanovinci/measured-ops-private` created (private, SanoVinci org:
   company data, Law 25) and wired to depend on this repo at a pinned commit
 - [x] Pre-commit secret + PII scan on this repo (gitleaks + `scripts/pii_scan.py`),
