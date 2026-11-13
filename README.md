@@ -121,8 +121,8 @@ Ordered steps, no dates. Each starts when the steps it depends on are done.
 |---|---|
 | ✅ | Linear flow, two-package workspace (`proofline` + `measured_evals`), CLI, CI |
 | ✅ C1 | Contract: shared state, agent interface, approval actions (auto / approval / never), eval interface |
-| **C0** ◀ now | One-command bootstrap (repo, database, hosting, env) and the private ops repo |
-| C2 | Supervisor skeleton with checkpointer, approval interrupt, end-to-end test in CI |
+| ✅ C0 | One-command bootstrap (repo, database, hosting, env) and the private ops repo |
+| **C2** ◀ now | Supervisor skeleton with checkpointer, approval interrupt, end-to-end test in CI |
 | C3–C7 | Approval inbox (mobile), MCP tools, orchestrator, eval/guard node with tracing and cost |
 | C8 | Content agent: one topic → post, clip script, lesson outline, scored and waiting for approval |
 | C9–C10 | A week of real use, then scheduled runs with budget caps and a kill switch |

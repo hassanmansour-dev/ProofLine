@@ -124,7 +124,7 @@ Decided for C0 (2026-11-13):
 in one command; a second run changes nothing; the Supabase step passes in `--dry-run`
 (its real run moves to C10); and the private repo exists.
 
-### C2 · Skeleton + end-to-end harness (GROW-81)
+### C2 · Skeleton + end-to-end harness (GROW-81) ◀ CURRENT
 
 Waits on: C1, C0.
 
