@@ -54,6 +54,7 @@ uv sync                                   # install (incl. dev deps)
 uv run pytest -m "not live"               # fast tests, all packages, no network, no keys
 uv run pytest -m live                     # real LLM + search calls (costs money)
 uv run ruff check --fix . && uv run ruff format .
+uv run pre-commit install                 # once: gitleaks + PII scan on every commit
 uv run mypy
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
 uv run uvicorn proofline.api:app --reload                       # API (/health only until C4)
@@ -94,6 +95,7 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     policy.py       ApprovalPolicy + load_policy(); config/approval_policy.demo.toml (demo values)
 packages/measured_evals/    standalone eval + security package (evaluate() stub in C1, metrics in GROW-14)
   src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
+scripts/pii_scan.py         pre-commit + CI PII scan for this public repo (with gitleaks; C0)
 ```
 
 Package rule: dependencies point one way, `proofline` → `measured_ops` → `measured_evals`.

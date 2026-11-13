@@ -203,6 +203,10 @@ budgets and alerts via `measured_evals`.
   tools in the linear flow, so injected instructions have nothing to act on. From
   C5, tool writes go through the approval policy.
 - Secrets only from env; `.env` is unreadable to Claude Code (hooks + deny rules).
+- Nothing private in this public repo, checked twice (C0): `.pre-commit-config.yaml`
+  runs gitleaks and `scripts/pii_scan.py` (emails, phone numbers, SINs) on every
+  commit, and CI runs gitleaks over the full history plus the PII scan over every
+  tracked file except `uv.lock` and the scanner's own fixtures.
 - ⟶ GROW-14/15 (`measured_evals`): prompt-injection suite, cost budgets, output checks;
   API auth and rate limiting in the app.
 

@@ -1,0 +1,17 @@
+# Pre-commit secret + PII scan (C0, GROW-91). This repo is public: nothing private
+# is ever committed here. Install once: uv run pre-commit install
+# CI runs the PII scan on every file and gitleaks over the full git history.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: pii-scan
+        name: PII scan (emails, phone numbers, SINs)
+        entry: python scripts/pii_scan.py
+        language: python
+        types: [text]
+        exclude: ^(uv\.lock|scripts/test_pii_scan\.py)$  # the scanner's own fixtures
