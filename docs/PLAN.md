@@ -82,7 +82,7 @@ Waits on: nothing. **Everything else builds on this.**
 
 **Done when:** contracts merged with tests, eval interface stubbed, ADR accepted.
 
-### C0 · One-command bootstrap (GROW-91) ◀ CURRENT
+### C0 · One-command bootstrap (GROW-91) ✅ (PR #8)
 
 Waits on: C1 (done).
 
@@ -91,15 +91,40 @@ Waits on: C1 (done).
 and real secrets, none of which a cloud session has or should have. A cloud
 session can review the script or write its tests, but doesn't run it.
 
-- [ ] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
-  `--dry-run`, teardown for throwaway projects; production always asks
-- [ ] First use: create `measured-ops-private` and wire it to depend on this repo
-- [ ] Pre-commit secret + PII scan on this repo
+The bootstrap lives in its own private repo, **`sanovinci/sanovinci-bootstrap`**,
+because it's reused by every SanoVinci project. This repo only links to it.
 
-**Done when:** a new project reaches a preview URL with working Supabase in one
-command, a second run changes nothing, and the private repo exists.
+- [x] One command sets up GitHub repo + Supabase + Vercel + env files, idempotent,
+  `--dry-run`, teardown for throwaway projects; production always asks.
+  `sanovinci new` / `sanovinci teardown`, tested against a fake world. Proven
+  2026-11-13: teardown, then one fresh `new` reached a preview URL with local
+  Postgres (asking once, for Vercel's first deploy), and a second run printed
+  `No changes.`
+- [x] Proofline's own local Postgres: `proofline-pg` on 127.0.0.1:55432
+- [x] First use: `sanovinci/measured-ops-private` created (private, SanoVinci org:
+  company data, Law 25) and wired to depend on this repo at a pinned commit
+- [x] Pre-commit secret + PII scan on this repo (gitleaks + `scripts/pii_scan.py`),
+  also in CI: gitleaks over the full history (pinned binary, checksum in the
+  workflow), PII scan over every tracked file except `uv.lock` and the scanner's
+  own fixtures. Not caught: SINs without separators, names, addresses
 
-### C2 · Skeleton + end-to-end harness (GROW-81)
+Decided for C0 (2026-11-13):
+- Local databases are plain `postgres:17` containers on their own ports, bound to
+  127.0.0.1: Proofline **55432**, measured-ops-private **55433**. Maktab's local
+  Supabase keeps 54321–54327, so project ports stay outside 543xx.
+- Supabase and Vercel CLIs run through `npx` at pinned versions (`supabase@2.122.0`,
+  as in Maktab; `vercel@65.8.0`), not global installs.
+- Supabase's free tier is full (Ledger, Maktab): the bootstrap's Supabase step is
+  built but exercised with fakes and `--dry-run` only. The first hosted project is at C10.
+- Found in the smoke test: Vercel makes a new project's first deploy **production**,
+  even with `--environment preview`. The bootstrap treats that deploy as production
+  (it asks) and checks every deploy's target.
+
+**Done when:** a new project reaches a preview URL with its local Postgres working,
+in one command; a second run changes nothing; the Supabase step passes in `--dry-run`
+(its real run moves to C10); and the private repo exists.
+
+### C2 · Skeleton + end-to-end harness (GROW-81) ◀ CURRENT
 
 Waits on: C1, C0.
 
@@ -139,6 +164,12 @@ Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 ### C10 · Staging as scheduled jobs (GROW-89)
 
 Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
+
+- [ ] First real run of the bootstrap's Supabase step (hosted project): moved here
+  from C0, because the free tier is full. Check that `projects create` reads the DB
+  password from the environment and that `-o json` (not `--output-format json`)
+  gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier)
+
 **Done when:** it runs unattended for 3 days with digests arriving.
 
 ### C11 · Remaining build agents, one at a time (GROW-90)
