@@ -154,20 +154,28 @@ class ApprovalDecision(_Model):
 
 
 class OpsState(TypedDict, total=False):
-    """The supervisor graph's state (wired in C2). Values are the models above."""
+    """The supervisor graph's state (C2). Values are the models above.
+
+    Every proposed action ends in exactly one place: `ready` (cleared by the policy
+    or a human), `blocked` ("never"), or rejected, where its `ApprovalDecision` in
+    `decisions` is the record (ADR-0016).
+    """
 
     task: Task  # the task in flight
     results: Annotated[list[AgentResult], operator.add]  # one per agent run, append-only
-    # waiting at the gate. No reducer: last write wins, so C2 must give it one owner
-    # (or a reducer) before agents can run in parallel.
+    # Waiting at the gate. No reducer, two sequential writers: `triage` sets it and
+    # `gate` pops the head. Needs a reducer (or one owner) before agents run in parallel.
     pending_actions: list[PendingAction]
     decisions: Annotated[list[ApprovalDecision], operator.add]  # append-only audit trail
     blocked: Annotated[list[PendingAction], operator.add]  # "never" actions, append-only audit
+    # Cleared to run: "auto" by the policy, or approved at the gate. Append-only.
+    # Nothing executes them before the tools arrive (C5). ADR-0016.
+    ready: Annotated[list[PendingAction], operator.add]
 
 
 def initial_ops_state(task: Task) -> OpsState:
     """A new supervisor run: the task plus a default for every field."""
-    return OpsState(task=task, results=[], pending_actions=[], decisions=[], blocked=[])
+    return OpsState(task=task, results=[], pending_actions=[], decisions=[], blocked=[], ready=[])
 
 
 # Every type that can appear in OpsState. The checkpointer's serde allowlist is

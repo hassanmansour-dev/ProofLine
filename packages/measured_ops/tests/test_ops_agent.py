@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from ops_fakes import (
-    EchoAgent,
+    FakeEchoAgent,
     LeakyAgent,
     NoOutputSchemaAgent,
     SelfScoringAgent,
@@ -17,11 +17,11 @@ pytestmark = pytest.mark.anyio
 
 
 def test_echo_agent_satisfies_the_protocol() -> None:
-    assert isinstance(EchoAgent(), Agent)
+    assert isinstance(FakeEchoAgent(), Agent)
 
 
 def test_conforming_graph_passes_the_check() -> None:
-    check_agent_graph(EchoAgent().build())
+    check_agent_graph(FakeEchoAgent().build())
 
 
 def test_graph_without_schemas_fails_the_check() -> None:
@@ -42,12 +42,12 @@ async def test_run_agent_rejects_self_scored_actions() -> None:
 
 async def test_output_is_only_the_result() -> None:
     task = make_task()
-    out = await EchoAgent().build().ainvoke({"task": task})
+    out = await FakeEchoAgent().build().ainvoke({"task": task})
     assert set(out) == {"result"}  # the agent's private "text" field doesn't leak
 
 
 async def test_run_agent_returns_the_result_for_the_task() -> None:
-    agent = EchoAgent()
+    agent = FakeEchoAgent()
     task = make_task(goal="Say hi.")
     result = await run_agent(agent, agent.build(), task)
     assert isinstance(result, AgentResult)
@@ -57,7 +57,7 @@ async def test_run_agent_returns_the_result_for_the_task() -> None:
 
 
 async def test_run_agent_refuses_a_task_for_another_agent() -> None:
-    agent = EchoAgent()
+    agent = FakeEchoAgent()
     with pytest.raises(AgentContractError, match="not 'echo'"):
         await run_agent(agent, agent.build(), make_task(agent="content"))
 
@@ -69,7 +69,7 @@ async def test_run_agent_rejects_a_graph_with_no_result() -> None:
 
 
 async def test_run_agent_rejects_a_result_for_another_task() -> None:
-    class Wrong(EchoAgent):
+    class Wrong(FakeEchoAgent):
         name = "wrong"
 
     agent = Wrong()  # its graph answers as "echo", not "wrong"

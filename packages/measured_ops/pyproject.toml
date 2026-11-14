@@ -13,6 +13,11 @@ dependencies = [
     "pydantic>=2.14",
 ]
 
+[project.optional-dependencies]
+# The supervisor's Postgres checkpointer (ADR-0016). Optional: measured_ops imports
+# and runs (memory/SQLite) without it.
+postgres = ["langgraph-checkpoint-postgres>=3.2.0,<4", "psycopg[binary,pool]>=3.2,<4"]
+
 [tool.uv.sources]
 measured-evals = { workspace = true }
 

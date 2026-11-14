@@ -1,10 +1,11 @@
 # Architecture — Proofline
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
-ADR-0014). Sections 3–11 describe the content pipeline, which becomes the Measured
-Ops content agent (ADR-0013). Section 13 describes Measured Ops itself: the
-contract, the agent interface and the approval policy, with the supervisor, gate
-and inbox to follow. Planned parts
+ADR-0014); **supervisor and approval gate built** (C2, ADR-0016). Sections 3–11
+describe the content pipeline, which becomes the Measured Ops content agent
+(ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
+interface, the approval policy, the supervisor and its gate, with the inbox to
+follow. Planned parts
 are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
 need to be torn up when they land.
 
@@ -24,7 +25,7 @@ packages/
   proofline/        the content pipeline (LangGraph graph, nodes, CLI); becomes the
                     content agent in C8
   measured_ops/     Measured Ops: contracts, agent interface, approval policy (C1);
-                    supervisor + gate (C2), inbox (C4)
+                    supervisor + gate + checkpointer (C2); inbox (C4)
   measured_evals/   eval + security layer: golden sets, metrics, cost budgets,
                     prompt-injection tests (evaluate() interface in C1; metrics in GROW-14)
 ```
@@ -156,9 +157,10 @@ All from environment / `.env` (`config.Settings`, prefix `PROOFLINE_`), snapshot
 into `RunConfig` at run start: brand name, word limit, researcher choice, model
 provider and per-role models, thresholds. See `.env.example`.
 
-## 8. Persistence (⟶ C2)
+## 8. Persistence
 
-`checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
+The supervisor uses its own factory, `measured_ops.checkpoint.open_checkpointer(url)`
+(section 13). The content pipeline's: `checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
 `sqlite:///…` → `AsyncSqliteSaver`, `postgresql://…` → `AsyncPostgresSaver`. All
 use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state model
 (ADR-0006). `thread_id` = run id (UUID4). The linear flow runs without a checkpointer.
@@ -215,11 +217,11 @@ budgets and alerts via `measured_evals`.
 ```
 Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
                                │
-               policy.decide(action) ── "auto" ──▶ run            (C2)
+               policy.decide(action) ── "auto" ──▶ ready (runs from C5)
                                │      └── "never" ──▶ blocked + logged, no inbox
-                           "approval" ──▶ inbox ──▶ ApprovalDecision   (C2 gate, C4 inbox)
-                                                       │
-                                 rejected + feedback ──▶ new Task(feedback, parent_id)
+                           "approval" ──▶ gate ──▶ ApprovalDecision ──▶ ready | rejected
+                                                       │        (C2 gate, C4 inbox)
+                                 rejected + feedback ──▶ new Task(feedback, parent_id)  (C8)
 ```
 
 **Contract** (`contracts.py`). Frozen Pydantic models, unknown fields rejected:
@@ -231,8 +233,11 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
 
-`OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions` and `blocked`
-with `operator.add` reducers; `pending_actions` (no reducer: C2 gives it one owner).
+`OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions`, `blocked` and
+`ready` with `operator.add` reducers; `pending_actions` (no reducer: `triage` sets
+it, `gate` pops it, which is fine while one agent runs at a time; ADR-0016).
+Every proposed action ends in exactly one of `ready`, `blocked`, or rejected (its
+decision in `decisions`).
 `initial_ops_state(task)` sets every field. `contracts.SERDE_ALLOWLIST` is built
 from `STATE_TYPES` and must be passed to the supervisor's checkpointer (ADR-0006).
 
@@ -264,9 +269,46 @@ scores in [0, 1], a threshold, the evaluator name; `passed` is computed (every
 score ≥ threshold, and at least one score). The C1 stub returns no scores, so it
 never passes.
 
-⟶ C2: `build_supervisor(agents, policy)`, gate with `interrupt()` before any
-action that needs approval, Postgres checkpointer, e2e test
-(`packages/measured_ops/tests/test_ops_e2e.py`, currently `C2 target`).
+**Supervisor** (`supervisor.py`, ADR-0016). `build_supervisor(agents, policy)`
+returns the uncompiled `StateGraph`; compile it with a checkpointer.
+
+```
+START → call_agent → triage ─┬→ gate ─┐    route_pending (pure): "gate" while
+                             │   ▲    │    pending_actions is non-empty, else END
+                             │   └────┤
+                             └────────┴→ END
+```
+
+- `build_supervisor` builds and checks every agent's graph at startup; duplicate
+  names fail. `call_agent` runs the task through `run_agent`; an unknown agent fails loudly.
+- `triage` calls `policy.decide` once per action (never in the gate, which re-runs on
+  resume): auto → `ready`, never → `blocked`, approval → `pending_actions`.
+- `gate` pauses on the head of `pending_actions` with `interrupt(payload)`, where the
+  payload is `action_id`, `task_id`, `type`, `target`, `preview` and `risk_level`.
+  The resume value is `ApprovalDecision.model_dump()`. It is validated **inside**
+  `interrupt(response_schema=answer_schema(action, policy))`: it must be for the
+  waiting action, and `check_decision` runs. A bad answer raises to the caller
+  (`ValidationError`, or `ActionBlockedError`, which `is_invalid_resume` doesn't
+  mark: catch both), nothing is bound to the gate task, and the run stays paused
+  for a new `Command(resume=...)`. The refused value stays as the pending resume
+  until then, so never retry with a bare `ainvoke(None)`. (Raising after
+  `interrupt()` returns would bind the bad answer and replay it on every resume.) An approved action goes
+  to `ready`; a rejection is recorded and the run ends.
+- Nothing executes `ready` yet (⟶ C5). Rejection feedback → revision `Task` (⟶ C8).
+
+**Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
+`sqlite:///path`, `postgresql://…` (needs the `postgres` extra; runs `setup()` on
+open), always with `SERDE_ALLOWLIST`. Supabase is plain Postgres here (hosted run ⟶ C10).
+
+**Stub agent** (`echo.py`). `EchoAgent` drafts the task's goal and proposes one
+`publish_public` action. It exists for the e2e test and is injected like any agent.
+
+**e2e** (`tests/test_ops_e2e.py`). Task → echo agent → pause in a child process
+(`ops_e2e_child.py`) → resume in the test process from the checkpoint → done.
+Approve and reject cases, SQLite and Postgres, strict msgpack. The Postgres case
+needs `MEASURED_OPS_TEST_DATABASE_URL`: it skips locally without it and fails in
+CI, which runs a Postgres service container. Every later step keeps this green and
+adds its own case.
 
 ## 14. Docs
 

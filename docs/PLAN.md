@@ -124,13 +124,15 @@ Decided for C0 (2026-11-13):
 in one command; a second run changes nothing; the Supabase step passes in `--dry-run`
 (its real run moves to C10); and the private repo exists.
 
-### C2 · Skeleton + end-to-end harness (GROW-81) ◀ CURRENT
+### C2 · Skeleton + end-to-end harness (GROW-81) ✅ (PR #9)
 
 Waits on: C1, C0.
 
-- [ ] Supervisor graph with a stub echo agent, Supabase (Postgres) checkpointer,
-  interrupt before any `PendingAction`
-- [ ] CI e2e test: task in → stub agent → approval interrupt → resume → done
+- [x] Supervisor graph with a stub echo agent, Supabase (Postgres) checkpointer,
+  interrupt before any `PendingAction` (ADR-0016; Postgres local + CI, hosted Supabase in C10)
+- [x] CI e2e test: task in → stub agent → approval interrupt → resume → done
+  (pause and resume in separate processes; SQLite + Postgres; approve + reject)
+- [x] Green in CI on the PR (#9: Postgres e2e ran, 273 passed, 0 skipped)
 
 **Done when:** e2e test green in CI. Every later step keeps it green and adds its own case.
 
@@ -141,6 +143,13 @@ After C2, two branches run **in parallel**:
 | **C3** Review policy table on phone (GROW-82) | **C4** Approval inbox v0, mobile (GROW-83) |
 | **C5** MCP tools: Jira + personal calendar, read/write split (GROW-84) · waits on C3 | **C7** Eval/guard node v0 using `measured_evals`: quality, injection, PII; tracing + cost per agent (GROW-86) · waits on C4 |
 | **C6** Orchestrator: weekly plan by order and available time, never deadlines (GROW-85) · waits on C5 | |
+
+### C4 · Approval inbox v0, mobile (GROW-83) ◀ CURRENT
+
+Waits on: C2. Runs in parallel with **C3** (GROW-82), Hassan's review of the policy
+table on his phone. Scope: GROW-83; checklist to be written when the step starts.
+Carried from C2 (ADR-0016): catch both `ValidationError` and `ActionBlockedError` from
+a refused answer, and retry with a new `Command(resume=...)`, never a bare `ainvoke(None)`.
 
 ### C8 · Content agent v0 (GROW-87)
 
