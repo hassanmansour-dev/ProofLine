@@ -149,7 +149,7 @@ After C2, two branches run **in parallel**:
 | **C5** MCP tools: Jira + personal calendar, read/write split (GROW-84) · waits on C3 | **C7** Eval/guard node v0 using `measured_evals`: quality, injection, PII; tracing + cost per agent (GROW-86) · waits on C4 |
 | **C6** Orchestrator: weekly plan by order and available time, never deadlines (GROW-85) · waits on C5 | |
 
-### C4 · Approval inbox v0, mobile (GROW-83) ◀ CURRENT
+### C4 · Approval inbox v0, mobile (GROW-83) ✅ (PR #10) ◀ CURRENT
 
 Waits on: C2. Runs in parallel with **C3** (GROW-82), Hassan's review of the policy
 table on his phone. Decisions: ADR-0017.
@@ -166,7 +166,7 @@ table on his phone. Decisions: ADR-0017.
 - [x] e2e: pause in another process → approve / reject over HTTP → thread finishes
   (SQLite + Postgres)
 - [x] Green in CI on the PR (#10: Postgres e2e ran, 331 passed, 0 skipped)
-- [ ] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`)
+- [x] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`, 2026-11-14)
 
 **Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
 usable on the phone.
