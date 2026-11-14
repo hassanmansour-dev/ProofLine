@@ -128,9 +128,11 @@ in one command; a second run changes nothing; the Supabase step passes in `--dry
 
 Waits on: C1, C0.
 
-- [ ] Supervisor graph with a stub echo agent, Supabase (Postgres) checkpointer,
-  interrupt before any `PendingAction`
-- [ ] CI e2e test: task in → stub agent → approval interrupt → resume → done
+- [x] Supervisor graph with a stub echo agent, Supabase (Postgres) checkpointer,
+  interrupt before any `PendingAction` (ADR-0016; Postgres local + CI, hosted Supabase in C10)
+- [x] CI e2e test: task in → stub agent → approval interrupt → resume → done
+  (pause and resume in separate processes; SQLite + Postgres; approve + reject)
+- [ ] Green in CI on the PR
 
 **Done when:** e2e test green in CI. Every later step keeps it green and adds its own case.
 
