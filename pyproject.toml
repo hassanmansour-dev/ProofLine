@@ -15,8 +15,8 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 proofline = { workspace = true }
-measured-ops = { workspace = true }
 measured-evals = { workspace = true }
+measured-ops = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -29,8 +29,7 @@ dev = [
     "aiosqlite>=0.22.1",
     "langgraph-checkpoint-sqlite>=3.1.2",
     "pre-commit>=4.3",
-    "langgraph-checkpoint-postgres>=3.2.0,<4",
-    "psycopg[binary,pool]>=3.2,<4",
+    "measured-ops[inbox,postgres]",
 ]
 
 [tool.ruff]
@@ -49,6 +48,7 @@ known-first-party = ["proofline", "measured_ops", "measured_evals", "tests", "sc
 "packages/proofline/src/proofline/cli.py" = ["T20"]
 ".claude/hooks/**" = ["T20"]
 "scripts/pii_scan.py" = ["T20"]
+"packages/measured_ops/src/measured_ops/inbox/__main__.py" = ["T20"]
 
 [tool.mypy]
 python_version = "3.12"

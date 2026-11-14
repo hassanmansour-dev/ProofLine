@@ -96,10 +96,10 @@ jobs:
           --with ./packages/measured_evals --with pytest
           python -m pytest -q -p no:cacheprovider packages/measured_evals/tests
 
-      - name: measured_ops stands alone (installed without proofline, with its postgres extra)
+      - name: measured_ops stands alone (installed without proofline, with its postgres + inbox extras)
         run: >-
           uv run --isolated --no-project
           --reinstall-package measured-ops --reinstall-package measured-evals
-          --with ./packages/measured_evals --with './packages/measured_ops[postgres]'
-          --with pytest --with anyio --with aiosqlite --with langgraph-checkpoint-sqlite
+          --with ./packages/measured_evals --with './packages/measured_ops[postgres,inbox]'
+          --with pytest --with anyio --with httpx --with aiosqlite --with langgraph-checkpoint-sqlite
           python -m pytest -q -p no:cacheprovider packages/measured_ops/tests
