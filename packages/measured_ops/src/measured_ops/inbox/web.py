@@ -1,6 +1,6 @@
 """The inbox web app (C4, ADR-0017): FastAPI, server-rendered, phone first, no JavaScript.
 
-    GET  /login, POST /login, POST /logout
+    GET|HEAD /login, POST /login, POST /logout
     GET  /                       actions waiting at the gate
     GET  /a/{thread_id}          one action: preview, approve / reject with feedback
     POST /a/{thread_id}/decision resume the run with the answer
@@ -200,7 +200,8 @@ def create_inbox_app(
 
     # ---- sign-in ------------------------------------------------------------------------
 
-    @app.get("/login", response_class=HTMLResponse)
+    # HEAD too: `curl -I .../login` is the runbook's "is it up?" check (docs/INBOX.md).
+    @app.api_route("/login", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def login_page(request: Request) -> Response:
         if signed_in(request):
             return RedirectResponse("/", status_code=303)
