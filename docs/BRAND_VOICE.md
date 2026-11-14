@@ -20,12 +20,12 @@
   people who haven't shipped.
 
 ## What the brand promises
-- One sentence: Practical AI engineering from a working senior engineer: what I
+- One sentence: Practical AI engineering from a working senior developer: what I
   built, what I measured, and what held up in production.
 
 ## Voice
 - Three adjectives: measured, concrete, honest.
-- Sounds like: a senior engineer explaining a design decision to a colleague at
+- Sounds like: a senior developer explaining a design decision to a colleague at
   the whiteboard. Tradeoffs first, numbers as receipts, no performance.
 - Never sounds like: an AI influencer, a vendor pitch, a hype thread, a "Founder
   & CEO" humblebrag, or anyone selling a course in the first sentence.
