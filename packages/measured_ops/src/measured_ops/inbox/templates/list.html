@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Waiting ({{ items | length }}){% endblock %}
+{% block main %}
+{% if flash %}<p class="notice" role="status">{{ flash }}</p>{% endif %}
+<h1>Waiting for you <span class="count">{{ items | length }}</span></h1>
+{% if not items %}
+<p class="empty">Nothing is waiting.</p>
+{% else %}
+<ul class="items">
+  {% for item in items %}
+  <li>
+    <a href="/a/{{ item.thread_id | urlpart }}" class="card{% if item.blocked_by_policy %} blocked{% endif %}">
+      <span class="goal">{{ item.goal }}</span>
+      <span class="meta">
+        <span class="tag">{{ item.type }}</span> → {{ item.target }}
+        <span class="risk risk-{{ item.risk_level }}">{{ item.risk_level }} risk</span>
+        {% if item.blocked_by_policy %}<span class="tag tag-blocked">Blocked by policy</span>{% endif %}
+      </span>
+      <span class="when">{{ item.agent }} · paused {{ item.paused_at[:16] | replace("T", " ") }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -56,6 +56,11 @@ From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only i
 the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
 `render.revision_context`), with a test.
 
+From C4 (ADR-0017), for C8: **edit** in the inbox (approve an edited preview). Needs an
+ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by
+the eval/guard node (C7) before it can be approved, and what a preview becomes when the
+action runs (C5). Until then, reject with feedback.
+
 ---
 
 ## Phase 1 — Build the evidence
@@ -147,9 +152,24 @@ After C2, two branches run **in parallel**:
 ### C4 · Approval inbox v0, mobile (GROW-83) ◀ CURRENT
 
 Waits on: C2. Runs in parallel with **C3** (GROW-82), Hassan's review of the policy
-table on his phone. Scope: GROW-83; checklist to be written when the step starts.
-Carried from C2 (ADR-0016): catch both `ValidationError` and `ActionBlockedError` from
-a refused answer, and retry with a new `Command(resume=...)`, never a bare `ainvoke(None)`.
+table on his phone. Decisions: ADR-0017.
+
+- [x] Inbox service: list runs paused at the gate (from the checkpointer), decide by
+  interrupt id, never `ainvoke(None)`; refused answers and double taps leave the run
+  answerable; an action tightened to "never" shows as "blocked by policy", reject only
+- [x] Mobile web page (FastAPI, server-rendered, no JS): list, preview, approve / reject
+  with optional feedback; resumes the thread from the Postgres or SQLite checkpoint
+- [x] Sign-in from day one: one passphrase (scrypt hash) + session secret from env, no
+  defaults; 5-failure throttle; 12-hour sessions; CSRF; strict CSP
+- [x] One process, enforced (lock file); binds 127.0.0.1; reached over `tailscale serve`
+  (`docs/INBOX.md`), never `funnel`
+- [x] e2e: pause in another process → approve / reject over HTTP → thread finishes
+  (SQLite + Postgres)
+- [x] Green in CI on the PR (#10: Postgres e2e ran, 331 passed, 0 skipped)
+- [ ] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`)
+
+**Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
+usable on the phone.
 
 ### C8 · Content agent v0 (GROW-87)
 

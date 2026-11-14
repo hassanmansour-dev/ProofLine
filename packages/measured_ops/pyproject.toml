@@ -17,6 +17,14 @@ dependencies = [
 # The supervisor's Postgres checkpointer (ADR-0016). Optional: measured_ops imports
 # and runs (memory/SQLite) without it.
 postgres = ["langgraph-checkpoint-postgres>=3.2.0,<4", "psycopg[binary,pool]>=3.2,<4"]
+# The approval inbox web app (ADR-0017): python -m measured_ops.inbox serve
+inbox = [
+    "fastapi>=0.156",
+    "itsdangerous>=2.2",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.38",
+]
 
 [tool.uv.sources]
 measured-evals = { workspace = true }

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ item.type }}{% endblock %}
+{% block main %}
+<p><a href="/" class="back">← Waiting</a></p>
+<h1>{{ item.goal }}</h1>
+<p class="meta">
+  <span class="tag">{{ item.type }}</span> → {{ item.target }}
+  <span class="risk risk-{{ item.risk_level }}">{{ item.risk_level }} risk</span>
+  · {{ item.agent }} agent
+</p>
+{% if error %}<p class="error" role="alert">Not accepted: {{ error }}. Nothing changed; the run is still waiting.</p>{% endif %}
+{% if item.blocked_by_policy %}
+<p class="error" role="alert"><strong>Blocked by policy.</strong> The approval policy now never allows
+  <code>{{ item.type }}</code>, so this action can't be approved. Reject it to end the run.</p>
+{% endif %}
+<h2>Preview</h2>
+<pre class="preview">{{ item.preview }}</pre>
+<form method="post" action="/a/{{ item.thread_id | urlpart }}/decision" class="stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="interrupt_id" value="{{ item.interrupt_id }}">
+  <input type="hidden" name="action_id" value="{{ item.action_id }}">
+  <label for="feedback">Feedback (optional)</label>
+  <textarea id="feedback" name="feedback" rows="4" maxlength="{{ feedback_max }}"></textarea>
+  <div class="actions">
+    {% if not item.blocked_by_policy %}
+    <button type="submit" name="decision" value="approve" class="primary">Approve</button>
+    {% endif %}
+    <button type="submit" name="decision" value="reject" class="danger">Reject</button>
+  </div>
+</form>
+{% endblock %}
