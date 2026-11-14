@@ -1,11 +1,11 @@
 # Architecture — Proofline
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
-ADR-0014); **supervisor and approval gate built** (C2, ADR-0016). Sections 3–11
+ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
+built** (C4, ADR-0017). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
-interface, the approval policy, the supervisor and its gate, with the inbox to
-follow. Planned parts
+interface, the approval policy, the supervisor, its gate and the inbox. Planned parts
 are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
 need to be torn up when they land.
 
@@ -175,8 +175,8 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 
 **API** (`api.py`): `create_app(deps=..., checkpointer_url=...)` serves only
 `GET /health` → `{status, checkpointer}`. The run and review endpoints planned here
-were dropped (ADR-0014); the approval inbox (C4) is the human interface, and C4
-decides where its app lives.
+were dropped (ADR-0014); the approval inbox is the human interface and lives in
+`measured_ops.inbox` (C4, ADR-0017; section 13).
 
 ## 10. Observability
 
@@ -297,8 +297,8 @@ START → call_agent → triage ─┬→ gate ─┐    route_pending (pure): "
 - Nothing executes `ready` yet (⟶ C5). Rejection feedback → revision `Task` (⟶ C8).
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
-`sqlite:///path`, `postgresql://…` (needs the `postgres` extra; runs `setup()` on
-open), always with `SERDE_ALLOWLIST`. Supabase is plain Postgres here (hosted run ⟶ C10).
+`sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool
+that survives a database restart; runs `setup()` on open), always with `SERDE_ALLOWLIST`. Supabase is plain Postgres here (hosted run ⟶ C10).
 
 **Stub agent** (`echo.py`). `EchoAgent` drafts the task's goal and proposes one
 `publish_public` action. It exists for the e2e test and is injected like any agent.
@@ -309,6 +309,29 @@ Approve and reject cases, SQLite and Postgres, strict msgpack. The Postgres case
 needs `MEASURED_OPS_TEST_DATABASE_URL`: it skips locally without it and fails in
 CI, which runs a Postgres service container. Every later step keeps this green and
 adds its own case.
+
+**Approval inbox** (`inbox/`, C4, ADR-0017). Optional `inbox` extra.
+- `service.Inbox(graph, policy)`: `list_pending()` finds threads from
+  `checkpointer.alist(None)` and keeps those paused at `gate`; each `PendingItem` carries
+  the interrupt id, the payload and its `response_schema`. An action the policy has
+  since tightened to "never" is listed `blocked_by_policy` (reject only), not hidden.
+  `decide()` re-reads the thread, refuses an answer for an interrupt no longer pending
+  (`AlreadyDecided`: the double-tap guard), and resumes with
+  `Command(resume={interrupt_id: decision})`, never `ainvoke(None)`. A refused answer
+  (`Refused`) leaves the run paused. A per-thread lock serialises simultaneous taps.
+- `web.create_inbox_app(settings, agents, policy)`: FastAPI, Jinja2 autoescaped pages,
+  no JavaScript. Sign-in: one passphrase checked against a scrypt hash, one attempt at a
+  time, 5 failures lock it for 15 minutes; session cookie `__Host-mo_inbox`
+  (`HttpOnly`/`Secure`/`SameSite=Strict`) whose server-side session id ends 12 hours after
+  sign-in and is revoked on sign-out; size-limited forms; CSRF token on every POST;
+  strict CSP. A thread that can't be read is logged and skipped. Settings from
+  `MEASURED_OPS_INBOX_*` env vars, no secret defaults: it refuses to start without them.
+- One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
+  serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
+  (`docs/INBOX.md`). Edit is deferred to C8.
+- e2e (`tests/test_inbox_e2e.py`): pause in another process → sign in → approve or
+  reject over HTTP → the thread finishes, on SQLite and Postgres.
+
 
 ## 14. Docs
 

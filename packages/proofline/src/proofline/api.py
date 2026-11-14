@@ -2,8 +2,7 @@
 
 The run/review endpoints this module once planned are dropped: the content pipeline
 becomes the content agent (C8), and the supervisor's approval gate (C2) and the
-approval inbox (C4) handle runs and approval in measured_ops. This module stays
-until C4 decides where the inbox app lives.
+approval inbox (C4, `measured_ops.inbox`, ADR-0017) handle runs and approval.
 """
 
 from __future__ import annotations
