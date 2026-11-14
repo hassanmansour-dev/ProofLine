@@ -30,3 +30,6 @@ outputs/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code subagent notes: local only, never in this public repo
+.claude/agent-memory/
