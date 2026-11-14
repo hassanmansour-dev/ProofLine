@@ -50,6 +50,24 @@ jobs:
     name: lint · types · tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The supervisor's e2e case (C2, ADR-0016) resumes from a Postgres checkpoint.
+    # Throwaway service container: CI-only credentials, nothing real behind them.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ops_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      # test_ops_e2e.py fails (never skips) its Postgres case in CI without this.
+      MEASURED_OPS_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ops_e2e
     steps:
       - uses: actions/checkout@v7
 
@@ -69,7 +87,7 @@ jobs:
       - name: Mypy (strict, every package's src/)
         run: uv run mypy
 
-      - name: Fast tests, every package (no network, no keys)
+      - name: Fast tests, every package (no keys; network only to the Postgres service)
         run: uv run pytest -m "not live"
 
       - name: measured_evals stands alone (installed without proofline or measured_ops)
@@ -78,10 +96,10 @@ jobs:
           --with ./packages/measured_evals --with pytest
           python -m pytest -q -p no:cacheprovider packages/measured_evals/tests
 
-      - name: measured_ops stands alone (installed without proofline)
+      - name: measured_ops stands alone (installed without proofline, with its postgres extra)
         run: >-
           uv run --isolated --no-project
           --reinstall-package measured-ops --reinstall-package measured-evals
-          --with ./packages/measured_evals --with ./packages/measured_ops
+          --with ./packages/measured_evals --with './packages/measured_ops[postgres]'
           --with pytest --with anyio --with aiosqlite --with langgraph-checkpoint-sqlite
           python -m pytest -q -p no:cacheprovider packages/measured_ops/tests
