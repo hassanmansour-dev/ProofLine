@@ -1,6 +1,6 @@
 # ADR-0016: Supervisor graph, approval gate and Postgres checkpointer
 
-- Status: proposed (2026-11-14, built in C2; awaiting Hassan's review). Amends
+- Status: accepted (2026-11-14, Hassan's review on PR #9). Amends
   ADR-0014 on `pending_actions` ownership (see State).
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C2 (GROW-81)
