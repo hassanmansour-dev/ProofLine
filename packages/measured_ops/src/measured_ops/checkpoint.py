@@ -5,7 +5,8 @@
 
 `memory://` needs nothing extra. `sqlite:///path` needs `langgraph-checkpoint-sqlite`
 (dev group). `postgresql://` needs the `postgres` extra (ADR-0016); its tables are
-created on first use. Proofline's own factory (`proofline.checkpointing`) serves
+created on first use, through a small connection pool that recovers from a database
+restart (ADR-0017). Proofline's own factory (`proofline.checkpointing`) serves
 ScriptState; this one never imports proofline.
 """
 
@@ -42,9 +43,23 @@ async def open_checkpointer(url: str) -> AsyncIterator[BaseCheckpointSaver[str]]
     if url.startswith(("postgresql://", "postgres://")):
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg.rows import dict_row
+            from psycopg_pool import AsyncConnectionPool
         except ImportError as exc:
             raise RuntimeError("Postgres needs the extra: uv sync --extra postgres") from exc
-        async with AsyncPostgresSaver.from_conn_string(url, serde=serde()) as saver:
+        # A pool, not one connection: a long-running process (the inbox) must survive a
+        # database restart. `check` replaces a dead connection before it's handed out.
+        # The kwargs are what AsyncPostgresSaver.from_conn_string sets on its connection.
+        pool = AsyncConnectionPool(
+            url,
+            min_size=1,
+            max_size=4,
+            open=False,
+            check=AsyncConnectionPool.check_connection,
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        )
+        async with pool:
+            saver = AsyncPostgresSaver(pool, serde=serde())  # type: ignore[arg-type]  # pool typed for AsyncConnection[tuple]; dict_row is set in kwargs
             await saver.setup()  # idempotent: creates or migrates the tables
             yield saver
         return
