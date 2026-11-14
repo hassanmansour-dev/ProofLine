@@ -165,7 +165,7 @@ table on his phone. Decisions: ADR-0017.
   (`docs/INBOX.md`), never `funnel`
 - [x] e2e: pause in another process → approve / reject over HTTP → thread finishes
   (SQLite + Postgres)
-- [ ] Green in CI on the PR
+- [x] Green in CI on the PR (#10: Postgres e2e ran, 331 passed, 0 skipped)
 - [ ] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`)
 
 **Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
