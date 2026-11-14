@@ -132,7 +132,7 @@ Waits on: C1, C0.
   interrupt before any `PendingAction` (ADR-0016; Postgres local + CI, hosted Supabase in C10)
 - [x] CI e2e test: task in → stub agent → approval interrupt → resume → done
   (pause and resume in separate processes; SQLite + Postgres; approve + reject)
-- [ ] Green in CI on the PR
+- [x] Green in CI on the PR (#9: Postgres e2e ran, 273 passed, 0 skipped)
 
 **Done when:** e2e test green in CI. Every later step keeps it green and adds its own case.
 
