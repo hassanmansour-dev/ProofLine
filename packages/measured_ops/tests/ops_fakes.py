@@ -48,7 +48,7 @@ async def _propose(state: _EchoState) -> dict[str, Any]:
     }
 
 
-class EchoAgent:
+class FakeEchoAgent:
     """Two private nodes; proposes one publish action. Conforms to `measured_ops.Agent`."""
 
     name = "echo"
@@ -78,7 +78,7 @@ class NoOutputSchemaAgent:
         return builder.compile()  # type: ignore[return-value]
 
 
-class SelfScoringAgent(EchoAgent):
+class SelfScoringAgent(FakeEchoAgent):
     """Breaks the contract: attaches its own eval scores to the action it proposes."""
 
     def build(self) -> AgentGraph:
@@ -108,3 +108,53 @@ class LeakyAgent:
         builder.add_edge(START, "draft")
         builder.add_edge("draft", END)
         return builder.compile()  # type: ignore[return-value]
+
+
+class ScriptedAgent:
+    """Proposes the actions it was given (as (type, risk_level) pairs), or fails.
+
+    Counts how often its graph runs, so tests can prove the supervisor never re-runs
+    an agent when the approval gate resumes.
+    """
+
+    def __init__(
+        self,
+        actions: list[tuple[str, str]] | None = None,
+        *,
+        name: str = "echo",
+        fail: bool = False,
+    ) -> None:
+        self.name = name
+        self.specs = actions or []
+        self.fail = fail
+        self.runs = 0
+
+    def build(self) -> AgentGraph:
+        agent = self
+
+        async def propose(state: _EchoState) -> dict[str, Any]:
+            agent.runs += 1
+            task = state["task"]
+            if agent.fail:
+                result = AgentResult(
+                    task_id=task.id, agent=agent.name, status="failed", summary="", error="boom"
+                )
+                return {"result": result}
+            actions = tuple(
+                make_action(task.id, type=kind, risk_level=risk, preview=f"{kind} #{i}")
+                for i, (kind, risk) in enumerate(agent.specs)
+            )
+            result = AgentResult(
+                task_id=task.id,
+                agent=agent.name,
+                status="succeeded",
+                summary="Scripted.",
+                actions=actions,
+            )
+            return {"result": result}
+
+        builder = StateGraph(_EchoState, input_schema=AgentInput, output_schema=AgentOutput)
+        builder.add_node("propose", propose)
+        builder.add_edge(START, "propose")
+        builder.add_edge("propose", END)
+        return builder.compile()

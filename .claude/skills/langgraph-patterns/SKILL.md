@@ -107,6 +107,14 @@ def approval_gate(state: OpsState) -> dict[str, Any]:
   interrupted node; `snap.interrupts` holds the `Interrupt` objects; `snap.values` is the state.
 - Resume: `await app.ainvoke(Command(resume=decision.model_dump()), config, context=deps)`.
 - **The node re-runs from its first line on resume.** Nothing with side effects before `interrupt()`.
+- **Never raise after `interrupt()` returns** (verified 1.2.16, 2026-11-14): the value it
+  returned is saved as the task's resume write and replays on every later resume, so a
+  refused answer sticks. Validate inside the call instead; it fails *before* saving and
+  the interrupt stays answerable (the supervisor's gate does this, ADR-0016):
+  ```python
+  decision = interrupt(payload, response_schema=Annotated[ApprovalDecision, AfterValidator(check)])
+  ```
+  The `Interrupt` then also carries the answer's JSON schema (`intr.response_schema`).
 
 ## Streaming
 ```python

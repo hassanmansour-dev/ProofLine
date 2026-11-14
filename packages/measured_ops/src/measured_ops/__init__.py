@@ -1,4 +1,4 @@
-"""measured_ops — contracts, approval policy and (from C2) the supervisor (ADR-0014).
+"""measured_ops — contracts, approval policy (ADR-0014) and the supervisor (ADR-0016).
 
 Never imports the proofline app: agents are passed in, not imported.
 """
@@ -24,6 +24,7 @@ from measured_ops.contracts import (
     initial_ops_state,
 )
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy, Decision, load_policy
+from measured_ops.supervisor import build_supervisor
 
 __version__ = version("measured-ops")
 
@@ -43,6 +44,7 @@ __all__ = [
     "RiskLevel",
     "Task",
     "__version__",
+    "build_supervisor",
     "check_agent_graph",
     "initial_ops_state",
     "load_policy",

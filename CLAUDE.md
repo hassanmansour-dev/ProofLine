@@ -93,6 +93,9 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     contracts.py    Task, AgentResult, PendingAction, ApprovalDecision, OpsState + serde allowlist
     agent.py        Agent protocol: subgraph with input {"task"} → output {"result"}; run_agent()
     policy.py       ApprovalPolicy + load_policy(); config/approval_policy.demo.toml (demo values)
+    supervisor.py   build_supervisor(agents, policy): call_agent → triage → gate (interrupt) (C2, ADR-0016)
+    checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
+    echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
 packages/measured_evals/    standalone eval + security package (evaluate() stub in C1, metrics in GROW-14)
   src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
 scripts/pii_scan.py         pre-commit + CI PII scan for this public repo (with gitleaks; C0)
@@ -120,6 +123,10 @@ Data flow rules:
 
 1. `interrupt()` **re-runs the whole node on resume.** Code before `interrupt()`
    must be idempotent and side-effect-free. Keep the supervisor's approval gate (C2) tiny.
+   And **never raise after `interrupt()` returns**: the resume value is saved as the
+   task's resume write and replays on every later resume, so a refused answer
+   sticks forever. Validate in `interrupt(..., response_schema=...)` instead, which
+   fails before saving (ADR-0016).
 2. Pydantic objects stored in state must be in the checkpointer's
    `allowed_msgpack_modules` (`checkpointing.py` for ScriptState,
    `measured_ops.contracts.STATE_TYPES` for OpsState), or deserialization warns
