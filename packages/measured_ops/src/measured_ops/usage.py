@@ -2,6 +2,8 @@
 
 `with collect_usage(agent_name) as usage:` puts a callback handler in a context
 variable that LangChain adds to every callback manager configured inside the block,
+(nested blocks: only the innermost counts a call, so a sub-agent's tokens aren't
+counted twice),
 so every chat model call in the agent's subgraph reports to it, even when the caller
 passes its own config. It does not replace the run's other callbacks (a LangSmith
 tracer keeps working), unlike passing `callbacks=[...]` in a config would.
@@ -89,12 +91,16 @@ class UsageCollector(BaseCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        if _current.get() is not self:
+            return  # an inner collect_usage block owns this call
         name = (metadata or {}).get("ls_model_name")
         if isinstance(name, str) and name:
             with self._lock:
                 self._models[run_id] = name
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+        if _current.get() is not self:
+            return  # an inner collect_usage block owns this call
         with self._lock:
             fallback = self._models.pop(run_id, None)
         generation = (

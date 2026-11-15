@@ -118,8 +118,8 @@ class LeakyAgent:
 
 
 class ScriptedAgent:
-    """Proposes the actions it was given, as (type, risk_level) or (type, risk_level,
-    preview) tuples, or fails.
+    """Proposes the actions it was given, as (type, risk_level[, preview[, target]])
+    tuples, or fails.
 
     Counts how often its graph runs, so tests can prove the supervisor never re-runs
     an agent when the approval gate resumes.
@@ -127,7 +127,7 @@ class ScriptedAgent:
 
     def __init__(
         self,
-        actions: list[tuple[str, str]] | list[tuple[str, str, str]] | None = None,
+        actions: list[tuple[str, ...]] | None = None,
         *,
         name: str = "echo",
         fail: bool = False,
@@ -154,6 +154,7 @@ class ScriptedAgent:
                     type=spec[0],
                     risk_level=spec[1],
                     preview=spec[2] if len(spec) > 2 else f"{spec[0]} #{i}",
+                    target=spec[3] if len(spec) > 3 else "linkedin",
                 )
                 for i, spec in enumerate(agent.specs)
             )

@@ -57,6 +57,13 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s)
 
 
+def _phone_key(s: str) -> str:
+    """Digits of a phone number, without the North American "1" prefix, so the same
+    number matches whatever its format; another country code stays part of it."""
+    d = _digits(s)
+    return d[1:] if len(d) == 11 and d.startswith("1") else d
+
+
 def _luhn(digits: str) -> bool:
     total = 0
     for i, ch in enumerate(reversed(digits)):
@@ -75,7 +82,7 @@ def _allowlist(context: Mapping[str, object]) -> tuple[set[str], set[str]]:
     if not all(isinstance(i, str) for i in items):
         raise ValueError("context['pii_allow'] must be a list of strings")
     emails = {i.lower() for i in items if "@" in i}
-    phones = {_digits(i)[-10:] for i in items if "@" not in i and _digits(i)}
+    phones = {_phone_key(i) for i in items if "@" not in i and _digits(i)}
     return emails, phones
 
 
@@ -99,7 +106,7 @@ def pii_check(text: str, context: Mapping[str, object]) -> CheckResult:
 
     phones = [m for m in _PHONE_NA.finditer(text) if outside_cards(m)]
     phones += [m for m in _PHONE_INTL.finditer(text) if outside_cards(m)]
-    if any(_digits(m.group(0))[-10:] not in allowed_phones for m in phones):
+    if any(_phone_key(m.group(0)) not in allowed_phones for m in phones):
         kinds.add("phone number found")
     phone_starts = {m.start() for m in phones}
     for m in _SIN.finditer(text):
@@ -180,6 +187,11 @@ def quality_check(text: str, context: Mapping[str, object]) -> CheckResult:
 
 DEFAULT_CHECKS: tuple[Check, ...] = (
     Check("quality", quality_check),
+    Check("injection", injection_check),
+    Check("pii", pii_check),
+)
+# For short fields that aren't prose (an action's target URL): no quality check.
+TARGET_CHECKS: tuple[Check, ...] = (
     Check("injection", injection_check),
     Check("pii", pii_check),
 )

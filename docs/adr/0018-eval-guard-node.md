@@ -22,7 +22,9 @@ PII checks, plus tracing and cost per agent, using `measured_evals`. Open questi
 ## Decision
 
 **Graph.** `call_agent → evaluate → triage → gate`. `evaluate` scores every action in
-the latest `AgentResult` with `measured_evals.evaluate(action.preview, context)` and
+the latest `AgentResult` with `measured_evals.evaluate(action.preview, context)`, and
+its `target` with the injection and PII checks only (metrics prefixed `target_`: a
+target is where an action lands, e.g. a URL, and could carry data out), and
 writes copies (`model_copy(update={"eval_scores": ...})`) to a new single-writer state
 field, `OpsState.evaluated_actions`. `triage` reads that field, not the raw result. The
 agent's `AgentResult` stays exactly as the agent returned it: the audit trail shows
@@ -73,7 +75,9 @@ because they're priced differently. A model missing from the price table gives
 `measured_ops/config/model_prices.demo.toml`; real ones go in private config if they
 ever differ. A LangChain callback handler, passed to each agent run by `run_agent`,
 collects usage from every LLM call inside the agent's subgraph into a new append-only
-field, `OpsState.usage`. `run_agent` also names the run `agent:<name>` with tag and
+field, `OpsState.usage`; with nested blocks (a sub-agent run inside an agent) only the
+innermost counts a call. If an agent raises, its token totals are logged before the
+error propagates. `run_agent` also names the run `agent:<name>` with tag and
 metadata (`task_id`, `agent`), so LangSmith groups traces per agent when it's on.
 
 **Inbox.** Each waiting action shows its checks (pass or fail, with the reason) and
@@ -104,7 +108,11 @@ allowlist (ADR-0006).
   only add a human check; cost per agent is visible where decisions are made.
 - Bad / cost: "auto" actions with links (sourced drafts) now wait for approval; the
   heuristic checks will have false positives. `OpsState` grows two fields, so runs
-  paused before C7 have no `evaluated_actions`: the inbox still reads them (the gate
-  holds the action), and new runs use the new path.
+  paused before C7 have no `evaluated_actions` or `usage`: the inbox still lists them
+  ("Not evaluated", cost "Not tracked", never shown as free). A pre-C7 run that
+  crashed between `call_agent` and `triage` fails loudly on resume (no
+  `evaluated_actions`); start it again.
+- Not counted: model calls an agent makes outside LangChain. Prices match the exact
+  model id the response reports; a dated id the table doesn't list shows "unknown".
 - Revisit when: judges arrive (GROW-14), the injection suite lands (GROW-15), or a
   budget cap needs cost before the run ends (C10).

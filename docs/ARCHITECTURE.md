@@ -241,8 +241,9 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
 
-`OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions`, `blocked` and
-`ready` with `operator.add` reducers; `pending_actions` (no reducer: `triage` sets
+`OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions`, `blocked`,
+`ready` and `usage` (C7) with `operator.add` reducers; `evaluated_actions` (C7, no
+reducer, one writer: `evaluate`); `pending_actions` (no reducer: `triage` sets
 it, `gate` pops it, which is fine while one agent runs at a time; ADR-0016).
 Every proposed action ends in exactly one of `ready`, `blocked`, or rejected (its
 decision in `decisions`).
@@ -300,7 +301,8 @@ every chat model call in the agent's subgraph without replacing the run's other
 callbacks. It converts langchain-anthropic's `usage_metadata` (whose `input_tokens`
 includes cache tokens; cache writes split `ephemeral_5m/1h`, or unsplit
 `cache_creation` = 5 minutes) and sums per model. A call without a model name counts
-as `unknown`. Demo prices: `measured_ops/config/model_prices.demo.toml`;
+as `unknown`. Nested blocks: only the innermost counts a call. Model calls made
+outside LangChain aren't seen. Prices match the exact model id the response reports. Demo prices: `measured_ops/config/model_prices.demo.toml`;
 `load_model_prices(path)` reads a private table.
 
 **Supervisor** (`supervisor.py`, ADR-0016). `build_supervisor(agents, policy)`
@@ -316,10 +318,13 @@ START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pend
 - `build_supervisor` builds and checks every agent's graph at startup; duplicate
   names fail. `call_agent` runs the task through `run_agent` inside `collect_usage`,
   with `agent_run_config` (run name, tag, metadata; no `callbacks` key, which would
-  replace the parent's), and appends the result and its usage; an unknown agent fails loudly.
+  replace the parent's), and appends the result and its usage; an unknown agent fails
+  loudly. If the agent raises, its token totals are logged at WARNING before the error
+  propagates (the state update, and so `usage`, is lost).
 - `evaluate` (C7, ADR-0018) scores each action of the latest result with the injected
   `evaluator` (default `measured_evals.evaluate`) and the supervisor's `eval_context`,
-  and writes the scored copies to `evaluated_actions`. The agent's own result stays
+  plus its `target` with the injection and PII checks (metrics `target_injection`,
+  `target_pii`), and writes the scored copies to `evaluated_actions`. The agent's own result stays
   unscored. It logs pass/fail with metric names only.
 - `triage` calls `policy.decide` once per scored action (never in the gate, which re-runs on
   resume): auto → `ready`, never → `blocked`, approval → `pending_actions`.
@@ -357,7 +362,7 @@ adds its own case.
   `checkpointer.alist(None)` and keeps those paused at `gate`; each `PendingItem` carries
   the interrupt id, the payload and its `response_schema`, the checks from the
   payload's `eval` block (`None` for a run paused before C7) and tokens and cost per
-  agent from `OpsState.usage` (C7). An action the policy has
+  agent from `OpsState.usage` (C7; `None`, shown "Not tracked", when the run predates it). An action the policy has
   since tightened to "never" is listed `blocked_by_policy` (reject only), not hidden.
   `decide()` re-reads the thread, refuses an answer for an interrupt no longer pending
   (`AlreadyDecided`: the double-tap guard), and resumes with

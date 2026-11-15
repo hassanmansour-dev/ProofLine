@@ -64,6 +64,12 @@ def test_pii_allowlist_matches_phone_digits_whatever_the_format() -> None:
     assert pii_check("Call (514) 555-0123", ctx).score == 1.0
 
 
+def test_pii_allowlisted_phone_does_not_cover_another_country() -> None:
+    ctx = {"pii_allow": ["514-555-0123"]}
+    assert pii_check("Call +1 514 555 0123", ctx).score == 1.0
+    assert pii_check("Call +44 514 555 0123", ctx).score == 0.0
+
+
 def test_pii_allowlist_must_be_strings() -> None:
     with pytest.raises(ValueError, match="pii_allow"):
         pii_check(CLEAN, {"pii_allow": "hello@example.com"})

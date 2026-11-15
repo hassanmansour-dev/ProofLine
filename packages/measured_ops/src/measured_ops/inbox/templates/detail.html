@@ -31,7 +31,9 @@
 <p class="muted">{{ item.eval.evaluator }}{% if not item.eval.passed %} · a failed check means this action needs your approval{% endif %}</p>
 {% endif %}
 <h2>Cost of this run</h2>
-{% if not item.costs %}
+{% if item.costs is none %}
+<p class="muted">Not tracked: this run paused before cost tracking existed.</p>
+{% elif not item.costs %}
 <p class="muted">No model calls.</p>
 {% else %}
 <ul class="costs">

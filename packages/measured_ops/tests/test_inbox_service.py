@@ -374,6 +374,8 @@ async def test_waiting_action_shows_its_checks_with_reasons() -> None:
         ("quality", True, None),
         ("injection", False, "link with query parameters"),
         ("pii", False, "email found"),
+        ("target_injection", True, None),
+        ("target_pii", True, None),
     ]
 
 
@@ -430,6 +432,18 @@ async def test_run_paused_before_c7_has_no_eval_and_still_lists() -> None:
     payload.pop("eval")
     inbox = Inbox(graph, load_policy())
 
-    item = inbox._item("old", snap, payload)
+    values = {k: v for k, v in snap.values.items() if k not in ("usage", "evaluated_actions")}
+    item = inbox._item("old", snap._replace(values=values), payload)
 
     assert item.eval is None
+    assert item.costs is None  # not tracked, which is not the same as free
+
+
+async def test_run_without_model_calls_has_empty_costs_not_none() -> None:
+    saver = _saver()
+    await _start(_graph(saver, ScriptedAgent([APPROVAL])), "t")
+    inbox = Inbox(_graph(saver, ScriptedAgent()), load_policy())
+
+    [item] = await inbox.list_pending()
+
+    assert item.costs == ()

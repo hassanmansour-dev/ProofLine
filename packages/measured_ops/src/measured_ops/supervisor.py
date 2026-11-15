@@ -35,6 +35,7 @@ from langgraph.types import interrupt
 from pydantic import AfterValidator
 
 from measured_evals import EvalScores, evaluate
+from measured_evals.checks import TARGET_CHECKS
 from measured_ops.agent import (
     Agent,
     AgentContractError,
@@ -69,6 +70,16 @@ def eval_payload(scores: EvalScores | None) -> dict[str, Any] | None:
         "scores": dict(scores.scores),
         "reasons": dict(scores.reasons),
     }
+
+
+def _merge(preview: EvalScores, target: EvalScores) -> EvalScores:
+    """One EvalScores for an action: the preview's metrics plus `target_`-prefixed ones."""
+    return EvalScores(
+        {**preview.scores, **{f"target_{k}": v for k, v in target.scores.items()}},
+        threshold=preview.threshold,
+        evaluator=preview.evaluator,
+        reasons={**preview.reasons, **{f"target_{k}": v for k, v in target.reasons.items()}},
+    )
 
 
 def gate_payload(action: PendingAction) -> dict[str, Any]:
@@ -113,14 +124,22 @@ def build_supervisor(
     *,
     eval_context: Mapping[str, object] | None = None,
     evaluator: Evaluator = evaluate,
+    target_evaluator: Evaluator | None = None,
 ) -> SupervisorGraph:
     """Wire the supervisor. Compiles and checks every agent's graph now, so a broken
     agent fails at startup, not mid-run. Compile the result with a checkpointer from
     `measured_ops.checkpoint.open_checkpointer` (the gate needs one to resume).
 
     `eval_context` goes to every eval (e.g. `{"pii_allow": [...]}` from private
-    config); `evaluator` defaults to `measured_evals.evaluate` (guard-v0)."""
+    config); `evaluator` scores each action's preview and defaults to
+    `measured_evals.evaluate` (guard-v0). `target_evaluator` scores its target (a URL,
+    a repo) with the injection and PII checks only; its metrics are prefixed `target_`."""
     context: Mapping[str, object] = dict(eval_context or {})
+
+    async def _default_target_evaluator(text: str, ctx: Mapping[str, object]) -> EvalScores:
+        return await evaluate(text, ctx, checks=TARGET_CHECKS)
+
+    score_target: Evaluator = target_evaluator or _default_target_evaluator
     graphs: dict[str, tuple[Agent, AgentGraph]] = {}
     for agent in agents:
         if agent.name in graphs:
@@ -137,7 +156,19 @@ def build_supervisor(
             )
         agent, graph = graphs[task.agent]
         with collect_usage(agent.name) as usage:
-            result = await run_agent(agent, graph, task, config=agent_run_config(agent.name, task))
+            try:
+                result = await run_agent(
+                    agent, graph, task, config=agent_run_config(agent.name, task)
+                )
+            except Exception:
+                # the run's spend is lost with the state update: keep it in the log
+                spent = ", ".join(f"{u.model}: {u.tokens} tokens" for u in usage.totals())
+                log.warning(
+                    "supervisor: agent %r failed after using %s",
+                    agent.name,
+                    spent or "no model calls",
+                )
+                raise
         log.info(
             "supervisor: task %s → agent %r %s with %d action(s)",
             task.id,
@@ -150,7 +181,10 @@ def build_supervisor(
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
         scored: list[PendingAction] = []
         for action in state["results"][-1].actions:
-            scores = await evaluator(action.preview, context)
+            scores = _merge(
+                await evaluator(action.preview, context),
+                await score_target(action.target, context),
+            )
             # metric names only in the log: reasons and values stay out (ADR-0018)
             log.info(
                 "eval: action %s (%s) %s",

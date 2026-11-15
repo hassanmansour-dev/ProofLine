@@ -33,13 +33,36 @@ async def test_collects_only_inside_the_block() -> None:
     ]
 
 
-async def test_nested_blocks_count_once_in_the_inner_block() -> None:
+async def test_nested_blocks_count_only_in_the_innermost_block() -> None:
+    # Through a compiled graph, as a sub-agent run inside an agent would be: the inner
+    # callback manager inherits the outer collector too, so it must decline.
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    class S(TypedDict, total=False):
+        x: int
+
     model = _model(1)
-    with collect_usage("outer") as outer, collect_usage("inner") as inner:
-        await model.ainvoke("a")
+
+    async def node(state: S) -> dict[str, int]:
+        with collect_usage("inner") as inner_usage:
+            await model.ainvoke("a")
+        seen["inner"] = inner_usage.totals()
+        return {"x": 1}
+
+    seen: dict[str, list[Usage]] = {}
+    builder = StateGraph(S)
+    builder.add_node("n", node)
+    builder.add_edge(START, "n")
+    builder.add_edge("n", END)
+    graph = builder.compile()
+
+    with collect_usage("outer") as outer:
+        await graph.ainvoke({"x": 0})
 
     assert outer.totals() == []
-    assert [u.agent for u in inner.totals()] == ["inner"]
+    assert [(u.agent, u.input_tokens) for u in seen["inner"]] == [("inner", 10)]
 
 
 def test_inconsistent_counts_are_clamped_and_logged(caplog: pytest.LogCaptureFixture) -> None:

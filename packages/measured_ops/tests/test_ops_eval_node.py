@@ -78,7 +78,13 @@ async def test_failed_check_raises_an_auto_action_to_approval() -> None:
         "evaluator": "guard-v0",
         "passed": False,
         "failing": ["pii"],
-        "scores": {"quality": 1.0, "injection": 1.0, "pii": 0.0},
+        "scores": {
+            "quality": 1.0,
+            "injection": 1.0,
+            "pii": 0.0,
+            "target_injection": 1.0,
+            "target_pii": 1.0,
+        },
         "reasons": {"pii": "email found, phone number found"},
     }
     assert out["ready"] == []
@@ -220,3 +226,48 @@ async def test_agent_runs_are_tagged_for_tracing() -> None:
     assert "agent:echo" in agent.seen_config["tags"]
     assert agent.seen_config["metadata"]["agent"] == "echo"
     assert agent.seen_config["metadata"]["task_id"] == task.id
+
+
+async def test_target_is_checked_for_injection_and_pii() -> None:
+    target = f"https://search.example/?q={EMAIL}"
+    out = await _start(_app(ScriptedAgent([("research", "low", "Look this up.", target)])))
+
+    [intr] = out["__interrupt__"]  # research is "auto": raised by the target alone
+    assert intr.value["eval"]["failing"] == ["target_injection", "target_pii"]
+    assert intr.value["eval"]["reasons"] == {
+        "target_injection": "link with query parameters",
+        "target_pii": "email found",
+    }
+
+
+async def test_usage_of_a_failed_agent_run_is_logged_before_it_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from ops_fakes import LLMAgent
+
+    class Boom(LLMAgent):
+        def build(self) -> Any:
+            graph = super().build()
+            agent = self
+
+            class Wrapped:
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(graph, name)
+
+                async def ainvoke(self, *a: Any, **k: Any) -> Any:
+                    await agent.model.ainvoke("hi")
+                    raise RuntimeError("agent broke")
+
+            return Wrapped()  # type: ignore[return-value]
+
+    app = _app(Boom([_reply(input_tokens=40, output_tokens=2, total_tokens=42)]))
+
+    with (
+        caplog.at_level(logging.WARNING, logger="measured_ops.supervisor"),
+        pytest.raises(RuntimeError, match="agent broke"),
+    ):
+        await _start(app)
+
+    assert "agent 'echo' failed after using" in caplog.text
+    assert "model-a" in caplog.text
+    assert "42 tokens" in caplog.text

@@ -98,7 +98,8 @@ class PendingItem:
     response_schema: dict[str, Any]
     blocked_by_policy: bool
     eval: EvalView | None = None  # None: paused before the eval node existed (pre-C7)
-    costs: tuple[CostView, ...] = ()
+    # None: the run predates usage tracking (pre-C7), which is not the same as free
+    costs: tuple[CostView, ...] | None = ()
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,14 @@ class Inbox:
     def _item(self, thread_id: str, snap: Any, payload: dict[str, Any]) -> PendingItem:
         task: Task = snap.values["task"]
         action: PendingAction = snap.values["pending_actions"][0]
-        totals = total_by_agent(snap.values.get("usage") or [], self.prices)
+        usage = snap.values.get("usage")
+        costs = (
+            None
+            if usage is None
+            else tuple(
+                CostView(a, t.tokens, t.cost) for a, t in total_by_agent(usage, self.prices).items()
+            )
+        )
         return PendingItem(
             thread_id=thread_id,
             interrupt_id="",
@@ -177,7 +185,7 @@ class Inbox:
             response_schema={},
             blocked_by_policy=self.policy.is_blocked(action),  # logs a WARNING if so
             eval=_eval_view(payload.get("eval")),
-            costs=tuple(CostView(a, t.tokens, t.cost) for a, t in totals.items()),
+            costs=costs,
         )
 
     async def list_pending(self) -> list[PendingItem]:

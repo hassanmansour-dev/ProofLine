@@ -81,7 +81,13 @@ async def test_action_needing_approval_pauses_with_its_preview() -> None:
             "evaluator": "guard-v0",
             "passed": True,
             "failing": [],
-            "scores": {"quality": 1.0, "injection": 1.0, "pii": 1.0},
+            "scores": {
+                "quality": 1.0,
+                "injection": 1.0,
+                "pii": 1.0,
+                "target_injection": 1.0,
+                "target_pii": 1.0,
+            },
             "reasons": {},
         },
     }

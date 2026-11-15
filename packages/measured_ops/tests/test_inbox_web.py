@@ -422,7 +422,7 @@ def test_clean_action_shows_passed_checks_and_no_badge(client: TestClient) -> No
     html = open_item(client)
 
     assert "Check failed" not in listing
-    assert html.count(">passed<") == 3
+    assert html.count(">passed<") == 5  # 3 on the preview, 2 on the target
 
 
 def test_pii_value_appears_only_inside_the_preview(settings: InboxSettings, clock: Clock) -> None:

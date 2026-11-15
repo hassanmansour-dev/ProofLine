@@ -4,6 +4,9 @@
 # before relying on these; real prices go in measured-ops-private if they differ.
 # A model missing here is priced "unknown" in the inbox, never free.
 #
+# Cache reads differ by model: 0.1x input on most, but $0.20 on Opus 5.5 (0.05x) and
+# $0.25 on Fable 5.1 (0.025x), as published; not a typo.
+#
 # input: uncached input. cache_read / cache_write_*: prompt-cache tokens, counted
 # apart from input (measured_evals.cost).
 
