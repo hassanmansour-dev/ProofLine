@@ -66,12 +66,18 @@ def test_inbox_serves_the_content_agent_and_the_demo_echo_agent(
     from measured_ops.inbox import server
 
     served: list[list[str]] = []
-    monkeypatch.setattr(
-        server, "serve", lambda agents, **kw: served.append([a.name for a in agents]) or 0
-    )
+    logs: list[object] = []
+
+    def fake_serve(agents: list, **kw: object) -> int:
+        served.append([a.name for a in agents])
+        logs.extend([agents[0].judge_log, kw["judge_log"]])
+        return 0
+
+    monkeypatch.setattr(server, "serve", fake_serve)
     monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path))
 
     result = CliRunner().invoke(cli.app, ["inbox"])
 
     assert result.exit_code == 0, result.output
     assert served == [["content", "echo"]]
+    assert logs[0] is logs[1]  # one judge log: the agent's critic lines, the inbox's decisions

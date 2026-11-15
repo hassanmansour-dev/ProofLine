@@ -47,6 +47,7 @@ from measured_ops.checkpoint import open_checkpointer
 from measured_ops.inbox.auth import LoginThrottle, verify_passphrase
 from measured_ops.inbox.service import AlreadyDecided, Inbox, PendingItem, Refused
 from measured_ops.inbox.settings import InboxSettings, single_process_lock
+from measured_ops.judge_log import JudgeLog
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.supervisor import build_supervisor
 
@@ -82,6 +83,7 @@ def create_inbox_app(
     *,
     prices: Mapping[str, ModelPrice] | None = None,
     eval_context: Mapping[str, object] | None = None,
+    judge_log: JudgeLog | None = None,
     clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Build the inbox app. Refuses settings without usable secrets (no defaults).
@@ -114,7 +116,11 @@ def create_inbox_app(
                     checkpointer=saver
                 )
                 app.state.inbox = Inbox(
-                    graph, policy, prices=prices, revision_timeout_s=settings.revision_timeout_s
+                    graph,
+                    policy,
+                    prices=prices,
+                    revision_timeout_s=settings.revision_timeout_s,
+                    judge_log=judge_log,
                 )
                 log.info("inbox: serving runs from %s", settings.checkpointer_url.split(":")[0])
                 await app.state.inbox.start()  # continue revisions a restart cut off

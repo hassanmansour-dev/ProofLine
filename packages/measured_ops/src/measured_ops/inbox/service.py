@@ -43,6 +43,7 @@ from pydantic import ValidationError
 
 from measured_evals import ModelPrice, total_by_agent
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
+from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.prices import load_model_prices
 from measured_ops.tracing import masked_tracing_callbacks
@@ -66,6 +67,7 @@ class Refused(ValueError):
 class CheckView:
     name: str
     passed: bool
+    score: float
     reason: str | None  # a few words, never the matched text
 
 
@@ -90,8 +92,8 @@ def _eval_view(block: Any) -> EvalView | None:
     reasons: dict[str, str] = block.get("reasons") or {}
     failing = set(block.get("failing") or ())
     checks = tuple(
-        CheckView(name, name not in failing, reasons.get(name))
-        for name in block.get("scores") or {}
+        CheckView(name, name not in failing, float(score), reasons.get(name))
+        for name, score in (block.get("scores") or {}).items()
     )
     return EvalView(str(block.get("evaluator", "")), bool(block.get("passed")), checks)
 
@@ -160,6 +162,7 @@ class Inbox:
         prices: Mapping[str, ModelPrice] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
+        judge_log: JudgeLog | None = None,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -169,6 +172,7 @@ class Inbox:
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self.revision_timeout_s = revision_timeout_s
+        self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
         self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
         self._revisions: dict[str, Literal["queued", "running"]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -297,6 +301,7 @@ class Inbox:
                         f"at the gate ({item.action_id})"
                     )
                 self._schedule(thread_id, resume)
+                self._log_decision(item, approved=False)
                 log.info(
                     "inbox: run %s action %s rejected with feedback; revising", thread_id, action_id
                 )
@@ -311,6 +316,7 @@ class Inbox:
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
                 raise Refused(str(exc)) from exc
+            self._log_decision(item, approved=approved)
         log.info(
             "inbox: run %s action %s %s",
             thread_id,
@@ -319,6 +325,15 @@ class Inbox:
         )
         still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
         return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+
+    def _log_decision(self, item: PendingItem, *, approved: bool) -> None:
+        """Judge-agreement log: ids, eval scores and the decision; never text (ADR-0019)."""
+        scores = None if item.eval is None else {c.name: c.score for c in item.eval.checks}
+        try:
+            self.judge_log.record_decision(item.action_id, scores, approved)
+        except OSError:
+            # the decision stands; a lost log line must not undo or hide it
+            log.exception("inbox: couldn't write the judge log for action %s", item.action_id)
 
     # ---- background revisions (C8, ADR-0019) ----------------------------------------
 

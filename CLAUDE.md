@@ -100,6 +100,7 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     usage.py        collect_usage(agent): tokens per agent run via a context-var callback (C7)
     prices.py       load_model_prices(); config/model_prices.demo.toml (demo values)
     tracing.py      masked_tracing_callbacks(): LangSmith tracer with PII redacted (C7)
+    judge_log.py    judge-agreement log: action id, critic/eval scores, decision; no text (C8)
     checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
     echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
     inbox/          approval inbox (C4, ADR-0017): service.py (list/decide, background

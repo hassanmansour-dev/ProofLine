@@ -17,13 +17,19 @@ from collections.abc import Mapping, Sequence
 from measured_ops.agent import Agent
 from measured_ops.inbox.settings import InboxConfigError, InboxSettings, checkpointer_url, env_path
 from measured_ops.inbox.web import create_inbox_app
+from measured_ops.judge_log import JudgeLog
 from measured_ops.policy import load_policy
 from measured_ops.prices import load_model_prices
 
 HOST = "127.0.0.1"  # never 0.0.0.0: the phone reaches it over Tailscale only
 
 
-def serve(agents: Sequence[Agent], *, eval_context: Mapping[str, object] | None = None) -> int:
+def serve(
+    agents: Sequence[Agent],
+    *,
+    eval_context: Mapping[str, object] | None = None,
+    judge_log: JudgeLog | None = None,
+) -> int:
     """Run the inbox until stopped. Returns 2 if the settings are unusable."""
     import uvicorn
 
@@ -39,6 +45,7 @@ def serve(agents: Sequence[Agent], *, eval_context: Mapping[str, object] | None 
         load_policy(env_path("MEASURED_OPS_POLICY_PATH")),
         prices=load_model_prices(env_path("MEASURED_OPS_PRICES_PATH")),
         eval_context=eval_context,
+        judge_log=judge_log,
     )
     uvicorn.run(app, host=HOST, port=settings.port, workers=1, proxy_headers=False)
     return 0

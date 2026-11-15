@@ -106,14 +106,18 @@ appears in the list again when it pauses at the gate. This needs:
 - **This is v0.** In C10 revisions move to a separate worker process with budget caps
   (per run and per day), and the inbox goes back to only recording decisions.
 
-**7. Judge-agreement log** (`proofline/judge_log.py`, a port with a JSONL adapter).
+**7. Judge-agreement log** (`measured_ops/judge_log.py`, a port with a JSONL adapter;
+in `measured_ops`, not `proofline`, because the inbox writes the decision lines and
+`measured_ops` never imports `proofline`; the content agent gets it injected).
 Two kinds of line, and **only these fields**, never draft text, previews or targets:
 - written by the content agent when it proposes: `{"kind": "critic", "action_id",
   "critic": {criterion: score, ..., "overall": float}}`;
 - written by the inbox after a decision is accepted: `{"kind": "decision",
   "action_id", "eval": {metric: score, ...}, "approved": bool}`.
 GROW-13 joins them on `action_id`. Default path `.data/judge_log.jsonl` (gitignored);
-the private repo sets its own. A test pins the exact key sets and that no draft text or
+`MEASURED_OPS_JUDGE_LOG_PATH` sets another (the private repo's). A rejection with
+feedback is logged when it's accepted; a refused answer isn't logged; feedback text
+isn't logged either. A test pins the exact key sets and that no draft text or
 target appears.
 
 **8. Tracing.** `proofline run` and `proofline propose` pass

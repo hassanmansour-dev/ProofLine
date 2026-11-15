@@ -30,6 +30,7 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_POLICY_PATH` | no | the bundled demo policy |
 | `MEASURED_OPS_PRICES_PATH` | no | the bundled demo price table |
 | `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
+| `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the

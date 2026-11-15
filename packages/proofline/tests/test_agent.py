@@ -146,3 +146,26 @@ async def test_previous_preview_must_be_text(tmp_path: Path) -> None:
     [result] = out["results"]
     assert result.status == "failed"
     assert "previous_preview" in (result.error or "")
+
+
+async def test_the_agent_logs_critic_scores_by_action_id_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from measured_ops.judge_log import JsonlJudgeLog
+
+    path = tmp_path / "judge.jsonl"
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
+    agent = ContentAgent(make_deps(tmp_path, llm), judge_log=JsonlJudgeLog(path))
+
+    out = await _app(agent).ainvoke(initial_ops_state(_task()), CFG)
+
+    [line] = [json.loads(x) for x in path.read_text().splitlines()]
+    assert set(line) == {"kind", "action_id", "critic"}
+    assert line["action_id"] == out["__interrupt__"][0].value["action_id"]
+    assert line["critic"]["overall"] == make_critique(9).overall
+    assert len(line["critic"]) == len(make_critique(9).scores) + 1
+    raw = path.read_text()
+    assert make_draft().title not in raw
+    assert "linkedin" not in raw

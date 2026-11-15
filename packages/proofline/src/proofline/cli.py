@@ -96,13 +96,17 @@ def inbox() -> None:
     keys as `proofline run`. Settings: docs/INBOX.md. The demo echo agent is served too,
     so runs from `python -m measured_ops.inbox seed` still resume.
     """
+    from measured_ops.agent import Agent
     from measured_ops.echo import EchoAgent
     from measured_ops.inbox import server  # needs measured-ops[inbox]
+    from measured_ops.judge_log import judge_log_from_env
     from proofline.agent import ContentAgent
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     deps = _deps_or_exit()
-    raise typer.Exit(code=server.serve([ContentAgent(deps), EchoAgent()]))
+    judge_log = judge_log_from_env()  # one log: critic lines and decisions (ADR-0019)
+    agents: list[Agent] = [ContentAgent(deps, judge_log=judge_log), EchoAgent()]
+    raise typer.Exit(code=server.serve(agents, judge_log=judge_log))
 
 
 @app.command()

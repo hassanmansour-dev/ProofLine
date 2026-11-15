@@ -27,6 +27,7 @@ from langgraph.graph import END, START, StateGraph
 
 from measured_ops import AgentResult, PendingAction, Task
 from measured_ops.agent import AgentGraph, AgentInput, AgentOutput
+from measured_ops.judge_log import JudgeLog, NullJudgeLog
 from proofline.context import Deps
 from proofline.graph import build_graph
 from proofline.render import approve_draft_preview
@@ -65,11 +66,13 @@ class ContentAgent:
 
     name = AGENT_NAME
 
-    def __init__(self, deps: Deps) -> None:
+    def __init__(self, deps: Deps, judge_log: JudgeLog | None = None) -> None:
         self.deps = deps
+        self.judge_log: JudgeLog = NullJudgeLog() if judge_log is None else judge_log
 
     def build(self) -> AgentGraph:
         deps = self.deps
+        judge_log = self.judge_log
         pipeline = build_graph().compile()  # nested: uses the parent's checkpointer
 
         async def draft(state: _State) -> dict[str, Any]:
@@ -117,6 +120,10 @@ class ContentAgent:
                 f"{revisions} revision{'' if revisions == 1 else 's'}."
             )
             log.info("content: task %s → action %s (%s)", task.id, action.id, score)
+            critique = out.get("critique")
+            if critique is not None:  # ids and scores only, never the draft (ADR-0019)
+                scores: dict[str, float] = {c.criterion: c.score for c in critique.scores}
+                judge_log.record_critic(action.id, {**scores, "overall": critique.overall})
             return {
                 "result": AgentResult(
                     task_id=task.id,

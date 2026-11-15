@@ -405,6 +405,11 @@ adds its own case.
   `start()` (continue each stopped run once) and `aclose()` (cancel; they continue
   next start). `POST /r/{thread_id}/retry` (CSRF) is the Retry button. C10 moves this
   to a worker with budget caps.
+- Judge log (C8, ADR-0019): after a decision is accepted, the inbox appends
+  `{"kind": "decision", "action_id", "eval", "approved"}` to `measured_ops.judge_log`
+  (`MEASURED_OPS_JUDGE_LOG_PATH`, default `.data/judge_log.jsonl`); the content agent
+  appends `{"kind": "critic", "action_id", "critic"}` when it proposes. Ids, scores and a
+  bool only: the port has no parameter for text. GROW-13 joins them on `action_id`.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
   (`docs/INBOX.md`). Edit is deferred to C8.

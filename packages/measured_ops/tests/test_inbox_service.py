@@ -517,3 +517,60 @@ async def test_resumes_pass_the_tracing_callbacks() -> None:
     )
 
     assert configs[-1]["callbacks"] == [marker]
+
+
+# ---- judge-agreement log (C8, ADR-0019) ----------------------------------------------
+
+
+async def test_decisions_are_logged_with_eval_scores_never_text(tmp_path: Any) -> None:
+    import json
+
+    from measured_ops.judge_log import JsonlJudgeLog
+
+    path = tmp_path / "judge.jsonl"
+    saver = _saver()
+    graph = _graph(saver, ScriptedAgent([("publish_public", "medium", "A secret draft.")]))
+    await _start(graph, "t")
+    inbox = Inbox(graph, load_policy(), judge_log=JsonlJudgeLog(path))
+    [item] = await inbox.list_pending()
+
+    with pytest.raises(Refused):
+        await inbox.decide("t", interrupt_id=item.interrupt_id, action_id="wrong", approved=True)
+    assert not path.exists()  # a refused answer isn't a decision
+
+    await inbox.decide("t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True)
+
+    [line] = [json.loads(x) for x in path.read_text().splitlines()]
+    assert line == {
+        "kind": "decision",
+        "action_id": item.action_id,
+        "eval": {c.name: c.score for c in item.eval.checks},  # type: ignore[union-attr]
+        "approved": True,
+    }
+    assert "secret" not in path.read_text()
+    assert "linkedin" not in path.read_text()
+
+
+async def test_a_rejection_with_feedback_is_logged_when_accepted(tmp_path: Any) -> None:
+    import json
+
+    from measured_ops.judge_log import JsonlJudgeLog
+
+    path = tmp_path / "judge.jsonl"
+    graph = _graph(_saver(), ScriptedAgent([APPROVAL]))
+    await _start(graph, "t")
+    inbox = Inbox(graph, load_policy(), judge_log=JsonlJudgeLog(path))
+    [item] = await inbox.list_pending()
+
+    await inbox.decide(
+        "t",
+        interrupt_id=item.interrupt_id,
+        action_id=item.action_id,
+        approved=False,
+        feedback="No.",
+    )
+    await inbox.wait_idle()
+
+    [line] = [json.loads(x) for x in path.read_text().splitlines()]
+    assert (line["action_id"], line["approved"]) == (item.action_id, False)
+    assert "No." not in path.read_text()  # feedback is text: not logged
