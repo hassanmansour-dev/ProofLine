@@ -176,3 +176,25 @@ def test_evaluate_lets_a_crashing_check_raise() -> None:
 
     with pytest.raises(RuntimeError, match="boom"):
         asyncio.run(evaluate(CLEAN, checks=[("broken", broken)]))
+
+
+# --- redact_pii: the same patterns, for traces (C7, ADR-0018) ----------------------------
+
+from measured_evals.checks import redact_pii  # noqa: E402
+
+
+def test_redact_replaces_each_kind_with_a_placeholder() -> None:
+    text = (
+        "Mail jane.doe@example.com, call (514) 555-0123, "
+        "SIN 046 454 286, card 4111 1111 1111 1111."  # pii-ok (published samples)
+    )
+    assert redact_pii(text) == "Mail <email>, call <phone>, SIN <sin>, card <card>."
+
+
+def test_redact_leaves_clean_text_and_non_luhn_numbers_alone() -> None:
+    text = CLEAN + " Order 123 456 789."
+    assert redact_pii(text) == text
+
+
+def test_redact_ignores_the_allowlist_traces_get_everything_masked() -> None:
+    assert "hello@example.com" not in redact_pii("Questions: hello@example.com")

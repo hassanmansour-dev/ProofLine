@@ -473,3 +473,28 @@ async def test_a_long_haiku_call_is_priced_at_the_long_context_rate() -> None:
     assert agent_name == "echo"
     assert tokens == 200_001
     assert dollars == pytest.approx(0.01 + 0.0500005)
+
+
+async def test_resumes_pass_the_tracing_callbacks() -> None:
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    saver = _saver()
+    await _start(_graph(saver, ScriptedAgent([APPROVAL])), "t")
+    spy = SpyGraph(_graph(saver, ScriptedAgent()))
+    marker = BaseCallbackHandler()
+    configs: list[Any] = []
+    original = spy.ainvoke
+
+    async def ainvoke(value: Any, config: Any = None, **kwargs: Any) -> Any:
+        configs.append(config)
+        return await original(value, config, **kwargs)
+
+    spy.ainvoke = ainvoke  # type: ignore[method-assign]
+    inbox = Inbox(spy, load_policy(), callbacks=[marker])
+    [item] = await inbox.list_pending()
+
+    await inbox.decide(
+        item.thread_id, interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+    )
+
+    assert configs[-1]["callbacks"] == [marker]

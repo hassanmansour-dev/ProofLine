@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
 from pydantic import ValidationError
 
@@ -32,6 +33,7 @@ from measured_evals import ModelPrice, total_by_agent
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.prices import load_model_prices
+from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
 
@@ -131,12 +133,15 @@ class Inbox:
         policy: ApprovalPolicy,
         *,
         prices: Mapping[str, ModelPrice] | None = None,
+        callbacks: list[BaseCallbackHandler] | None = None,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
         self.graph = graph
         self.policy = policy
         self.prices = load_model_prices() if prices is None else prices
+        # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
+        self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_users: dict[str, int] = {}  # so a lock is dropped once nobody holds it
 
@@ -249,7 +254,9 @@ class Inbox:
                 raise Refused(_reason(exc)) from exc
             resume: Command[Any] = Command(resume={interrupt_id: decision.model_dump(mode="json")})
             try:
-                out = await self.graph.ainvoke(resume, _cfg(thread_id))
+                out = await self.graph.ainvoke(
+                    resume, {**_cfg(thread_id), "callbacks": self.callbacks}
+                )
             except ValidationError as exc:  # the gate's answer_schema refused it
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:

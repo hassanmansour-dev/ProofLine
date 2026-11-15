@@ -86,34 +86,61 @@ def _allowlist(context: Mapping[str, object]) -> tuple[set[str], set[str]]:
     return emails, phones
 
 
+def _pii_matches(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, kind) for every email, phone number, SIN and card number, sorted,
+    without overlaps. Kinds: "email", "phone", "sin", "card"."""
+    found: list[tuple[int, int, str]] = [(*m.span(), "email") for m in _EMAIL.finditer(text)]
+    # cards first: their digit runs would otherwise also look like phone numbers
+    for m in _CARD.finditer(text):
+        d = _digits(m.group(0))
+        if 13 <= len(d) <= 19 and _luhn(d):
+            found.append((*m.span(), "card"))
+    found += [(*m.span(), "phone") for m in _PHONE_NA.finditer(text)]
+    found += [(*m.span(), "phone") for m in _PHONE_INTL.finditer(text)]
+    found += [(*m.span(), "sin") for m in _SIN.finditer(text) if _luhn(_digits(m.group(0)))]
+    order = {"email": 0, "card": 1, "phone": 2, "sin": 3}  # earlier kinds win overlaps
+    kept: list[tuple[int, int, str]] = []
+    for start, end, kind in sorted(found, key=lambda f: (order[f[2]], f[0])):
+        if all(end <= a or start >= b for a, b, _ in kept):
+            kept.append((start, end, kind))
+    return sorted(kept)
+
+
+_REASON = {
+    "email": "email found",
+    "phone": "phone number found",
+    "sin": "SIN found",
+    "card": "card number found",
+}
+
+
 def pii_check(text: str, context: Mapping[str, object]) -> CheckResult:
     """Emails, phone numbers, SINs and card numbers (Luhn-checked). Fictional values
     count too: anything that leaves the system is checked, unlike the repo scanner."""
     allowed_emails, allowed_phones = _allowlist(context)
     kinds: set[str] = set()
-    if any(m.group(0).lower() not in allowed_emails for m in _EMAIL.finditer(text)):
-        kinds.add("email found")
-    # cards first: their digit runs would otherwise also look like phone numbers
-    card_spans: list[tuple[int, int]] = []
-    for m in _CARD.finditer(text):
-        d = _digits(m.group(0))
-        if 13 <= len(d) <= 19 and _luhn(d):
-            kinds.add("card number found")
-            card_spans.append(m.span())
-
-    def outside_cards(m: re.Match[str]) -> bool:
-        return not any(a <= m.start() < b for a, b in card_spans)
-
-    phones = [m for m in _PHONE_NA.finditer(text) if outside_cards(m)]
-    phones += [m for m in _PHONE_INTL.finditer(text) if outside_cards(m)]
-    if any(_phone_key(m.group(0)) not in allowed_phones for m in phones):
-        kinds.add("phone number found")
-    phone_starts = {m.start() for m in phones}
-    for m in _SIN.finditer(text):
-        if outside_cards(m) and m.start() not in phone_starts and _luhn(_digits(m.group(0))):
-            kinds.add("SIN found")
-            break
+    for start, end, kind in _pii_matches(text):
+        value = text[start:end]
+        if kind == "email" and value.lower() in allowed_emails:
+            continue
+        if kind == "phone" and _phone_key(value) in allowed_phones:
+            continue
+        kinds.add(_REASON[kind])
     return _fail(", ".join(sorted(kinds, key=str.lower))) if kinds else PASS
+
+
+def redact_pii(text: str) -> str:
+    """`text` with every email, phone number, SIN and card number replaced by
+    `<email>`, `<phone>`, `<sin>` or `<card>`. For traces and other copies of a text
+    that nobody needs verbatim. No allowlist: everything is masked."""
+    out: list[str] = []
+    pos = 0
+    for start, end, kind in _pii_matches(text):
+        out.append(text[pos:start])
+        out.append(f"<{kind}>")
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # --- injection -------------------------------------------------------------------------
