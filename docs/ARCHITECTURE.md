@@ -22,8 +22,8 @@ that review is a 2-minute read, not a rewrite.
 
 ```
 packages/
-  proofline/        the content pipeline (LangGraph graph, nodes, CLI); becomes the
-                    content agent in C8
+  proofline/        the content pipeline (LangGraph graph, nodes, CLI) and, since C8,
+                    the content agent (`proofline.agent.ContentAgent`)
   measured_ops/     Measured Ops: contracts, agent interface, approval policy (C1);
                     supervisor + gate + checkpointer (C2); inbox (C4); eval node,
                     usage collection, price table (C7)
@@ -32,7 +32,7 @@ packages/
 ```
 
 Dependencies point one way: **proofline → measured_ops → measured_evals**, never
-back (ADR-0014; `proofline` takes the `measured_ops` dependency in C8). The
+back (ADR-0014; `proofline` depends on `measured_ops` since C8). The
 supervisor gets agents injected, so `measured_ops` never imports `proofline`
 (`packages/measured_ops/tests/test_ops_boundary.py`). `measured_evals` is published
 as open source at launch and reused by a separate web app (Measured Lab), so it
@@ -261,7 +261,8 @@ propose actions; they never execute anything that leaves the system.
 **Approval policy** (`policy.py`). A TOML table, `version = 1`, `[actions]` rows of
 `"auto"`, `"approval"` or `"never"`. `load_policy()` reads the public demo table
 bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, plus
-`bulk_export_personal_data` and `act_outside_own_systems` as `"never"`);
+`bulk_export_personal_data` and `act_outside_own_systems` as `"never"`, and
+`approve_draft` as `"approval"` since C8);
 `load_policy(path)` reads the private one. `decide(action)`:
 
 1. row is `"never"` → **never**: blocked, logged at WARNING (id, type, task; never the
@@ -388,6 +389,17 @@ adds its own case.
 - e2e (`tests/test_inbox_e2e.py`): pause in another process → sign in → approve or
   reject over HTTP → the thread finishes, on SQLite and Postgres.
 
+
+**Content agent** (`proofline/agent.py`, C8, ADR-0019). `ContentAgent(deps)`, name
+`content`: a one-node agent subgraph that reads `Task.inputs` (`topic`, `audience`;
+bad inputs give a failed `AgentResult` with the reason), runs the pipeline graph
+(planner → researcher → writer ⇄ critic → finalizer) nested in the supervisor's thread
+(no `configurable`, no `callbacks`: it inherits both), and proposes one
+`approve_draft` action, target `manual paste: linkedin`, whose preview is
+`render.approve_draft_preview`: the LinkedIn post, the clip script (citation marks
+removed, estimated length) and the lesson outline from the planner's outline. Approving
+it only moves it to `ready`: no executor is ever registered for `approve_draft`. The
+critic's score stays inside the agent (in the summary), never `eval_scores`.
 
 ## 14. Docs
 
