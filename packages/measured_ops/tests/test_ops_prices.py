@@ -18,6 +18,29 @@ def test_demo_table_covers_the_current_models() -> None:
     }
 
 
+# platform.claude.com/docs/en/about-claude/pricing, checked 2026-11-14: (input, output,
+# cache read, 5m write, 1h write) per MTok; Haiku 5.5 for prompts up to 100,000 tokens.
+PUBLISHED = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00, 8.00),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.10, 2.50, 4.00),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125, 0.20),
+    "claude-fable-5-1": (10.00, 50.00, 0.25, 12.50, 20.00),
+}
+
+
+def test_demo_table_matches_the_published_prices() -> None:
+    prices = load_model_prices()
+    for model, (inp, out, read, w5, w1) in PUBLISHED.items():
+        p = prices[model]
+        assert (p.input, p.output, p.cache_read, p.cache_write_5m, p.cache_write_1h) == (
+            inp,
+            out,
+            read,
+            w5,
+            w1,
+        ), model
+
+
 def test_demo_cache_writes_follow_the_published_multipliers() -> None:
     for model, p in load_model_prices().items():
         assert p.cache_write_5m == round(p.input * 1.25, 4), model
