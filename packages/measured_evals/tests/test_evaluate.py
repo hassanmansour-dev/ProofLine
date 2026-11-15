@@ -1,4 +1,4 @@
-"""The C1 eval interface: generic arguments, scores in [0, 1], fails closed."""
+"""The eval interface: generic arguments, scores in [0, 1], fails closed (C1; checks in C7)."""
 
 from __future__ import annotations
 
@@ -10,15 +10,25 @@ import pytest
 from measured_evals import EvalScores, evaluate
 
 
-def test_stub_never_passes() -> None:
-    result = asyncio.run(evaluate("any output", {"task": "anything"}))
-    assert result.evaluator == "stub"
+def test_unknown_context_keys_are_ignored() -> None:
+    assert asyncio.run(evaluate("A plain sentence.", {"task": "anything"})).passed is True
+
+
+def test_no_checks_means_not_passed() -> None:
+    result = asyncio.run(evaluate("text", checks=()))
     assert result.scores == {}
     assert result.passed is False
 
 
-def test_context_is_optional() -> None:
-    assert asyncio.run(evaluate("text")).passed is False
+def test_reasons_need_a_matching_score() -> None:
+    with pytest.raises(ValueError, match="no score"):
+        EvalScores({"quality": 1.0}, reasons={"pii": "email found"})
+
+
+@pytest.mark.parametrize("bad", ["", "x" * 201])
+def test_reasons_are_short_text(bad: str) -> None:
+    with pytest.raises(ValueError, match="characters"):
+        EvalScores({"pii": 0.0}, reasons={"pii": bad})
 
 
 def test_passed_needs_every_score_at_or_above_threshold() -> None:
