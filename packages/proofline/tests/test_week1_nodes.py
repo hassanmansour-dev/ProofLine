@@ -173,6 +173,23 @@ async def test_writer_first_draft_sets_revision_zero(tmp_path: Path) -> None:
     assert "<previous_draft>" not in llm.calls[0].prompt.user
 
 
+async def test_writer_revises_from_a_rejected_preview_with_the_feedback(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_draft())
+    deps = _deps(tmp_path, llm)
+    state = base_state(
+        deps.settings,
+        outline=make_outline(),
+        research_notes=make_notes(),
+        feedback="The hook is too slow.",
+        previous_preview="## LinkedIn post\n\n# Old title\n\nOld hook.",
+    )
+    update = await run_node("writer", writer, state, deps)
+    user = llm.calls[0].prompt.user
+    assert "Old hook." in user
+    assert "The hook is too slow." in user
+    assert update["revision_count"] == 0  # the pipeline's own count; the task carries its own
+
+
 async def test_writer_drops_citations_to_unknown_sources(tmp_path: Path) -> None:
     llm = FakeLLM().queue(make_draft(cited=["S1", "S42"]))
     deps = _deps(tmp_path, llm)

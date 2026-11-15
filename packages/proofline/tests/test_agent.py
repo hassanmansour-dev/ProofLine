@@ -117,3 +117,32 @@ async def test_bad_inputs_fail_the_result_with_a_reason(
     assert result.error is not None
     assert "topic" in result.error or "audience" in result.error
     assert out["ready"] == out["pending_actions"] == []
+
+
+async def test_a_revision_task_brings_feedback_and_the_previous_preview_to_the_writer(
+    tmp_path: Path,
+) -> None:
+    agent = _agent(tmp_path)
+    first = _task()
+    revision = Task(
+        agent="content",
+        goal=first.goal,
+        inputs={**first.inputs, "previous_preview": "## LinkedIn post\n\nOld hook.", "revision": 1},
+        feedback="Make the hook concrete.",
+        parent_id=first.id,
+    )
+
+    await _app(agent).ainvoke(initial_ops_state(revision), CFG)
+
+    writer_prompt = next(c for c in agent.deps.llm.calls if c.role == "writer").prompt.user  # type: ignore[attr-defined]
+    assert "Old hook." in writer_prompt
+    assert "Make the hook concrete." in writer_prompt
+
+
+async def test_previous_preview_must_be_text(tmp_path: Path) -> None:
+    out = await _app(_agent(tmp_path)).ainvoke(
+        initial_ops_state(_task(previous_preview=["not", "text"])), CFG
+    )
+    [result] = out["results"]
+    assert result.status == "failed"
+    assert "previous_preview" in (result.error or "")

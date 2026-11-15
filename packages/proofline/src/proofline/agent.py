@@ -44,6 +44,15 @@ class _State(TypedDict, total=False):
     result: AgentResult
 
 
+def _optional_text_input(task: Task, key: str) -> str | None:
+    value = task.inputs.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"task input {key!r} must be a string")
+    return value
+
+
 def _text_input(task: Task, key: str) -> str:
     value = task.inputs.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -68,11 +77,18 @@ class ContentAgent:
             try:
                 topic = _text_input(task, "topic")
                 audience = _text_input(task, "audience")
+                previous_preview = _optional_text_input(task, "previous_preview")
             except ValueError as exc:
                 return {"result": _failed(task, str(exc))}
 
             settings = deps.settings
-            inputs = initial_state(topic, audience, settings.run_config())
+            inputs = initial_state(
+                topic,
+                audience,
+                settings.run_config(),
+                feedback=task.feedback,
+                previous_preview=previous_preview,
+            )
             # No `configurable` and no `callbacks`: the thread id and the masked tracer
             # come from the supervisor's run.
             cfg = RunnableConfig(

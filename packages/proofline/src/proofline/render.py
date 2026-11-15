@@ -87,13 +87,23 @@ def revision_context(
     critique: Critique | None,
     feedback: str | None,
     rejected_by_human: bool,
+    previous_preview: str | None = None,
 ) -> str:
-    """The writer's revision block. Empty string on the first draft."""
-    if draft is None:
+    """The writer's revision block. Empty string on the first draft.
+
+    With no draft in state, a revision Task's `previous_preview` (the rejected action's
+    preview) stands in for it (ADR-0019). It's escaped: it quotes source titles, which
+    come from the web.
+    """
+    if draft is not None:
+        previous = draft_block(draft)
+    elif previous_preview:
+        previous = escape(previous_preview)
+    else:
         return ""
     blocks = [
         "This is a revision. Your previous draft:",
-        f"<previous_draft>\n{draft_block(draft)}\n</previous_draft>",
+        f"<previous_draft>\n{previous}\n</previous_draft>",
     ]
     if rejected_by_human and feedback:
         blocks.append(

@@ -84,6 +84,7 @@ sets every default.
 | `critique` | `Critique \| None` | critic (C8) | `None` |
 | `score` | `float \| None` | critic (C8) | `None`; = `Critique.overall`, computed in Python |
 | `feedback` | `str \| None` | input (optional) | `None`; a human's feedback, set when a rejected action comes back as a revision `Task` (ADR-0014) |
+| `previous_preview` | `str \| None` | input (optional) | `None`; the rejected action's preview, from a revision `Task`: the writer revises from it when there's no `draft` yet (ADR-0019) |
 | `final_script` | `FinalScript` | finalizer | rendered Markdown + metadata |
 | `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic | `[]`, append-only |
 

@@ -30,6 +30,9 @@ class InputState(TypedDict):
     # a human's feedback on an earlier draft; set when a rejected action comes back
     # as a revision Task (ADR-0014). Nothing in this graph writes it.
     feedback: NotRequired[str | None]
+    # the rejected action's preview, carried by the revision Task (ADR-0019): what the
+    # writer revises from when there's no draft in state yet. Nothing here writes it.
+    previous_preview: NotRequired[str | None]
 
 
 class ScriptState(TypedDict, total=False):
@@ -48,14 +51,23 @@ class ScriptState(TypedDict, total=False):
     critique: Critique | None
     score: float | None
     feedback: str | None  # input, see InputState
+    previous_preview: str | None  # input, see InputState
     # finalizer
     final_script: FinalScript
     # append-only audit trail (writer, critic)
     history: Annotated[list[RevisionRecord], operator.add]
 
 
-def initial_state(topic: str, audience: str, run_config: RunConfig) -> ScriptState:
-    """A new run's state: the inputs plus a default for every field later steps use."""
+def initial_state(
+    topic: str,
+    audience: str,
+    run_config: RunConfig,
+    *,
+    feedback: str | None = None,
+    previous_preview: str | None = None,
+) -> ScriptState:
+    """A new run's state: the inputs plus a default for every field later steps use.
+    `feedback` and `previous_preview` come from a revision Task (ADR-0019)."""
     return ScriptState(
         topic=topic,
         audience=audience,
@@ -63,7 +75,8 @@ def initial_state(topic: str, audience: str, run_config: RunConfig) -> ScriptSta
         revision_count=0,
         critique=None,
         score=None,
-        feedback=None,  # set from a revision Task once the content agent exists (C8)
+        feedback=feedback,
+        previous_preview=previous_preview,
         history=[],
     )
 

@@ -55,7 +55,7 @@ What the first live run surfaced (fix in the step named, not before):
 
 From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only if
 the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
-`render.revision_context`), with a test.
+`render.revision_context`), with a test. Done in C8 (task 5): the revision Task carries the rejected preview.
 
 From C4 (ADR-0017), moved to **C9** (Hassan, 2026-11-14): **edit** in the inbox (approve
 an edited preview). Needs an ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by

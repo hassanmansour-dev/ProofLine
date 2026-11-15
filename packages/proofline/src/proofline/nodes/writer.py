@@ -1,8 +1,8 @@
-"""writer — outline + notes (+ critique/feedback) → Draft. First draft now; revisions from C8.
+"""writer — outline + notes (+ critique/feedback/previous preview) → Draft.
 
 Contract (docs/ARCHITECTURE.md §4):
     reads:   topic, audience, run_config, outline, research_notes,
-             draft?, critique?, feedback?, revision_count?
+             draft?, critique?, feedback?, previous_preview?, revision_count?
     writes:  draft, revision_count, history
     LLM:     prompts/writer.md, role="writer", schema=Draft
 Steps:
@@ -122,7 +122,11 @@ async def writer(state: ScriptState, runtime: Runtime[Deps]) -> dict[str, Any]:
         )
 
     context = revision_context(
-        state.get("draft"), state.get("critique"), state.get("feedback"), rejected_by_human
+        state.get("draft"),
+        state.get("critique"),
+        state.get("feedback"),
+        rejected_by_human,
+        previous_preview=state.get("previous_preview"),
     )
     draft = await deps.llm.generate(prompt_with(context), Draft, role="writer", run_config=cfg)
     if draft.word_count > cfg.max_words:
