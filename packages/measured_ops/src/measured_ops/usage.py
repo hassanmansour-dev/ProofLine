@@ -120,27 +120,11 @@ class UsageCollector(BaseCallbackHandler):
         with self._lock:
             self._calls.append(usage)
 
-    def totals(self) -> list[Usage]:
-        """One `Usage` per model, summed, in first-seen order."""
-        sums: dict[str, Usage] = {}
+    def calls(self) -> list[Usage]:
+        """One `Usage` per model call, in order. Not summed: some prices depend on each
+        call's prompt length (Claude Haiku 5.5), so cost is computed per call."""
         with self._lock:
-            calls = list(self._calls)
-        for u in calls:
-            prev = sums.get(u.model)
-            sums[u.model] = (
-                u
-                if prev is None
-                else Usage(
-                    agent=u.agent,
-                    model=u.model,
-                    input_tokens=prev.input_tokens + u.input_tokens,
-                    output_tokens=prev.output_tokens + u.output_tokens,
-                    cache_read_tokens=prev.cache_read_tokens + u.cache_read_tokens,
-                    cache_write_5m_tokens=prev.cache_write_5m_tokens + u.cache_write_5m_tokens,
-                    cache_write_1h_tokens=prev.cache_write_1h_tokens + u.cache_write_1h_tokens,
-                )
-            )
-        return list(sums.values())
+            return list(self._calls)
 
 
 _current: ContextVar[UsageCollector | None] = ContextVar("measured_ops_usage", default=None)

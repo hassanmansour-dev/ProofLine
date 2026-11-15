@@ -447,3 +447,29 @@ async def test_run_without_model_calls_has_empty_costs_not_none() -> None:
     [item] = await inbox.list_pending()
 
     assert item.costs == ()
+
+
+async def test_a_long_haiku_call_is_priced_at_the_long_context_rate() -> None:
+    from langchain_core.messages import AIMessage
+    from ops_fakes import LLMAgent
+
+    def reply(prompt: int) -> AIMessage:
+        return AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": prompt, "output_tokens": 0, "total_tokens": prompt},
+            response_metadata={"model_name": "claude-haiku-5-5"},
+        )
+
+    saver = _saver()
+    agent = LLMAgent([reply(100_000), reply(100_001)], action_type="publish_public")
+    await _start(_graph(saver, agent), "t")
+    inbox = Inbox(_graph(saver, ScriptedAgent()), load_policy())  # demo prices
+
+    [item] = await inbox.list_pending()
+
+    # 100,000 at $0.10/MTok + 100,001 at $0.50/MTok, each call priced on its own
+    assert item.costs is not None
+    [(agent_name, tokens, dollars)] = [(c.agent, c.tokens, c.cost) for c in item.costs]
+    assert agent_name == "echo"
+    assert tokens == 200_001
+    assert dollars == pytest.approx(0.01 + 0.0500005)

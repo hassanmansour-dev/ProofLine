@@ -184,12 +184,13 @@ async def test_usage_is_counted_per_agent_with_cache_tokens_apart() -> None:
         Usage(
             agent="echo",
             model="model-a",
-            input_tokens=250 + 200,
-            output_tokens=70,
+            input_tokens=250,
+            output_tokens=50,
             cache_read_tokens=600,
             cache_write_5m_tokens=100,
             cache_write_1h_tokens=50,
-        )
+        ),
+        Usage(agent="echo", model="model-a", input_tokens=200, output_tokens=20),
     ]
 
 

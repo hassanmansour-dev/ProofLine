@@ -162,7 +162,10 @@ def build_supervisor(
                 )
             except Exception:
                 # the run's spend is lost with the state update: keep it in the log
-                spent = ", ".join(f"{u.model}: {u.tokens} tokens" for u in usage.totals())
+                per_model: dict[str, int] = {}
+                for u in usage.calls():
+                    per_model[u.model] = per_model.get(u.model, 0) + u.tokens
+                spent = ", ".join(f"{m}: {t} tokens" for m, t in per_model.items())
                 log.warning(
                     "supervisor: agent %r failed after using %s",
                     agent.name,
@@ -176,7 +179,7 @@ def build_supervisor(
             result.status,
             len(result.actions),
         )
-        return {"results": [result], "usage": usage.totals()}
+        return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
         scored: list[PendingAction] = []

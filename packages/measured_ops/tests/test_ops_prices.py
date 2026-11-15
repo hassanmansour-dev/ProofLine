@@ -56,3 +56,22 @@ def test_loads_a_private_table_from_a_path(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert load_model_prices(path) == {"m": ModelPrice(1, 2, 0.1, 1.25, 2)}
+
+
+def test_haiku_has_the_published_long_context_tier() -> None:
+    tier = load_model_prices()["claude-haiku-5-5"].long_context
+    assert tier is not None
+    assert tier.above_prompt_tokens == 100_000
+    p = tier.price
+    assert (p.input, p.output, p.cache_read, p.cache_write_5m, p.cache_write_1h) == (
+        0.50,
+        2.50,
+        0.05,
+        0.625,
+        1.00,
+    )
+
+
+def test_only_haiku_has_a_long_context_tier() -> None:
+    tiered = {m for m, p in load_model_prices().items() if p.long_context is not None}
+    assert tiered == {"claude-haiku-5-5"}

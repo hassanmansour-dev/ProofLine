@@ -28,9 +28,9 @@ async def test_collects_only_inside_the_block() -> None:
         await model.ainvoke("b")
     await model.ainvoke("c")  # outside: not counted
 
-    assert usage.totals() == [
-        Usage(agent="content", model="model-a", input_tokens=20, output_tokens=4)
-    ]
+    # one record per call: a tiered price (Haiku 5.5) is decided per call
+    one = Usage(agent="content", model="model-a", input_tokens=10, output_tokens=2)
+    assert usage.calls() == [one, one]
 
 
 async def test_nested_blocks_count_only_in_the_innermost_block() -> None:
@@ -48,7 +48,7 @@ async def test_nested_blocks_count_only_in_the_innermost_block() -> None:
     async def node(state: S) -> dict[str, int]:
         with collect_usage("inner") as inner_usage:
             await model.ainvoke("a")
-        seen["inner"] = inner_usage.totals()
+        seen["inner"] = inner_usage.calls()
         return {"x": 1}
 
     seen: dict[str, list[Usage]] = {}
@@ -61,7 +61,7 @@ async def test_nested_blocks_count_only_in_the_innermost_block() -> None:
     with collect_usage("outer") as outer:
         await graph.ainvoke({"x": 0})
 
-    assert outer.totals() == []
+    assert outer.calls() == []
     assert [(u.agent, u.input_tokens) for u in seen["inner"]] == [("inner", 10)]
 
 
