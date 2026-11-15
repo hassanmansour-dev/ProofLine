@@ -15,6 +15,8 @@
         <span class="tag">{{ item.type }}</span> → {{ item.target }}
         <span class="risk risk-{{ item.risk_level }}">{{ item.risk_level }} risk</span>
         {% if item.blocked_by_policy %}<span class="tag tag-blocked">Blocked by policy</span>{% endif %}
+        {% if item.eval is none %}<span class="tag">Not evaluated</span>
+        {% elif not item.eval.passed %}<span class="tag tag-check">Check failed</span>{% endif %}
       </span>
       <span class="when">{{ item.agent }} · paused {{ item.paused_at[:16] | replace("T", " ") }}</span>
     </a>

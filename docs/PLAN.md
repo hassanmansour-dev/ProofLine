@@ -184,7 +184,26 @@ agent, all in `measured_evals`. Rules: `measured_evals` never imports `proofline
 (ADR-0008); the inbox shows the scores on each waiting action; a failed check can
 raise an action to approval but never lower anything. Demo data only.
 
-- [ ] Plan reviewed by Hassan (checklist added with it)
+Decisions: ADR-0018. Plan approved by Hassan 2026-11-14: missing scores fail closed;
+deterministic checks only in v0 (judges in GROW-14); demo prices here, real ones private
+if they differ; allowlisted addresses passed per call from private config.
+
+- [x] `measured_evals` guard-v0: quality, injection and PII checks, 0 or 1, reasons that
+  never quote the match; `evaluate()` runs them (the C1 stub is gone)
+- [x] Eval node in the supervisor (`call_agent → evaluate → triage → gate`), the only
+  writer of `eval_scores`; the agent's own result stays unscored
+- [x] Policy: missing or failed scores raise "auto" to approval, never lower anything
+  (row × risk × eval matrix test)
+- [x] Usage per agent run (cache reads and 5m/1h writes apart from input), cost from a
+  demo price table, unknown model = unknown cost; runs tagged `agent:<name>` for tracing
+- [x] Inbox shows each waiting action's checks and the run's cost per agent
+- [x] No matched PII value in logs, scores, reasons or the gate payload outside the
+  preview (tests capture logs and the payload)
+- [x] e2e: a failed check pauses an "auto" action across a restart; a clean one runs
+  (SQLite + Postgres)
+- [x] PR #12 review: Sonnet 5.5 cache reads 0.05x; Haiku 5.5 long-context tier priced
+  per call; PII masked in LangSmith traces; blocked-action log without the target
+- [x] Green in CI on the PR (#12: Postgres e2e ran, 483 passed, 0 skipped, after the review fixes)
 
 ### C8 · Content agent v0 (GROW-87)
 

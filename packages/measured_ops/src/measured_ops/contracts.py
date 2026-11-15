@@ -7,6 +7,8 @@ Flow (supervisor from C2, inbox from C4):
 
     Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
                                    │
+                       eval node: eval_scores on each action (C7)
+                                   │
                     policy.decide(action) ── "auto" ──▶ run
                                    │      └──── "never" ──▶ blocked + logged (no inbox)
                                "approval" ──▶ inbox ──▶ ApprovalDecision
@@ -27,7 +29,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from measured_evals import EvalScores
+from measured_evals import EvalScores, Usage
 
 # snake_case names: action types ("publish_public") and agent names ("content")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -163,6 +165,9 @@ class OpsState(TypedDict, total=False):
 
     task: Task  # the task in flight
     results: Annotated[list[AgentResult], operator.add]  # one per agent run, append-only
+    # The latest result's actions with eval scores, written only by the eval node (C7,
+    # ADR-0018). No reducer, one writer. `triage` reads this, never the raw result.
+    evaluated_actions: list[PendingAction]
     # Waiting at the gate. No reducer, two sequential writers: `triage` sets it and
     # `gate` pops the head. Needs a reducer (or one owner) before agents run in parallel.
     pending_actions: list[PendingAction]
@@ -171,14 +176,32 @@ class OpsState(TypedDict, total=False):
     # Cleared to run: "auto" by the policy, or approved at the gate. Append-only.
     # Nothing executes them before the tools arrive (C5). ADR-0016.
     ready: Annotated[list[PendingAction], operator.add]
+    # Tokens per agent run and model, from the LLM calls inside the agent (C7). Append-only.
+    usage: Annotated[list[Usage], operator.add]
 
 
 def initial_ops_state(task: Task) -> OpsState:
     """A new supervisor run: the task plus a default for every field."""
-    return OpsState(task=task, results=[], pending_actions=[], decisions=[], blocked=[], ready=[])
+    return OpsState(
+        task=task,
+        results=[],
+        evaluated_actions=[],
+        pending_actions=[],
+        decisions=[],
+        blocked=[],
+        ready=[],
+        usage=[],
+    )
 
 
 # Every type that can appear in OpsState. The checkpointer's serde allowlist is
 # built from this tuple (ADR-0006); tests/test_ops_contracts.py checks it is complete.
-STATE_TYPES: tuple[type, ...] = (Task, AgentResult, PendingAction, ApprovalDecision, EvalScores)
+STATE_TYPES: tuple[type, ...] = (
+    Task,
+    AgentResult,
+    PendingAction,
+    ApprovalDecision,
+    EvalScores,
+    Usage,
+)
 SERDE_ALLOWLIST: list[tuple[str, str]] = [(t.__module__, t.__qualname__) for t in STATE_TYPES]

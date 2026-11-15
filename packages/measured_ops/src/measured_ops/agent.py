@@ -71,6 +71,20 @@ def check_agent_graph(graph: AgentGraph) -> None:
         )
 
 
+def agent_run_config(agent_name: str, task: Task) -> RunnableConfig:
+    """Tracing names for one agent run (C7): LangSmith groups runs per agent with these.
+
+    No `callbacks` key on purpose: an explicit `callbacks` would replace the parent
+    run's (a tracer), not add to them. Usage is collected through a context variable
+    instead (`measured_ops.usage`).
+    """
+    return RunnableConfig(
+        run_name=f"agent:{agent_name}",
+        tags=[f"agent:{agent_name}"],
+        metadata={"agent": agent_name, "task_id": task.id},
+    )
+
+
 async def run_agent(
     agent: Agent,
     graph: AgentGraph,

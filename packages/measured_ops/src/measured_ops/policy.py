@@ -11,7 +11,9 @@ Three tiers: "auto" runs without asking; "approval" waits in the inbox;
 Rules no table can override (fail closed):
 - an action type the table doesn't list needs approval;
 - an action an agent marks `risk_level="high"` needs approval, unless its row is
-  "never": risk can raise "auto" to "approval" but never lowers "never".
+  "never": risk can raise "auto" to "approval" but never lowers "never";
+- an action whose eval scores are missing or failed needs approval, unless its row is
+  "never" (C7, ADR-0018): the eval node can only add a human check, never remove one.
 """
 
 from __future__ import annotations
@@ -55,23 +57,42 @@ class ApprovalPolicy(BaseModel):
         """The gate's answer for one proposed action. Logs every "never" at WARNING."""
         decision = self.decide_type(action.type)
         if decision == "never":
+            # id, type and task only: a target can be an address or a phone number
             log.warning(
-                "policy: blocked action %s (type=%s, target=%s, task=%s): "
-                "this action type is never allowed",
+                "policy: blocked action %s (type=%s, task=%s): this action type is never allowed",
                 action.id,
                 action.type,
-                action.target,
                 action.task_id,
             )
             return "never"
         if action.risk_level == "high":
             return "approval"
+        if decision == "auto":
+            scores = action.eval_scores
+            if scores is None:
+                log.info(
+                    "policy: action %s (%s) has no eval scores: needs approval",
+                    action.id,
+                    action.type,
+                )
+                return "approval"
+            if not scores.passed:
+                # metric names only: reasons and values stay out of logs (ADR-0018)
+                log.info(
+                    "policy: action %s (%s) failed checks %s: needs approval",
+                    action.id,
+                    action.type,
+                    list(scores.failing) or ["(no scores)"],
+                )
+                return "approval"
         return decision
 
     def requires_approval(self, action: PendingAction) -> bool:
         return self.decide(action) == "approval"
 
     def is_blocked(self, action: PendingAction) -> bool:
+        if self.decide_type(action.type) != "never":
+            return False  # skip decide(): it would log eval escalations on every inbox view
         return self.decide(action) == "never"
 
     def check_decision(self, action: PendingAction, decision: ApprovalDecision) -> None:

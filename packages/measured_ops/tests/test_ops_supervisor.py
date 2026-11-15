@@ -77,6 +77,19 @@ async def test_action_needing_approval_pauses_with_its_preview() -> None:
         "target": "linkedin",
         "preview": "publish_public #0",
         "risk_level": "medium",
+        "eval": {
+            "evaluator": "guard-v0",
+            "passed": True,
+            "failing": [],
+            "scores": {
+                "quality": 1.0,
+                "injection": 1.0,
+                "pii": 1.0,
+                "target_injection": 1.0,
+                "target_pii": 1.0,
+            },
+            "reasons": {},
+        },
     }
     snap = await app.aget_state(_cfg())
     assert snap.next == ("gate",)
@@ -254,4 +267,11 @@ def test_agents_are_checked_when_the_supervisor_is_built() -> None:
 
 def test_graph_shape() -> None:
     graph = build_supervisor([ScriptedAgent()], load_policy()).compile().get_graph()
-    assert set(graph.nodes) == {"__start__", "call_agent", "triage", "gate", "__end__"}
+    assert set(graph.nodes) == {
+        "__start__",
+        "call_agent",
+        "evaluate",
+        "triage",
+        "gate",
+        "__end__",
+    }

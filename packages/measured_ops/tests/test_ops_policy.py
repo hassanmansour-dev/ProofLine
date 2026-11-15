@@ -1,12 +1,14 @@
-"""Approval policy table: config-driven, and unknown action types need approval."""
+"""Approval policy table: config-driven, unknown action types need approval, and a
+failed or missing eval raises "auto" to approval but never lowers anything (ADR-0018)."""
 
 from __future__ import annotations
 
+import itertools
 import logging
 from pathlib import Path
 
 import pytest
-from ops_fakes import make_action
+from ops_fakes import FAILED, PASSED, make_action
 from pydantic import ValidationError
 
 from measured_ops import ActionBlockedError, ApprovalDecision, load_policy
@@ -39,7 +41,8 @@ def test_demo_table_matches_grow_69() -> None:
 
 @pytest.mark.parametrize("action_type", AUTO)
 def test_internal_work_runs_automatically(action_type: str) -> None:
-    assert load_policy().decide(make_action("t1", type=action_type, risk_level="low")) == "auto"
+    action = make_action("t1", type=action_type, risk_level="low", eval_scores=PASSED)
+    assert load_policy().decide(action) == "auto"
 
 
 @pytest.mark.parametrize("action_type", APPROVAL)
@@ -116,7 +119,8 @@ def test_loads_a_private_table_from_a_path(tmp_path: Path) -> None:
     path = tmp_path / "policy.toml"
     path.write_text('version = 1\n[actions]\npublish_public = "auto"\n', encoding="utf-8")
     policy = load_policy(path)
-    assert policy.decide(make_action("t1", type="publish_public", risk_level="low")) == "auto"
+    action = make_action("t1", type="publish_public", risk_level="low", eval_scores=PASSED)
+    assert policy.decide(action) == "auto"
     assert policy.decide_type("research") == "approval"  # not listed here → approval
 
 
@@ -147,3 +151,71 @@ def test_invalid_tables_fail_to_load(tmp_path: Path, toml: str) -> None:
 def test_policy_is_frozen() -> None:
     with pytest.raises(ValidationError):
         load_policy().actions = {}  # type: ignore[misc]
+
+
+# --- eval escalation (C7, ADR-0018) -----------------------------------------------------
+
+RANK = {"auto": 0, "approval": 1, "never": 2}
+ROWS = {"auto_row": "auto", "approval_row": "approval", "never_row": "never"}
+MATRIX_POLICY = ApprovalPolicy(version=1, actions=ROWS)
+EVALS = {"passed": PASSED, "failed": FAILED, "missing": None}
+
+
+@pytest.mark.parametrize(
+    ("action_type", "risk", "eval_name"),
+    list(itertools.product([*ROWS, "unlisted"], ["low", "medium", "high"], EVALS)),
+)
+def test_eval_only_ever_raises_auto_to_approval(
+    action_type: str, risk: str, eval_name: str
+) -> None:
+    scores = EVALS[eval_name]
+    action = make_action("t1", type=action_type, risk_level=risk, eval_scores=scores)
+    baseline = make_action("t1", type=action_type, risk_level=risk, eval_scores=PASSED)
+    got = MATRIX_POLICY.decide(action)
+    without_eval = MATRIX_POLICY.decide(baseline)
+
+    assert RANK[got] >= RANK[without_eval]  # never lowered
+    if eval_name == "passed":
+        assert got == without_eval
+    else:
+        # fail closed: a failed or missing eval makes "auto" wait; nothing else changes
+        assert got == ("approval" if without_eval == "auto" else without_eval)
+
+
+def test_failed_eval_never_unblocks_or_hides_a_never_action(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    action = make_action("t1", type="never_row", eval_scores=FAILED)
+    with caplog.at_level(logging.WARNING, logger="measured_ops.policy"):
+        assert MATRIX_POLICY.decide(action) == "never"
+    assert "blocked action" in caplog.text
+
+
+def test_failed_eval_is_logged_by_kind_without_values(caplog: pytest.LogCaptureFixture) -> None:
+    action = make_action("t1", type="auto_row", risk_level="low", eval_scores=FAILED)
+    with caplog.at_level(logging.INFO, logger="measured_ops.policy"):
+        assert MATRIX_POLICY.decide(action) == "approval"
+    assert "failed checks ['pii']" in caplog.text
+
+
+def test_missing_eval_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    action = make_action("t1", type="auto_row", risk_level="low")
+    with caplog.at_level(logging.INFO, logger="measured_ops.policy"):
+        assert MATRIX_POLICY.decide(action) == "approval"
+    assert "no eval scores" in caplog.text
+
+
+def test_blocked_action_log_names_id_and_type_never_the_target(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # a target can be an address or a phone number (message_person, ...): keep it out
+    action = make_action(
+        "t1", type="bulk_export_personal_data", target="jane.doe@example.com, (514) 555-0123"
+    )
+    with caplog.at_level(logging.DEBUG, logger="measured_ops"):
+        assert load_policy().decide(action) == "never"
+
+    assert action.id in caplog.text
+    assert "bulk_export_personal_data" in caplog.text
+    assert "jane.doe" not in caplog.text
+    assert "555-0123" not in caplog.text

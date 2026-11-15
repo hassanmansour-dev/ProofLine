@@ -29,7 +29,7 @@ import hmac
 import logging
 import secrets
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from importlib.resources import files
 from typing import Any
@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.middleware.sessions import SessionMiddleware
 
+from measured_evals import ModelPrice
 from measured_ops.agent import Agent
 from measured_ops.checkpoint import open_checkpointer
 from measured_ops.inbox.auth import LoginThrottle, verify_passphrase
@@ -78,12 +79,15 @@ def create_inbox_app(
     agents: Sequence[Agent],
     policy: ApprovalPolicy,
     *,
+    prices: Mapping[str, ModelPrice] | None = None,
+    eval_context: Mapping[str, object] | None = None,
     clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Build the inbox app. Refuses settings without usable secrets (no defaults).
 
     The lifespan takes the single-process lock, opens the checkpointer and compiles the
-    supervisor with `agents` and `policy`: the same graph the runs paused in.
+    supervisor with `agents`, `policy` and `eval_context`: the same graph the runs
+    paused in. `prices` (default: the bundled demo table) prices each run's usage.
     """
     settings.check()
     session_seconds = settings.session_hours * 3600
@@ -98,14 +102,17 @@ def create_inbox_app(
         autoescape=select_autoescape(["html"]),
     )
     templates.filters["urlpart"] = lambda value: quote(str(value), safe="")
+    templates.filters["dollars"] = lambda v: "unknown" if v is None else f"${v:,.4f}"
     css = files("measured_ops.inbox").joinpath("templates", "inbox.css").read_text("utf-8")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with single_process_lock(settings.lock_path):
             async with open_checkpointer(settings.checkpointer_url) as saver:
-                graph = build_supervisor(agents, policy).compile(checkpointer=saver)
-                app.state.inbox = Inbox(graph, policy)
+                graph = build_supervisor(agents, policy, eval_context=eval_context).compile(
+                    checkpointer=saver
+                )
+                app.state.inbox = Inbox(graph, policy, prices=prices)
                 log.info("inbox: serving runs from %s", settings.checkpointer_url.split(":")[0])
                 yield
 

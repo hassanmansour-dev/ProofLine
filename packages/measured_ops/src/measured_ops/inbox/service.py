@@ -9,6 +9,9 @@
 - `decide` resumes with `Command(resume={interrupt_id: decision})`, never
   `ainvoke(None)`: after a refused answer the refused value is still the thread's
   pending resume, and a bare re-run would replay it (ADR-0016).
+- Each item carries the eval node's checks (from the gate payload: what the gate
+  showed) and the run's tokens and cost per agent (C7, ADR-0018). A run paused
+  before C7 has no checks; it still lists, as "not evaluated".
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -18,14 +21,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
 from pydantic import ValidationError
 
+from measured_evals import ModelPrice, total_by_agent
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
+from measured_ops.prices import load_model_prices
+from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
 
@@ -38,6 +46,40 @@ class AlreadyDecided(LookupError):
 
 class Refused(ValueError):
     """The gate (or the decision model) refused this answer. The run is still paused."""
+
+
+@dataclass(frozen=True)
+class CheckView:
+    name: str
+    passed: bool
+    reason: str | None  # a few words, never the matched text
+
+
+@dataclass(frozen=True)
+class EvalView:
+    evaluator: str
+    passed: bool
+    checks: tuple[CheckView, ...]
+
+
+@dataclass(frozen=True)
+class CostView:
+    agent: str
+    tokens: int
+    cost: float | None  # None: a model in this run has no price ("unknown")
+
+
+def _eval_view(block: Any) -> EvalView | None:
+    """The gate payload's eval block as the inbox shows it; None for a pre-C7 pause."""
+    if not isinstance(block, dict):
+        return None
+    reasons: dict[str, str] = block.get("reasons") or {}
+    failing = set(block.get("failing") or ())
+    checks = tuple(
+        CheckView(name, name not in failing, reasons.get(name))
+        for name in block.get("scores") or {}
+    )
+    return EvalView(str(block.get("evaluator", "")), bool(block.get("passed")), checks)
 
 
 @dataclass(frozen=True)
@@ -57,6 +99,9 @@ class PendingItem:
     risk_level: str
     response_schema: dict[str, Any]
     blocked_by_policy: bool
+    eval: EvalView | None = None  # None: paused before the eval node existed (pre-C7)
+    # None: the run predates usage tracking (pre-C7), which is not the same as free
+    costs: tuple[CostView, ...] | None = ()
 
 
 @dataclass(frozen=True)
@@ -82,11 +127,21 @@ class Inbox:
     `checkpointer`, `aget_state` and `ainvoke` like a `CompiledStateGraph`.
     """
 
-    def __init__(self, graph: Any, policy: ApprovalPolicy) -> None:
+    def __init__(
+        self,
+        graph: Any,
+        policy: ApprovalPolicy,
+        *,
+        prices: Mapping[str, ModelPrice] | None = None,
+        callbacks: list[BaseCallbackHandler] | None = None,
+    ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
         self.graph = graph
         self.policy = policy
+        self.prices = load_model_prices() if prices is None else prices
+        # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
+        self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_users: dict[str, int] = {}  # so a lock is dropped once nobody holds it
 
@@ -102,12 +157,27 @@ class Inbox:
         if snap.next != ("gate",) or not snap.interrupts:
             return None
         interrupt = snap.interrupts[0]
+        item = self._item(thread_id, snap, interrupt.value)
+        return replace(
+            item,
+            interrupt_id=interrupt.id,
+            response_schema=dict(getattr(interrupt, "response_schema", None) or {}),
+        )
+
+    def _item(self, thread_id: str, snap: Any, payload: dict[str, Any]) -> PendingItem:
         task: Task = snap.values["task"]
         action: PendingAction = snap.values["pending_actions"][0]
-        payload: dict[str, Any] = interrupt.value
+        usage = snap.values.get("usage")
+        costs = (
+            None
+            if usage is None
+            else tuple(
+                CostView(a, t.tokens, t.cost) for a, t in total_by_agent(usage, self.prices).items()
+            )
+        )
         return PendingItem(
             thread_id=thread_id,
-            interrupt_id=interrupt.id,
+            interrupt_id="",
             paused_at=str(snap.created_at or ""),
             task_id=task.id,
             agent=task.agent,
@@ -117,8 +187,10 @@ class Inbox:
             target=payload["target"],
             preview=payload["preview"],
             risk_level=payload["risk_level"],
-            response_schema=dict(getattr(interrupt, "response_schema", None) or {}),
+            response_schema={},
             blocked_by_policy=self.policy.is_blocked(action),  # logs a WARNING if so
+            eval=_eval_view(payload.get("eval")),
+            costs=costs,
         )
 
     async def list_pending(self) -> list[PendingItem]:
@@ -182,7 +254,9 @@ class Inbox:
                 raise Refused(_reason(exc)) from exc
             resume: Command[Any] = Command(resume={interrupt_id: decision.model_dump(mode="json")})
             try:
-                out = await self.graph.ainvoke(resume, _cfg(thread_id))
+                out = await self.graph.ainvoke(
+                    resume, {**_cfg(thread_id), "callbacks": self.callbacks}
+                )
             except ValidationError as exc:  # the gate's answer_schema refused it
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
