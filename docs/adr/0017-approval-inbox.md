@@ -1,6 +1,6 @@
 # ADR-0017: Approval inbox v0: location, sign-in, network, and edit deferred
 
-- Status: proposed (2026-11-14, built in C4; Hassan chose the options below on 2026-11-14)
+- Status: accepted (2026-11-14, Hassan's review of PR #10; options chosen by Hassan the same day)
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C4 (GROW-83)
 

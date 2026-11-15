@@ -379,3 +379,12 @@ def test_a_thread_id_with_a_slash_still_opens(settings: InboxSettings, clock: Cl
 
         assert html.status_code == 200
         assert "Say why every AI loop needs an exit." in html.text
+
+
+def test_login_answers_head_for_the_runbook_check(client: TestClient) -> None:
+    # docs/INBOX.md checks the server with `curl -I .../login`, which sends HEAD.
+    response = client.head("/login")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["x-frame-options"] == "DENY"

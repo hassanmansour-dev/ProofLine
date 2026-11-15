@@ -145,11 +145,16 @@ After C2, two branches run **in parallel**:
 
 | Branch A — tools and planning | Branch B — inbox and quality |
 |---|---|
-| **C3** Review policy table on phone (GROW-82) | **C4** Approval inbox v0, mobile (GROW-83) |
+| **C3** Review policy table on phone (GROW-82) ✅ | **C4** Approval inbox v0, mobile (GROW-83) |
 | **C5** MCP tools: Jira + personal calendar, read/write split (GROW-84) · waits on C3 | **C7** Eval/guard node v0 using `measured_evals`: quality, injection, PII; tracing + cost per agent (GROW-86) · waits on C4 |
 | **C6** Orchestrator: weekly plan by order and available time, never deadlines (GROW-85) · waits on C5 | |
 
-### C4 · Approval inbox v0, mobile (GROW-83) ◀ CURRENT
+### C3 · Review the policy table on the phone (GROW-82) ✅
+
+Waits on: C2. Done 2026-11-14 (Hassan's review). Calendar blocks need approval; the
+real values live in `measured-ops-private`, this repo keeps the demo policy.
+
+### C4 · Approval inbox v0, mobile (GROW-83) ✅ (PR #10)
 
 Waits on: C2. Runs in parallel with **C3** (GROW-82), Hassan's review of the policy
 table on his phone. Decisions: ADR-0017.
@@ -166,10 +171,20 @@ table on his phone. Decisions: ADR-0017.
 - [x] e2e: pause in another process → approve / reject over HTTP → thread finishes
   (SQLite + Postgres)
 - [x] Green in CI on the PR (#10: Postgres e2e ran, 331 passed, 0 skipped)
-- [ ] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`)
+- [x] Usable on the phone (Hassan, over Tailscale, following `docs/INBOX.md`, 2026-11-14)
 
 **Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
 usable on the phone.
+
+### C7 · Eval/guard node v0 using `measured_evals` (GROW-86) ◀ CURRENT
+
+Waits on: C4. Scope: quality, injection and PII checks, plus tracing and cost per
+agent, all in `measured_evals`. Rules: `measured_evals` never imports `proofline` or
+`measured_ops`; scores are written only by the eval node, never by the proposing agent
+(ADR-0008); the inbox shows the scores on each waiting action; a failed check can
+raise an action to approval but never lower anything. Demo data only.
+
+- [ ] Plan reviewed by Hassan (checklist added with it)
 
 ### C8 · Content agent v0 (GROW-87)
 
