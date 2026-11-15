@@ -1,7 +1,7 @@
 # ADR-0018: Eval/guard node v0: placement, fail-closed escalation, usage and cost
 
-- Status: proposed (2026-11-14, built in C7; plan and its four choices approved by Hassan
-  the same day; PR #12 review fixes applied: prices, Haiku tier, trace masking, policy log)
+- Status: accepted (2026-11-14, Hassan's re-review of PR #12, after the review fixes:
+  prices, Haiku tier, trace masking, policy log)
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C7 (GROW-86)
 
