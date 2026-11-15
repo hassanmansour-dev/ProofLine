@@ -1,7 +1,9 @@
 """Graph wiring — no business logic here.
 
-Built now:         START → planner → researcher → writer → finalizer → END
-C8 (loop):         writer → critic ─route_after_critic→ {writer, finalizer}
+START → planner → researcher → writer → critic ─route_after_critic─┬→ writer (revise)
+                                                                   └→ finalizer → END
+The critic loop is wired since C8: revise while the score is below the threshold and
+the revision budget lasts (routing.route_after_critic, pure).
 
 No human review node: this graph becomes the content agent (C8), and the
 supervisor's approval gate (C2) and inbox (C4) handle approval (ADR-0014).
@@ -23,13 +25,14 @@ from langgraph.graph import END, START, StateGraph
 
 from proofline.config import Settings
 from proofline.context import Deps
-from proofline.nodes import finalizer, planner, researcher, writer
+from proofline.nodes import critic, finalizer, planner, researcher, writer
 from proofline.nodes.researcher import RETRY_POLICY
 from proofline.prompts import prompt_versions
+from proofline.routing import route_after_critic
 from proofline.state import ScriptState
 
-# The linear flow runs these, in this order.
-LINEAR_NODES = ("planner", "researcher", "writer", "finalizer")
+# One pass, when the first draft passes the critic, runs these in this order.
+PIPELINE_NODES = ("planner", "researcher", "writer", "critic", "finalizer")
 
 
 def build_graph() -> StateGraph[ScriptState, Deps, ScriptState, ScriptState]:
@@ -40,12 +43,16 @@ def build_graph() -> StateGraph[ScriptState, Deps, ScriptState, ScriptState]:
     builder.add_node("planner", planner)
     builder.add_node("researcher", researcher, retry_policy=RETRY_POLICY)
     builder.add_node("writer", writer)
+    builder.add_node("critic", critic)
     builder.add_node("finalizer", finalizer)
 
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_edge("researcher", "writer")
-    builder.add_edge("writer", "finalizer")
+    builder.add_edge("writer", "critic")
+    builder.add_conditional_edges(
+        "critic", route_after_critic, {"writer": "writer", "finalizer": "finalizer"}
+    )
     builder.add_edge("finalizer", END)
     return builder
 

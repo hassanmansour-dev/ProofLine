@@ -42,20 +42,13 @@ alone and runs its tests (ADR-0012).
 
 ## 3. Graph
 
-Built now:
+Built (critic loop wired in C8):
 
 ```mermaid
 flowchart LR
-    START([START]) --> planner --> researcher --> writer --> finalizer --> END([END])
-```
-
-⟶ The critic loop (C8, content agent) adds:
-
-```mermaid
-flowchart LR
-    writer --> critic
+    START([START]) --> planner --> researcher --> writer --> critic
     critic -- "score < threshold AND revisions < max" --> writer
-    critic -- "score ≥ threshold OR revisions exhausted" --> finalizer
+    critic -- "score ≥ threshold OR revisions exhausted" --> finalizer --> END([END])
 ```
 
 There is no human review node in this graph: the supervisor's approval gate (C2)
@@ -126,7 +119,7 @@ unparseable ones dropped and logged; titles carry no citations. Over `max_words`
 one more call (revision context kept) asking for a cut; the shorter draft is kept. Increments `revision_count` on revisions;
 appends a `RevisionRecord(kind="draft")`.
 
-**critic** (built; wired in C8) — scores against `docs/RUBRIC.md` (8 criteria,
+**critic** (wired in C8) — scores against `docs/RUBRIC.md` (8 criteria,
 integer 1–10, each with quoted evidence and a concrete fix). Writes `critique` and
 `score`. `Critique.overall` is a weighted mean computed in Python with a **hard
 gate**: `technical_accuracy < 6` caps it at 6. Validation requires each criterion
@@ -164,7 +157,7 @@ The supervisor uses its own factory, `measured_ops.checkpoint.open_checkpointer(
 (section 13). The content pipeline's: `checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
 `sqlite:///…` → `AsyncSqliteSaver`, `postgresql://…` → `AsyncPostgresSaver`. All
 use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state model
-(ADR-0006). `thread_id` = run id (UUID4). The linear flow runs without a checkpointer.
+(ADR-0006). `thread_id` = run id (UUID4). The CLI runs the pipeline without a checkpointer.
 
 ## 9. Interfaces
 

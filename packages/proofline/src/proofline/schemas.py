@@ -258,7 +258,8 @@ class FinalScript(_Model):
     estimated_seconds: int
     revision_count: int
     final_score: float | None = Field(
-        default=None, description="Critic's overall score; None when no critic ran (linear flow)."
+        default=None,
+        description="Critic's overall score on the final draft; None when no critic ran.",
     )
     source_urls: list[str]
     prompt_versions: dict[str, str]

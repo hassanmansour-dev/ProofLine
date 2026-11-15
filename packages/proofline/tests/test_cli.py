@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from proofline import cli
 from proofline.config import Settings
-from tests.fakes import FakeLLM, make_deps, make_draft, make_outline, make_settings
+from tests.fakes import FakeLLM, make_critique, make_deps, make_draft, make_outline, make_settings
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,7 @@ def _no_real_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_prints_the_finished_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    llm = FakeLLM().queue(make_outline(), make_draft())
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
     monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
     result = CliRunner().invoke(
         cli.app,
@@ -54,7 +54,7 @@ def test_run_reports_out_of_range_settings_without_a_traceback(
 
 
 def test_run_says_when_research_is_stubbed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    llm = FakeLLM().queue(make_outline(), make_draft())
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
     monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
     result = CliRunner().invoke(cli.app, ["run", "--topic", "anything"])
     assert "research is stubbed" in result.stderr

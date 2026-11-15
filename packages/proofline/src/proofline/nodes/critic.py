@@ -1,4 +1,4 @@
-"""critic — Draft → Critique + score. Not wired until C8 (critic loop in the content agent).
+"""critic — Draft → Critique + score. Wired in C8: writer → critic → route_after_critic.
 
 Contract (docs/ARCHITECTURE.md §4, ADR-0008):
     reads:   audience, run_config, outline, research_notes, draft, revision_count

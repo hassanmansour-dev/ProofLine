@@ -48,6 +48,7 @@ Open from the earlier Week 0–1:
 
 What the first live run surfaced (fix in the step named, not before):
 - The writer describes the critic loop as live, but it isn't wired until C8 → C8
+  (wired in C8, task 1)
 - 195 words is too long for a 1-minute video: revisit the default `max_words`
   and the words-per-minute estimate → C8
 - Weak hook → fill in `docs/BRAND_VOICE.md` (above)

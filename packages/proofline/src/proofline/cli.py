@@ -1,6 +1,6 @@
 """CLI: `proofline run --topic ... --audience ...` prints the finished script.
 
-It runs the linear graph with no checkpointer. There is no review prompt: approval
+It runs the pipeline graph (with its critic loop) with no checkpointer. There is no review prompt: approval
 happens in the supervisor's gate and inbox (C2, C4; ADR-0014).
 
 `.env` is loaded first, from the working directory (the same file Settings reads):
@@ -27,7 +27,7 @@ app = typer.Typer(no_args_is_help=True, help="Proofline: topic → sourced short
 
 
 async def run_pipeline(topic: str, audience: str, deps: Deps) -> FinalScript:
-    """One linear run: planner → researcher → writer → finalizer."""
+    """One run: planner → researcher → writer ⇄ critic → finalizer."""
     settings = deps.settings
     graph = build_graph().compile()
     out = await graph.ainvoke(
