@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -267,12 +268,18 @@ class Inbox:
         the answer is invalid (wrong action, feedback too long, approving a "never"
         action). After Refused the run is still paused; answer again with a new call.
         """
-        lock = self._locks.setdefault(thread_id, asyncio.Lock())
-        self._lock_users[thread_id] = self._lock_users.get(thread_id, 0) + 1
-        try:
+        async with self._thread_lock(thread_id) as lock:
             return await self._decide_locked(
                 lock, thread_id, interrupt_id, action_id, approved, feedback
             )
+
+    @asynccontextmanager
+    async def _thread_lock(self, thread_id: str) -> AsyncIterator[asyncio.Lock]:
+        """The thread's lock (not yet held), dropped once nobody holds or waits for it."""
+        lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        self._lock_users[thread_id] = self._lock_users.get(thread_id, 0) + 1
+        try:
+            yield lock
         finally:
             self._lock_users[thread_id] -= 1
             if not self._lock_users[thread_id]:
@@ -409,8 +416,7 @@ class Inbox:
 
     async def retry(self, thread_id: str) -> None:
         """Continue a stopped run in the background. AlreadyDecided if it isn't stopped."""
-        lock = self._locks.setdefault(thread_id, asyncio.Lock())
-        async with lock:
+        async with self._thread_lock(thread_id) as lock, lock:
             status = await self._status(thread_id)
             if status is None or status.state != "stopped":
                 raise AlreadyDecided(f"run {thread_id} is not stopped")

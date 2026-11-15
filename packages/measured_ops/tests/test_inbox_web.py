@@ -566,3 +566,16 @@ def test_lifespan_starts_recovery_and_closes_revisions(
 
 async def _note(seen: list[str], what: str) -> None:
     seen.append(what)
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "nan", "inf"])
+def test_a_bad_revision_timeout_is_refused(bad: str) -> None:
+    from measured_ops.inbox.settings import InboxConfigError
+
+    env = {
+        "MEASURED_OPS_INBOX_PASSPHRASE_HASH": hash_passphrase(PASSPHRASE, n=2**10),
+        "MEASURED_OPS_INBOX_SESSION_SECRET": "k" * 40,
+        "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": bad,
+    }
+    with pytest.raises(InboxConfigError, match="REVISION_TIMEOUT_S"):
+        InboxSettings.from_env(env)

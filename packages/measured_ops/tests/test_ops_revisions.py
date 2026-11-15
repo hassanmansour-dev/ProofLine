@@ -194,3 +194,44 @@ async def test_an_approved_action_stays_ready_when_its_round_is_revised() -> Non
     assert agent.runs == 2
     assert [a.preview for a in out["ready"]] == ["Post B."]
     assert {a.task_id for a in out["pending_actions"]} == {agent.tasks[1].id}
+
+
+async def test_an_agent_that_reuses_a_decided_action_id_fails_loudly() -> None:
+    # Review nit: rejected_with_feedback keys on action ids, so a reused id could match
+    # an earlier round's rejection and revise again. Fixed ids are refused.
+    from typing import Any as _Any
+
+    from langgraph.graph import END, START, StateGraph
+    from ops_fakes import _EchoState, make_action
+
+    from measured_ops import AgentInput, AgentOutput, AgentResult
+    from measured_ops.agent import AgentContractError
+
+    class FixedIdAgent:
+        name = "echo"
+
+        def build(self) -> _Any:
+            async def propose(state: _EchoState) -> dict[str, _Any]:
+                task = state["task"]
+                action = make_action(task.id, id="post-1")
+                return {
+                    "result": AgentResult(
+                        task_id=task.id,
+                        agent="echo",
+                        status="succeeded",
+                        summary="x",
+                        actions=(action,),
+                    )
+                }
+
+            b = StateGraph(_EchoState, input_schema=AgentInput, output_schema=AgentOutput)
+            b.add_node("propose", propose)
+            b.add_edge(START, "propose")
+            b.add_edge("propose", END)
+            return b.compile()
+
+    app = _app(FixedIdAgent())  # type: ignore[arg-type]
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
+
+    with pytest.raises(AgentContractError, match="post-1"):
+        await app.ainvoke(_answer(out, approved=False, feedback="Again."), CFG)

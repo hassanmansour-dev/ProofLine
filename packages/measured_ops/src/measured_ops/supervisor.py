@@ -252,6 +252,14 @@ def build_supervisor(
         return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
+        decided = {d.action_id for d in state.get("decisions") or []}
+        reused = sorted(a.id for a in state["results"][-1].actions if a.id in decided)
+        if reused:
+            # Revisions key on action ids: a reused id could match an earlier round's
+            # rejection and revise again (C8 review). Ids must be new every round.
+            raise AgentContractError(
+                f"agent {state['task'].agent!r} reused already-decided action ids {reused}"
+            )
         scored: list[PendingAction] = []
         for action in state["results"][-1].actions:
             scores = _merge(

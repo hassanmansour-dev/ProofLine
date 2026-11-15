@@ -5,6 +5,7 @@ local env file, never in this repo."""
 from __future__ import annotations
 
 import fcntl
+import math
 import os
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -54,6 +55,11 @@ class InboxSettings:
             raise InboxConfigError(
                 f"{PREFIX}SESSION_SECRET must be at least {MIN_SECRET_CHARS} characters "
                 '(python -c "import secrets; print(secrets.token_urlsafe(48))")'
+            )
+        if not math.isfinite(self.revision_timeout_s) or self.revision_timeout_s <= 0:
+            raise InboxConfigError(
+                f"{PREFIX}REVISION_TIMEOUT_S must be a positive number of seconds, "
+                f"got {self.revision_timeout_s}"
             )
 
     @classmethod

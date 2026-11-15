@@ -314,3 +314,20 @@ def test_revision_timeout_from_env_needs_no_secrets(monkeypatch: pytest.MonkeyPa
     assert revision_timeout_from_env() == 600.0
     monkeypatch.setenv("MEASURED_OPS_INBOX_REVISION_TIMEOUT_S", "42")
     assert revision_timeout_from_env() == 42.0
+
+
+async def test_retry_does_not_leak_its_lock() -> None:
+    agent = GatedAgent()
+    graph = _graph(_saver(), agent)
+    await _paused(graph, "t")
+    inbox = Inbox(graph, load_policy(), callbacks=[], revision_timeout_s=0.05)
+    await _reject(inbox, "t")
+    await inbox.wait_idle()
+
+    inbox.revision_timeout_s = 30
+    agent.release.set()
+    await inbox.retry("t")
+    await inbox.wait_idle()
+
+    assert inbox._locks == {}
+    assert inbox._lock_users == {}
