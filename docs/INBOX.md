@@ -50,22 +50,31 @@ uv run python -m measured_ops.inbox serve            # 127.0.0.1:8765, one proce
 `uvicorn --workers N`: decisions are serialised in memory, and a second process
 refuses to start (it can't take the lock file).
 
-Check it from the machine itself: `curl -I http://127.0.0.1:8765/login` → `200`.
+Check it from the machine itself:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/login   # → 200
+```
+
+(`curl -I` sends `HEAD`; `/login` answers it too, but the line above checks the
+same `GET` your phone sends.)
 
 ## 3. Reach it from your phone with Tailscale Serve
 
-Run Tailscale in **one** place only. Tailscale's WSL guide warns that running it on
-both the Windows host and inside WSL 2 breaks traffic, and recommends the Windows host.
+**Use Tailscale on the Windows host.** It's what Tailscale's WSL guide recommends and
+what the phone check passed with (2026-11-14). Run Tailscale in **one** place only:
+running it on both the Windows host and inside WSL 2 breaks traffic.
 
-**Option A: Tailscale on the Windows host (recommended by Tailscale).**
+**Option A: Tailscale on the Windows host (recommended).**
 1. Install Tailscale for Windows and sign in.
-2. Check that Windows reaches the inbox in WSL: in PowerShell,
-   `curl.exe -I http://127.0.0.1:8765/login` → `200`. (WSL 2 forwards localhost to
-   Windows by default. If this fails, check `localhostForwarding` in `.wslconfig`, or
-   use option B.)
+2. Check that Windows reaches the inbox in WSL. In PowerShell (`curl.exe`, not the
+   `curl` alias, and `NUL` instead of `/dev/null`):
+   `curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:8765/login` → `200`.
+   (WSL 2 forwards localhost to Windows by default. If this fails, check
+   `localhostForwarding` in `.wslconfig`, or use option B.)
 3. In PowerShell: `tailscale serve --bg --https=443 http://127.0.0.1:8765`
 
-**Option B: Tailscale inside WSL 2 (only if Windows doesn't run it).**
+**Option B: Tailscale inside WSL 2 (only if Windows can't run it).**
 1. Enable systemd in WSL if it isn't (`tailscaled` runs as a service): add
    `[boot]` / `systemd=true` to `/etc/wsl.conf`, then `wsl --shutdown` from PowerShell.
 2. `curl -fsSL https://tailscale.com/install.sh | sh`
