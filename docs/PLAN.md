@@ -56,8 +56,8 @@ From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only i
 the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
 `render.revision_context`), with a test.
 
-From C4 (ADR-0017), for C8: **edit** in the inbox (approve an edited preview). Needs an
-ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by
+From C4 (ADR-0017), moved to **C9** (Hassan, 2026-11-14): **edit** in the inbox (approve
+an edited preview). Needs an ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by
 the eval/guard node (C7) before it can be approved, and what a preview becomes when the
 action runs (C5). Until then, reject with feedback.
 
@@ -176,7 +176,7 @@ table on his phone. Decisions: ADR-0017.
 **Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
 usable on the phone.
 
-### C7 · Eval/guard node v0 using `measured_evals` (GROW-86) ◀ CURRENT
+### C7 · Eval/guard node v0 using `measured_evals` (GROW-86) ✅ (PR #12)
 
 Waits on: C4. Scope: quality, injection and PII checks, plus tracing and cost per
 agent, all in `measured_evals`. Rules: `measured_evals` never imports `proofline` or
@@ -205,9 +205,16 @@ if they differ; allowlisted addresses passed per call from private config.
   per call; PII masked in LangSmith traces; blocked-action log without the target
 - [x] Green in CI on the PR (#12: Postgres e2e ran, 483 passed, 0 skipped, after the review fixes)
 
-### C8 · Content agent v0 (GROW-87)
+### C8 · Content agent v0 (GROW-87) ◀ CURRENT
 
 Waits on: C6 and C7. **First useful slice: get it live as early as possible.**
+Started before C5/C6 with Hassan's OK (2026-11-14): topics go in by hand with
+`proofline propose`; C6 takes over task creation later. Decisions (Hassan, 2026-11-14):
+one `approve_draft` action per topic, its preview holding the post, the clip script and
+the lesson outline; rejections with feedback revise in the same thread, at most 3 times
+(ADR-0019, written before the supervisor changes); inbox edit moves to C9; no
+supervisor-level retry (network nodes keep their own); the judge log holds action id,
+critic scores, eval scores and the decision only.
 
 - [ ] One topic → LinkedIn post + clip script + lesson outline, built from the
   existing pipeline nodes; output goes through the eval node to the inbox
@@ -223,6 +230,9 @@ with real traces (GROW-34), and the case study's traces (GROW-16).
 
 Waits on: C8. Approve or edit 5+ drafts on the phone; log what's wrong as comments.
 Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
+
+- [ ] Inbox edit: approve an edited preview, re-checked by the eval node first (moved
+  from C8; needs an ADR, see the note under "Already built")
 
 ### C10 · Staging as scheduled jobs (GROW-89)
 
