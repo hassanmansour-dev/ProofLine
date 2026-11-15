@@ -91,3 +91,17 @@ def single_process_lock(path: Path) -> Iterator[None]:
                 "the inbox runs as a single process"
             ) from exc
         yield
+
+
+def env_path(name: str) -> Path | None:
+    raw = os.environ.get(name)
+    return Path(raw) if raw else None
+
+
+def checkpointer_url() -> str:
+    """The configured checkpointer URL; creates the SQLite file's directory if needed."""
+    default = InboxSettings(passphrase_hash="", session_secret="").checkpointer_url
+    url = os.environ.get(f"{PREFIX}CHECKPOINTER_URL", default)
+    if url.startswith("sqlite:///"):
+        Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
+    return url

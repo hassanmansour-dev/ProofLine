@@ -14,9 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
-import os
 import sys
-from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
 
@@ -24,36 +22,16 @@ from measured_ops.checkpoint import open_checkpointer
 from measured_ops.contracts import Task, initial_ops_state
 from measured_ops.echo import EchoAgent
 from measured_ops.inbox.auth import hash_passphrase
-from measured_ops.inbox.settings import PREFIX, InboxConfigError, InboxSettings
+from measured_ops.inbox.settings import checkpointer_url, env_path
 from measured_ops.policy import load_policy
-from measured_ops.prices import load_model_prices
 from measured_ops.supervisor import build_supervisor
 from measured_ops.tracing import masked_tracing_callbacks
 
-HOST = "127.0.0.1"  # never 0.0.0.0: the phone reaches it over Tailscale only
 DEMO_GOALS = (
     "Say why every AI loop needs an exit.",
     "Explain when not to use agents, in one example.",
     "Show what an approval gate costs per run.",
 )
-
-
-def _policy_path() -> Path | None:
-    raw = os.environ.get("MEASURED_OPS_POLICY_PATH")
-    return Path(raw) if raw else None
-
-
-def _prices_path() -> Path | None:
-    raw = os.environ.get("MEASURED_OPS_PRICES_PATH")
-    return Path(raw) if raw else None
-
-
-def _checkpointer_url() -> str:
-    default = InboxSettings(passphrase_hash="", session_secret="").checkpointer_url
-    url = os.environ.get(f"{PREFIX}CHECKPOINTER_URL", default)
-    if url.startswith("sqlite:///"):
-        Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-    return url
 
 
 def cmd_hash() -> int:
@@ -70,9 +48,9 @@ def cmd_hash() -> int:
 
 async def _seed(url: str, count: int) -> list[str]:
     async with open_checkpointer(url) as saver:
-        graph = build_supervisor([EchoAgent()], load_policy(_policy_path())).compile(
-            checkpointer=saver
-        )
+        graph = build_supervisor(
+            [EchoAgent()], load_policy(env_path("MEASURED_OPS_POLICY_PATH"))
+        ).compile(checkpointer=saver)
         threads = []
         for i in range(count):
             task = Task(agent="echo", goal=DEMO_GOALS[i % len(DEMO_GOALS)])
@@ -87,31 +65,15 @@ async def _seed(url: str, count: int) -> list[str]:
 
 
 def cmd_seed(count: int) -> int:
-    for thread_id in asyncio.run(_seed(_checkpointer_url(), count)):
+    for thread_id in asyncio.run(_seed(checkpointer_url(), count)):
         print(f"paused at the gate: {thread_id}")
     return 0
 
 
 def cmd_serve() -> int:
-    import uvicorn
+    from measured_ops.inbox.server import serve  # needs the `inbox` extra
 
-    from measured_ops.inbox.web import create_inbox_app
-
-    _checkpointer_url()  # create the SQLite directory if needed
-    try:
-        settings = InboxSettings.from_env()
-    except InboxConfigError as exc:
-        print(f"inbox: {exc}", file=sys.stderr)
-        return 2
-    app = create_inbox_app(
-        settings,
-        [EchoAgent()],
-        load_policy(_policy_path()),
-        prices=load_model_prices(_prices_path()),
-    )
-    # One worker, enforced again by the lock file: decision locks live in this process.
-    uvicorn.run(app, host=HOST, port=settings.port, workers=1, proxy_headers=False)
-    return 0
+    return serve([EchoAgent()])
 
 
 def main(argv: list[str] | None = None) -> int:

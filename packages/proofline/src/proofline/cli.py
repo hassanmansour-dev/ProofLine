@@ -76,6 +76,35 @@ def show(thread_id: str) -> None:
     raise NotImplementedError("C2 — needs the checkpointer")
 
 
+def _deps_or_exit() -> Deps:
+    """Load .env, settings and dependencies; exit 1 with the reason if they're unusable."""
+    load_dotenv(find_dotenv(usecwd=True))
+    try:
+        settings = get_settings()
+        settings.run_config()  # validate bounds now, not mid-run
+        return build_deps(settings)
+    except (ValueError, RuntimeError) as exc:  # bad settings, unknown provider, missing key
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def inbox() -> None:
+    """Serve the approval inbox with the content agent (127.0.0.1, one process).
+
+    Revisions run the content agent in this process (ADR-0019), so it needs the same
+    keys as `proofline run`. Settings: docs/INBOX.md. The demo echo agent is served too,
+    so runs from `python -m measured_ops.inbox seed` still resume.
+    """
+    from measured_ops.echo import EchoAgent
+    from measured_ops.inbox import server  # needs measured-ops[inbox]
+    from proofline.agent import ContentAgent
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    deps = _deps_or_exit()
+    raise typer.Exit(code=server.serve([ContentAgent(deps), EchoAgent()]))
+
+
 @app.command()
 def mermaid() -> None:
     """Print the graph as mermaid."""

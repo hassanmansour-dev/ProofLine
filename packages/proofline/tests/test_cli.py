@@ -58,3 +58,20 @@ def test_run_says_when_research_is_stubbed(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
     result = CliRunner().invoke(cli.app, ["run", "--topic", "anything"])
     assert "research is stubbed" in result.stderr
+
+
+def test_inbox_serves_the_content_agent_and_the_demo_echo_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.inbox import server
+
+    served: list[list[str]] = []
+    monkeypatch.setattr(
+        server, "serve", lambda agents, **kw: served.append([a.name for a in agents]) or 0
+    )
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path))
+
+    result = CliRunner().invoke(cli.app, ["inbox"])
+
+    assert result.exit_code == 0, result.output
+    assert served == [["content", "echo"]]

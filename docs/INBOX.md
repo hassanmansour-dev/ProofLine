@@ -48,6 +48,10 @@ uv run python -m measured_ops.inbox seed --count 3   # demo runs that pause at t
 uv run python -m measured_ops.inbox serve            # 127.0.0.1:8765, one process
 ```
 
+With the content agent (C8): `uv run proofline inbox` serves the same inbox with the
+content agent (and the demo echo agent), so rejecting with feedback can revise a draft
+in this process. It needs the same keys as `proofline run`.
+
 `serve` always binds `127.0.0.1` and runs one worker. Don't start it with
 `uvicorn --workers N`: decisions are serialised in memory, and a second process
 refuses to start (it can't take the lock file).

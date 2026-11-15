@@ -59,6 +59,7 @@ uv run mypy
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
 uv run uvicorn proofline.api:app --reload                       # API (/health only)
 uv run python -m measured_ops.inbox serve                       # approval inbox, 127.0.0.1 (docs/INBOX.md)
+uv run proofline inbox                                          # the same inbox with the content agent (C8)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 
@@ -101,8 +102,9 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     tracing.py      masked_tracing_callbacks(): LangSmith tracer with PII redacted (C7)
     checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
     echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
-    inbox/          approval inbox (C4, ADR-0017): service.py (list/decide), web.py (FastAPI,
-                    passphrase sign-in), __main__.py (hash | seed | serve); `inbox` extra
+    inbox/          approval inbox (C4, ADR-0017): service.py (list/decide, background
+                    revisions C8), web.py (FastAPI, passphrase sign-in), server.py (serve(agents)),
+                    __main__.py (hash | seed | serve); `inbox` extra
 packages/measured_evals/    standalone eval + security package: guard-v0 checks + usage cost (C7), metrics in GROW-14
   src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
 scripts/pii_scan.py         pre-commit + CI PII scan for this public repo (with gitleaks; C0)
