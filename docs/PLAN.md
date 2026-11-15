@@ -203,7 +203,7 @@ if they differ; allowlisted addresses passed per call from private config.
   (SQLite + Postgres)
 - [x] PR #12 review: Sonnet 5.5 cache reads 0.05x; Haiku 5.5 long-context tier priced
   per call; PII masked in LangSmith traces; blocked-action log without the target
-- [x] Green in CI on the PR (#12: Postgres e2e ran, 463 passed, 0 skipped)
+- [x] Green in CI on the PR (#12: Postgres e2e ran, 483 passed, 0 skipped, after the review fixes)
 
 ### C8 · Content agent v0 (GROW-87)
 
