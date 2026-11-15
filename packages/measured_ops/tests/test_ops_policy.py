@@ -203,3 +203,19 @@ def test_missing_eval_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="measured_ops.policy"):
         assert MATRIX_POLICY.decide(action) == "approval"
     assert "no eval scores" in caplog.text
+
+
+def test_blocked_action_log_names_id_and_type_never_the_target(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # a target can be an address or a phone number (message_person, ...): keep it out
+    action = make_action(
+        "t1", type="bulk_export_personal_data", target="jane.doe@example.com, (514) 555-0123"
+    )
+    with caplog.at_level(logging.DEBUG, logger="measured_ops"):
+        assert load_policy().decide(action) == "never"
+
+    assert action.id in caplog.text
+    assert "bulk_export_personal_data" in caplog.text
+    assert "jane.doe" not in caplog.text
+    assert "555-0123" not in caplog.text

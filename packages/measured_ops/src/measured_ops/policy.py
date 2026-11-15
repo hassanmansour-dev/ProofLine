@@ -57,12 +57,11 @@ class ApprovalPolicy(BaseModel):
         """The gate's answer for one proposed action. Logs every "never" at WARNING."""
         decision = self.decide_type(action.type)
         if decision == "never":
+            # id, type and task only: a target can be an address or a phone number
             log.warning(
-                "policy: blocked action %s (type=%s, target=%s, task=%s): "
-                "this action type is never allowed",
+                "policy: blocked action %s (type=%s, task=%s): this action type is never allowed",
                 action.id,
                 action.type,
-                action.target,
                 action.task_id,
             )
             return "never"
