@@ -123,7 +123,8 @@ Never run `tailscale funnel` for this port.
 - "In progress" lists runs not waiting for you. "Revision stopped" means a revision
   hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
   continues stopped runs once when it starts. "In progress elsewhere" is a run another
-  process is working on (e.g. `proofline propose`); it's left alone.
+  process is working on (e.g. `proofline propose`, which gives up after the same timeout);
+  it's left alone, and shows as stopped only after twice the timeout.
 - An action marked **Blocked by policy** was paused before the policy changed to
   "never". It can only be rejected.
 - Tapping twice is safe: the second tap says "Already decided".

@@ -196,3 +196,23 @@ def test_propose_reports_a_failed_draft(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert result.exit_code == 1
     assert "topic" in result.output
+
+
+def test_propose_gives_up_after_the_revision_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    class HangingLLM(FakeLLM):
+        async def generate(self, *args: object, **kwargs: object) -> object:
+            await asyncio.sleep(30)
+            raise AssertionError("unreachable")
+
+    monkeypatch.setenv("MEASURED_OPS_INBOX_CHECKPOINTER_URL", f"sqlite:///{tmp_path / 'o.db'}")
+    monkeypatch.setenv("MEASURED_OPS_INBOX_REVISION_TIMEOUT_S", "0.2")
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, HangingLLM()))
+
+    result = CliRunner().invoke(cli.app, ["propose", "--topic", "Loops need exits"])
+
+    assert result.exit_code == 1
+    assert "timed out after 0.2s" in result.output

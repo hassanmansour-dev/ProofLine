@@ -93,6 +93,17 @@ def single_process_lock(path: Path) -> Iterator[None]:
         yield
 
 
+def revision_timeout_from_env() -> float:
+    """The revision timeout without the inbox's secrets: `proofline propose` uses it too,
+    so a run in another process is cut off before the inbox would retry it."""
+    raw = os.environ.get(f"{PREFIX}REVISION_TIMEOUT_S")
+    return (
+        float(raw)
+        if raw
+        else InboxSettings(passphrase_hash="", session_secret="").revision_timeout_s
+    )
+
+
 def env_path(name: str) -> Path | None:
     raw = os.environ.get(name)
     return Path(raw) if raw else None

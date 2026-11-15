@@ -99,7 +99,8 @@ round that has a rejection with feedback revises in the background too. This nee
   the inbox's own work cut off by a restart; the inbox continues it with
   `ainvoke(None)`. That is safe there because no interrupt is pending (ADR-0016's rule
   forbids it only at a pending gate). A first pass between nodes may be a `proofline
-  propose` run in another process: it counts as stopped only once it's stale. A thread
+  propose` run in another process, which runs under the same timeout: it counts as
+  stopped only after twice the timeout. A thread
   that fails is logged and left for a human.
 - **Agent runs never checkpoint** (the supervisor sets `checkpointer=False` on every
   agent graph; the content agent's pipeline too): agents' private state types aren't in

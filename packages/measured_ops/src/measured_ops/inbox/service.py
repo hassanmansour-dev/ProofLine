@@ -12,17 +12,20 @@
 - Each item carries the eval node's checks (from the gate payload: what the gate
   showed) and the run's tokens and cost per agent (C7, ADR-0018). A run paused
   before C7 has no checks; it still lists, as "not evaluated".
-- Revisions run in the background (C8, ADR-0019). A rejection **with feedback** is
-  checked at once (right action, still waiting), then the resume runs as a background
-  task, so the phone gets an answer in a second while the agent revises for minutes.
-  At most one revision runs at a time (a semaphore); each has a timeout. While queued
-  or running, the thread is not "waiting" (a second tap is `AlreadyDecided`) and shows
-  in `in_progress()`. A run whose latest checkpoint sits between nodes and is older
-  than the timeout was cut off (timeout, error, restart): it shows as "stopped",
-  `retry()` continues it, and `start()` continues each one once. A newer one may be a
-  run in progress in another process (`proofline propose`): "elsewhere", left alone.
-  Continuing uses `ainvoke(None)`, which is safe there because no interrupt is pending
-  (ADR-0016 forbids it only at the gate). C10 moves this to a worker with budget caps.
+- Revisions run in the background (C8, ADR-0019). `decide` commits the gate step first
+  (`interrupt_after=["gate"]`), so the decision is saved before the phone gets its
+  answer; if the next step is `revise`, the rest runs as a background task while the
+  agent revises for minutes. At most one revision runs at a time (a semaphore); each has
+  a timeout. While queued or running, the thread is not "waiting" (a second tap is
+  `AlreadyDecided`) and shows in `in_progress()`.
+- "Stopped" (cut off: timeout, error, restart): a run that stopped here, or after a gate
+  step (next `revise`, or a gate with no question pending), or between nodes on a
+  revision task: only the inbox makes those. A first pass between nodes may be
+  `proofline propose` in another process, which runs under the same timeout: it's
+  "elsewhere" (left alone) until twice the timeout has passed. `retry()` continues a
+  stopped run and `start()` continues each one once, with `ainvoke(None)`: safe there
+  because no interrupt is pending (ADR-0016 forbids it only at a pending gate). C10
+  moves this to a worker with budget caps.
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -385,8 +388,9 @@ class Inbox:
         ):
             return RunStatus(thread_id, task.agent, task.goal, "stopped")
         # A first pass between nodes may be a `proofline propose` run in another process.
+        # It runs under the same timeout, so twice that is a safe margin before retrying.
         age = _age_s(snap.created_at)
-        stale = age is None or age > self.revision_timeout_s
+        stale = age is None or age > 2 * self.revision_timeout_s
         state: RunState = "stopped" if stale else "elsewhere"
         return RunStatus(thread_id, task.agent, task.goal, state)
 

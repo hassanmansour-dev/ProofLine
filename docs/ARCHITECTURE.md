@@ -408,7 +408,7 @@ adds its own case.
   `gate` → synchronously (it pauses at once); a semaphore runs one at a time, each under
   `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` (default 600). `in_progress()` lists runs
   not waiting: running, queued, stopped (cut off here; after a gate step; between nodes
-  on a revision task; or a stale first pass) and elsewhere (a fresh first pass: maybe
+  on a revision task; or a first pass older than twice the timeout) and elsewhere (a fresh first pass: maybe
   `proofline propose` in another process). Agent runs never checkpoint
   (`checkpointer=False`), so a cut-off run restarts its agent from the start. `retry()` continues a
   stopped run with `ainvoke(None)` (safe: no interrupt pending); the lifespan calls

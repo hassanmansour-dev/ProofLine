@@ -286,3 +286,31 @@ async def test_close_cancels_running_revisions() -> None:
     await inbox.aclose()
 
     assert agent.active == 0
+
+
+@pytest.mark.parametrize(("age_factor", "state"), [(1.5, "elsewhere"), (2.5, "stopped")])
+async def test_a_first_pass_is_stale_only_after_twice_the_timeout(
+    monkeypatch: pytest.MonkeyPatch, age_factor: float, state: str
+) -> None:
+    # `proofline propose` runs under the same timeout, so a run still going elsewhere is
+    # always cut off well before the inbox would offer to retry it.
+    from measured_ops.inbox import service
+
+    saver = _saver()
+    graph = _graph(saver, GatedAgent(fail_first=True))
+    with pytest.raises(RuntimeError):
+        await _paused(graph, "t")
+    inbox = Inbox(graph, load_policy(), callbacks=[], revision_timeout_s=100)
+    monkeypatch.setattr(service, "_age_s", lambda created_at: 100 * age_factor)
+
+    [status] = await inbox.in_progress()
+    assert status.state == state
+
+
+def test_revision_timeout_from_env_needs_no_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    from measured_ops.inbox.settings import revision_timeout_from_env
+
+    monkeypatch.delenv("MEASURED_OPS_INBOX_REVISION_TIMEOUT_S", raising=False)
+    assert revision_timeout_from_env() == 600.0
+    monkeypatch.setenv("MEASURED_OPS_INBOX_REVISION_TIMEOUT_S", "42")
+    assert revision_timeout_from_env() == 42.0

@@ -98,7 +98,11 @@ async def propose_topic(topic: str, audience: str, deps: Deps) -> tuple[str, boo
     Returns (thread id, paused at the gate, the agent's summary or error)."""
     from measured_ops import Task, initial_ops_state
     from measured_ops.checkpoint import open_checkpointer
-    from measured_ops.inbox.settings import checkpointer_url, env_path
+    from measured_ops.inbox.settings import (
+        checkpointer_url,
+        env_path,
+        revision_timeout_from_env,
+    )
     from measured_ops.judge_log import judge_log_from_env
     from measured_ops.policy import load_policy
     from measured_ops.supervisor import build_supervisor
@@ -114,14 +118,23 @@ async def propose_topic(topic: str, audience: str, deps: Deps) -> tuple[str, boo
     policy = load_policy(env_path("MEASURED_OPS_POLICY_PATH"))
     async with open_checkpointer(checkpointer_url()) as saver:
         graph = build_supervisor([agent], policy).compile(checkpointer=saver)
-        out = await graph.ainvoke(
-            initial_ops_state(task),
-            {
-                "configurable": {"thread_id": thread_id},
-                "recursion_limit": 40,
-                "callbacks": masked_tracing_callbacks(),  # PII-masked traces (ADR-0018)
-            },
-        )
+        timeout = revision_timeout_from_env()
+        try:
+            # The inbox's revision timeout: a run still going here is cut off before the
+            # inbox (stale only after twice that) would offer to retry it (ADR-0019).
+            out = await asyncio.wait_for(
+                graph.ainvoke(
+                    initial_ops_state(task),
+                    {
+                        "configurable": {"thread_id": thread_id},
+                        "recursion_limit": 40,
+                        "callbacks": masked_tracing_callbacks(),  # PII-masked (ADR-0018)
+                    },
+                ),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            return thread_id, False, f"timed out after {timeout:g}s"
     result = out["results"][-1]
     return thread_id, bool(out.get("__interrupt__")), result.error or result.summary
 
