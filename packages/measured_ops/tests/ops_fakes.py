@@ -180,12 +180,15 @@ class LLMAgent:
     names and metadata the supervisor gives each agent run.
     """
 
-    def __init__(self, replies: list[Any], *, name: str = "echo") -> None:
+    def __init__(
+        self, replies: list[Any], *, name: str = "echo", action_type: str = "draft_content"
+    ) -> None:
         from langchain_core.language_models import GenericFakeChatModel
 
         self.name = name
         self.model = GenericFakeChatModel(messages=iter(replies))
         self.calls = len(replies)
+        self.action_type = action_type
         self.seen_config: dict[str, Any] = {}
 
     def build(self) -> AgentGraph:
@@ -199,7 +202,7 @@ class LLMAgent:
                 # its own config, without callbacks, like proofline's adapter
                 await agent.model.ainvoke("hi", config={"run_name": "llm", "tags": ["inner"]})
             task = state["task"]
-            action = make_action(task.id, type="draft_content", risk_level="low", preview="ok")
+            action = make_action(task.id, type=agent.action_type, risk_level="low", preview="ok")
             result = AgentResult(
                 task_id=task.id,
                 agent=agent.name,

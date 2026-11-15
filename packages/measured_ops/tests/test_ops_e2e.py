@@ -97,3 +97,51 @@ async def test_refused_answer_after_restart_keeps_the_run_paused(
 
     assert [a.id for a in done["ready"]] == [paused["action_id"]]
     assert [d.action_id for d in done["decisions"]] == [paused["action_id"]]
+
+
+# ---- the eval node across a restart (C7, ADR-0018) ----------------------------------------
+
+
+async def test_failed_check_pauses_an_auto_action_and_survives_restart(
+    checkpointer_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    thread_id = f"e2e-eval-{uuid4().hex}"
+    goal = "Reply to jane.doe@example.com about loops."
+
+    paused = pause_in_another_process(checkpointer_url, thread_id, "draft_content", goal)
+    decision = ApprovalDecision(action_id=paused["action_id"], approved=True)
+    cfg: Any = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
+    async with open_checkpointer(checkpointer_url) as saver:
+        app = build_supervisor([EchoAgent("draft_content")], load_policy()).compile(
+            checkpointer=saver
+        )
+        done: dict[str, Any] = await app.ainvoke(Command(resume=decision.model_dump()), cfg)
+
+    assert paused["type"] == "draft_content"  # an "auto" row, raised to approval
+    assert paused["eval"]["failing"] == ["pii"]
+    assert paused["eval"]["reasons"] == {"pii": "email found"}
+    [ready] = done["ready"]
+    assert ready.eval_scores is not None
+    assert ready.eval_scores.failing == ("pii",)
+
+
+async def test_clean_auto_action_runs_without_pausing(
+    checkpointer_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    from measured_ops import Task, initial_ops_state
+
+    cfg: Any = {"configurable": {"thread_id": f"e2e-auto-{uuid4().hex}"}, "recursion_limit": 40}
+    async with open_checkpointer(checkpointer_url) as saver:
+        app = build_supervisor([EchoAgent("draft_content")], load_policy()).compile(
+            checkpointer=saver
+        )
+        out: dict[str, Any] = await app.ainvoke(
+            initial_ops_state(Task(agent="echo", goal="Say why loops need exits.")), cfg
+        )
+
+    assert "__interrupt__" not in out
+    [ready] = out["ready"]
+    assert ready.eval_scores is not None
+    assert ready.eval_scores.passed

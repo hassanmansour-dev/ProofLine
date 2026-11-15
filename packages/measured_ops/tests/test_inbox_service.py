@@ -354,3 +354,82 @@ async def test_refusal_reasons_read_plainly() -> None:
         await inbox.decide("t", interrupt_id=item.interrupt_id, action_id="x", approved=True)
 
     assert str(refused.value).startswith("decision is for action x")
+
+
+# ---- eval scores and cost on each waiting action (C7, ADR-0018) -------------------------
+
+
+async def test_waiting_action_shows_its_checks_with_reasons() -> None:
+    saver = _saver()
+    leaky = ("draft_content", "low", "Mail jane.doe@example.com: https://example.com/?a=1")
+    await _start(_graph(saver, ScriptedAgent([leaky])), "t")
+    inbox = Inbox(_graph(saver, ScriptedAgent()), load_policy())
+
+    [item] = await inbox.list_pending()
+
+    assert item.eval is not None
+    assert item.eval.passed is False
+    assert item.eval.evaluator == "guard-v0"
+    assert [(c.name, c.passed, c.reason) for c in item.eval.checks] == [
+        ("quality", True, None),
+        ("injection", False, "link with query parameters"),
+        ("pii", False, "email found"),
+    ]
+
+
+async def test_waiting_action_shows_cost_per_agent() -> None:
+    from langchain_core.messages import AIMessage
+    from ops_fakes import LLMAgent
+
+    from measured_evals import ModelPrice
+
+    reply = AIMessage(
+        content="ok",
+        usage_metadata={"input_tokens": 1_000_000, "output_tokens": 0, "total_tokens": 1_000_000},
+        response_metadata={"model_name": "model-a"},
+    )
+    saver = _saver()
+    await _start(_graph(saver, LLMAgent([reply], action_type="publish_public")), "t")
+    prices = {
+        "model-a": ModelPrice(
+            input=4, output=20, cache_read=0.2, cache_write_5m=5, cache_write_1h=8
+        )
+    }
+    inbox = Inbox(_graph(saver, ScriptedAgent()), load_policy(), prices=prices)
+
+    [item] = await inbox.list_pending()
+
+    assert [(c.agent, c.tokens, c.cost) for c in item.costs] == [("echo", 1_000_000, 4.0)]
+
+
+async def test_unpriced_model_shows_cost_unknown() -> None:
+    from langchain_core.messages import AIMessage
+    from ops_fakes import LLMAgent
+
+    reply = AIMessage(
+        content="ok",
+        usage_metadata={"input_tokens": 10, "output_tokens": 0, "total_tokens": 10},
+        response_metadata={"model_name": "not-in-the-table"},
+    )
+    saver = _saver()
+    await _start(_graph(saver, LLMAgent([reply], action_type="publish_public")), "t")
+    inbox = Inbox(_graph(saver, ScriptedAgent()), load_policy())
+
+    [item] = await inbox.list_pending()
+
+    assert [(c.tokens, c.cost) for c in item.costs] == [(10, None)]
+
+
+async def test_run_paused_before_c7_has_no_eval_and_still_lists() -> None:
+    saver = _saver()
+    graph = _graph(saver, ScriptedAgent([APPROVAL]))
+    await _start(graph, "old")
+    # simulate a pre-C7 pause: the gate payload had no "eval" key
+    snap = await graph.aget_state(_cfg("old"))
+    payload = dict(snap.interrupts[0].value)
+    payload.pop("eval")
+    inbox = Inbox(graph, load_policy())
+
+    item = inbox._item("old", snap, payload)
+
+    assert item.eval is None

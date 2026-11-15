@@ -77,6 +77,7 @@ async def test_failed_check_raises_an_auto_action_to_approval() -> None:
     assert intr.value["eval"] == {
         "evaluator": "guard-v0",
         "passed": False,
+        "failing": ["pii"],
         "scores": {"quality": 1.0, "injection": 1.0, "pii": 0.0},
         "reasons": {"pii": "email found, phone number found"},
     }

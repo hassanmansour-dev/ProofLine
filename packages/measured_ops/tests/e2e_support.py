@@ -15,10 +15,11 @@ from typing import Any
 CHILD = Path(__file__).with_name("ops_e2e_child.py")
 
 
-def pause_in_another_process(url: str, thread_id: str) -> dict[str, Any]:
-    """Run the child; return the gate's interrupt payload it printed."""
+def pause_in_another_process(url: str, thread_id: str, *extra: str) -> dict[str, Any]:
+    """Run the child; return the gate's interrupt payload it printed. `extra`:
+    optional action type and goal (see ops_e2e_child.py)."""
     proc = subprocess.run(
-        [sys.executable, str(CHILD), url, thread_id],
+        [sys.executable, str(CHILD), url, thread_id, *extra],
         capture_output=True,
         text=True,
         timeout=120,

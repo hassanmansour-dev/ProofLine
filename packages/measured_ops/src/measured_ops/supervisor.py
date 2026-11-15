@@ -65,6 +65,7 @@ def eval_payload(scores: EvalScores | None) -> dict[str, Any] | None:
     return {
         "evaluator": scores.evaluator,
         "passed": scores.passed,
+        "failing": list(scores.failing),
         "scores": dict(scores.scores),
         "reasons": dict(scores.reasons),
     }

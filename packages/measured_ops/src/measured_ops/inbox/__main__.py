@@ -26,6 +26,7 @@ from measured_ops.echo import EchoAgent
 from measured_ops.inbox.auth import hash_passphrase
 from measured_ops.inbox.settings import PREFIX, InboxConfigError, InboxSettings
 from measured_ops.policy import load_policy
+from measured_ops.prices import load_model_prices
 from measured_ops.supervisor import build_supervisor
 
 HOST = "127.0.0.1"  # never 0.0.0.0: the phone reaches it over Tailscale only
@@ -38,6 +39,11 @@ DEMO_GOALS = (
 
 def _policy_path() -> Path | None:
     raw = os.environ.get("MEASURED_OPS_POLICY_PATH")
+    return Path(raw) if raw else None
+
+
+def _prices_path() -> Path | None:
+    raw = os.environ.get("MEASURED_OPS_PRICES_PATH")
     return Path(raw) if raw else None
 
 
@@ -93,7 +99,12 @@ def cmd_serve() -> int:
     except InboxConfigError as exc:
         print(f"inbox: {exc}", file=sys.stderr)
         return 2
-    app = create_inbox_app(settings, [EchoAgent()], load_policy(_policy_path()))
+    app = create_inbox_app(
+        settings,
+        [EchoAgent()],
+        load_policy(_policy_path()),
+        prices=load_model_prices(_prices_path()),
+    )
     # One worker, enforced again by the lock file: decision locks live in this process.
     uvicorn.run(app, host=HOST, port=settings.port, workers=1, proxy_headers=False)
     return 0

@@ -388,3 +388,55 @@ def test_login_answers_head_for_the_runbook_check(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["x-frame-options"] == "DENY"
+
+
+# ---- checks and cost on each waiting action (C7, ADR-0018) -------------------------------
+
+LEAKY_GOAL = "Mail jane.doe@example.com and see https://example.com/post?ref=7"
+
+
+def test_detail_shows_checks_with_plain_reasons(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url, goal=LEAKY_GOAL)
+    with _client(settings, clock) as c:
+        login(c)
+        html = open_item(c)
+
+    assert "link with query parameters" in html
+    assert "email found" in html
+    assert "a failed check means this action needs your approval" in html
+    assert "No model calls." in html
+
+
+def test_list_marks_a_failed_check(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url, goal=LEAKY_GOAL)
+    with _client(settings, clock) as c:
+        login(c)
+        html = c.get("/").text
+
+    assert "Check failed" in html
+
+
+def test_clean_action_shows_passed_checks_and_no_badge(client: TestClient) -> None:
+    login(client)
+    listing = client.get("/").text
+    html = open_item(client)
+
+    assert "Check failed" not in listing
+    assert html.count(">passed<") == 3
+
+
+def test_pii_value_appears_only_inside_the_preview(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url, goal="Draft for jane.doe@example.com")
+    with _client(settings, clock) as c:
+        login(c)
+        listing = c.get("/").text
+        html = open_item(c)
+
+    # The demo EchoAgent copies the goal into the preview, so both carry the address by
+    # construction. Everything else on the page (checks, reasons, cost) must not.
+    rest = re.sub(r'<pre class="preview">.*?</pre>', "", html, flags=re.DOTALL)
+    rest = re.sub(r"<h1>.*?</h1>", "", rest, flags=re.DOTALL)
+    assert "jane.doe@example.com" in html  # the human sees what they approve
+    assert "email found" in rest
+    assert "jane.doe" not in rest
+    assert "Check failed" in listing

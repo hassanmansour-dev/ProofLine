@@ -39,6 +39,17 @@ h2 { font-size: 1rem; margin: 20px 0 8px; color: var(--muted); }
   font-size: 0.85rem; color: var(--fg);
 }
 .tag-blocked { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.tag-check { border-color: var(--warn-fg); background: var(--warn-bg); color: var(--warn-fg); font-weight: 600; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.checks, .costs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.checks li, .costs li {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+}
+.checks li.fail { border-color: var(--warn-fg); background: var(--warn-bg); color: var(--warn-fg); }
+.check-name { font-weight: 600; min-width: 5.5em; }
+.check-reason { flex-basis: 100%; font-size: 0.9rem; }
+.costs li span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
 .risk { margin-left: 6px; }
 .risk-high { color: var(--danger); font-weight: 600; }
 .preview {

@@ -15,6 +15,31 @@
 {% endif %}
 <h2>Preview</h2>
 <pre class="preview">{{ item.preview }}</pre>
+<h2>Checks</h2>
+{% if item.eval is none %}
+<p class="muted">Not evaluated: this run paused before the checks existed.</p>
+{% else %}
+<ul class="checks">
+  {% for check in item.eval.checks %}
+  <li class="{{ 'ok' if check.passed else 'fail' }}">
+    <span class="check-name">{{ check.name }}</span>
+    <span class="check-result">{{ "passed" if check.passed else "failed" }}</span>
+    {% if check.reason %}<span class="check-reason">{{ check.reason }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<p class="muted">{{ item.eval.evaluator }}{% if not item.eval.passed %} · a failed check means this action needs your approval{% endif %}</p>
+{% endif %}
+<h2>Cost of this run</h2>
+{% if not item.costs %}
+<p class="muted">No model calls.</p>
+{% else %}
+<ul class="costs">
+  {% for c in item.costs %}
+  <li><span>{{ c.agent }} agent</span> <span>{{ "{:,}".format(c.tokens) }} tokens</span> <span>{{ c.cost | dollars }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
 <form method="post" action="/a/{{ item.thread_id | urlpart }}/decision" class="stack">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="interrupt_id" value="{{ item.interrupt_id }}">
