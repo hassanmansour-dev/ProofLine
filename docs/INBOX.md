@@ -28,6 +28,7 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_PORT` | no | `8765` |
 | `MEASURED_OPS_INBOX_LOCK_PATH` | no | `.data/inbox.lock` |
 | `MEASURED_OPS_POLICY_PATH` | no | the bundled demo policy |
+| `MEASURED_OPS_PRICES_PATH` | no | the bundled demo price table |
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
@@ -95,6 +96,13 @@ Never run `tailscale funnel` for this port.
 ## 4. What to expect
 
 - The list shows waiting actions, oldest first. Tap one for its full preview.
+- Each action shows its checks (quality, injection, PII): passed or failed, with a
+  plain reason such as "email found" or "link with query parameters". A failed check
+  is why an action that would run on its own is waiting for you. Reasons never show
+  the matched text; the preview shows the draft as written. Runs paused before the
+  checks existed show "Not evaluated".
+- "Cost of this run" shows tokens and dollars per agent from the price table. A
+  model the table doesn't list shows "unknown".
 - **Approve** clears it to `ready` (nothing executes before C5). **Reject** records the
   decision and your optional feedback, and ends the run (C8 turns feedback into a
   revision task). Edit comes with C8.

@@ -94,12 +94,15 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     contracts.py    Task, AgentResult, PendingAction, ApprovalDecision, OpsState + serde allowlist
     agent.py        Agent protocol: subgraph with input {"task"} → output {"result"}; run_agent()
     policy.py       ApprovalPolicy + load_policy(); config/approval_policy.demo.toml (demo values)
-    supervisor.py   build_supervisor(agents, policy): call_agent → triage → gate (interrupt) (C2, ADR-0016)
+    supervisor.py   build_supervisor(agents, policy): call_agent → evaluate → triage → gate (interrupt)
+                    (C2, ADR-0016; eval node C7, ADR-0018)
+    usage.py        collect_usage(agent): tokens per agent run via a context-var callback (C7)
+    prices.py       load_model_prices(); config/model_prices.demo.toml (demo values)
     checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
     echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
     inbox/          approval inbox (C4, ADR-0017): service.py (list/decide), web.py (FastAPI,
                     passphrase sign-in), __main__.py (hash | seed | serve); `inbox` extra
-packages/measured_evals/    standalone eval + security package (evaluate() stub in C1, metrics in GROW-14)
+packages/measured_evals/    standalone eval + security package: guard-v0 checks + usage cost (C7), metrics in GROW-14
   src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
 scripts/pii_scan.py         pre-commit + CI PII scan for this public repo (with gitleaks; C0)
 ```

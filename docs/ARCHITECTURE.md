@@ -2,10 +2,10 @@
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
-built** (C4, ADR-0017). Sections 3–11
+built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
-interface, the approval policy, the supervisor, its gate and the inbox. Planned parts
+interface, the approval policy, the supervisor, its eval node, its gate and the inbox. Planned parts
 are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
 need to be torn up when they land.
 
@@ -25,9 +25,10 @@ packages/
   proofline/        the content pipeline (LangGraph graph, nodes, CLI); becomes the
                     content agent in C8
   measured_ops/     Measured Ops: contracts, agent interface, approval policy (C1);
-                    supervisor + gate + checkpointer (C2); inbox (C4)
-  measured_evals/   eval + security layer: golden sets, metrics, cost budgets,
-                    prompt-injection tests (evaluate() interface in C1; metrics in GROW-14)
+                    supervisor + gate + checkpointer (C2); inbox (C4); eval node,
+                    usage collection, price table (C7)
+  measured_evals/   eval + security layer: guard-v0 checks (quality, injection, PII)
+                    and usage cost (C7); golden sets, judge metrics, budgets (GROW-14/15)
 ```
 
 Dependencies point one way: **proofline → measured_ops → measured_evals**, never
@@ -183,8 +184,10 @@ were dropped (ADR-0014); the approval inbox is the human interface and lives in
 Every invocation sets `run_name="script-pipeline"`, `tags=[env]`,
 `metadata={thread_id, prompt_versions, models}`; each LLM call is tagged with its
 prompt name/version. Logging: stdlib `logging`, `proofline.*` loggers, one INFO line
-per node (`proofline run -v`). ⟶ C7: tracing and cost per agent; GROW-15: cost
-budgets and alerts via `measured_evals`.
+per node (`proofline run -v`). Per agent (C7, section 13): each agent run is named
+`agent:<name>` with that tag and `{agent, task_id}` metadata, so LangSmith groups it;
+its tokens per model (cache reads and writes apart) land in `OpsState.usage` and the
+inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
 
 ## 11. Failure behavior
 
@@ -209,8 +212,13 @@ budgets and alerts via `measured_evals`.
   runs gitleaks and `scripts/pii_scan.py` (emails, phone numbers, SINs) on every
   commit, and CI runs gitleaks over the full history plus the PII scan over every
   tracked file except `uv.lock` and the scanner's own fixtures.
-- ⟶ GROW-14/15 (`measured_evals`): prompt-injection suite, cost budgets, output checks;
-  API auth and rate limiting in the app.
+- Every action an agent proposes is checked by the eval node before the policy sees
+  it (C7, ADR-0018): structure, instruction-like text, PII. A failed check only adds a
+  human approval. Check reasons name the kind of problem, never the matched value, so
+  personal data stays out of scores, logs and the inbox's check rows; the preview
+  itself is shown as the agent wrote it.
+- ⟶ GROW-14/15 (`measured_evals`): judge metrics, prompt-injection suite, cost
+  budgets; API auth and rate limiting in the app.
 
 ## 13. Measured Ops (`packages/measured_ops`, C1 contract; ADR-0014)
 
@@ -229,7 +237,7 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | Model | Fields | Rules |
 |---|---|---|
 | `Task` | `id`, `agent`, `goal`, `inputs` (JSON), `feedback`, `parent_id`, `created_at` | `agent` is snake_case; `feedback` needs a `parent_id` (a revision) |
-| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` written only by the eval node (C7), never by the agent |
+| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` written only by the eval node (C7, ADR-0018), never by the agent |
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
 
@@ -256,35 +264,68 @@ bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, p
 `load_policy(path)` reads the private one. `decide(action)`:
 
 1. row is `"never"` → **never**: blocked, logged at WARNING, recorded in
-   `OpsState.blocked`, never sent to the inbox (risk level can't change this);
+   `OpsState.blocked`, never sent to the inbox (risk level and scores can't change this);
 2. `risk_level="high"` → approval;
-3. listed type → its row; **unlisted type → approval**.
+3. an "auto" row with **missing or failed `eval_scores` → approval** (C7, fail
+   closed; logged with metric names only);
+4. listed type → its row; **unlisted type → approval**.
+
+A failed eval can only raise "auto" to approval; a test checks every row × risk ×
+eval combination.
 
 `check_decision(action, decision)` raises `ActionBlockedError` if a human approval
 targets a blocked action; the gate (C2) and inbox (C4) call it before acting.
 
 **Evals** (`measured_evals.evaluate(output, context) -> EvalScores`, async). Plain
 text and a plain mapping in, so the package knows no app types. `EvalScores`:
-scores in [0, 1], a threshold, the evaluator name; `passed` is computed (every
-score ≥ threshold, and at least one score). The C1 stub returns no scores, so it
-never passes.
+scores in [0, 1], a threshold, the evaluator name, and `reasons` (a few words per
+failing metric, never the matched text); `passed` is computed (every score ≥
+threshold, and at least one score). Since C7 it runs guard-v0 (`checks.py`, ADR-0018),
+deterministic, each check 0 or 1:
+- `quality`: not empty, within `context["max_words"]`, no placeholders, at least one
+  `[S1]`-style citation if `context["require_citations"]`;
+- `injection`: override phrases, role/system tags (incl. a stray `</source>`),
+  invisible or bidi characters, links with query parameters;
+- `pii`: emails, phone numbers, SINs and card numbers (Luhn); fictional values count;
+  `context["pii_allow"]` lists exact addresses or numbers that may appear.
+A check that raises propagates. Judge metrics ⟶ GROW-14, injection suite ⟶ GROW-15.
+
+**Usage and cost** (`measured_evals.cost`, `measured_ops.usage`, `measured_ops.prices`).
+`Usage(agent, model, input_tokens, output_tokens, cache_read_tokens,
+cache_write_5m_tokens, cache_write_1h_tokens)`: `input_tokens` is uncached input
+only. `cost(usage, prices)` per million tokens; a model missing from the table → `None`
+("unknown"), never 0. `collect_usage(agent)` puts a callback handler in a context
+variable that LangChain adds to every callback manager configured inside, so it sees
+every chat model call in the agent's subgraph without replacing the run's other
+callbacks. It converts langchain-anthropic's `usage_metadata` (whose `input_tokens`
+includes cache tokens; cache writes split `ephemeral_5m/1h`, or unsplit
+`cache_creation` = 5 minutes) and sums per model. A call without a model name counts
+as `unknown`. Demo prices: `measured_ops/config/model_prices.demo.toml`;
+`load_model_prices(path)` reads a private table.
 
 **Supervisor** (`supervisor.py`, ADR-0016). `build_supervisor(agents, policy)`
 returns the uncompiled `StateGraph`; compile it with a checkpointer.
 
 ```
-START → call_agent → triage ─┬→ gate ─┐    route_pending (pure): "gate" while
-                             │   ▲    │    pending_actions is non-empty, else END
-                             │   └────┤
-                             └────────┴→ END
+START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pending (pure): "gate" while
+                                        │   ▲    │    pending_actions is non-empty, else END
+                                        │   └────┤
+                                        └────────┴→ END
 ```
 
 - `build_supervisor` builds and checks every agent's graph at startup; duplicate
-  names fail. `call_agent` runs the task through `run_agent`; an unknown agent fails loudly.
-- `triage` calls `policy.decide` once per action (never in the gate, which re-runs on
+  names fail. `call_agent` runs the task through `run_agent` inside `collect_usage`,
+  with `agent_run_config` (run name, tag, metadata; no `callbacks` key, which would
+  replace the parent's), and appends the result and its usage; an unknown agent fails loudly.
+- `evaluate` (C7, ADR-0018) scores each action of the latest result with the injected
+  `evaluator` (default `measured_evals.evaluate`) and the supervisor's `eval_context`,
+  and writes the scored copies to `evaluated_actions`. The agent's own result stays
+  unscored. It logs pass/fail with metric names only.
+- `triage` calls `policy.decide` once per scored action (never in the gate, which re-runs on
   resume): auto → `ready`, never → `blocked`, approval → `pending_actions`.
 - `gate` pauses on the head of `pending_actions` with `interrupt(payload)`, where the
-  payload is `action_id`, `task_id`, `type`, `target`, `preview` and `risk_level`.
+  payload is `action_id`, `task_id`, `type`, `target`, `preview`, `risk_level` and
+  `eval` (`evaluator`, `passed`, `failing`, `scores`, `reasons`; C7).
   The resume value is `ApprovalDecision.model_dump()`. It is validated **inside**
   `interrupt(response_schema=answer_schema(action, policy))`: it must be for the
   waiting action, and `check_decision` runs. A bad answer raises to the caller
@@ -301,30 +342,35 @@ START → call_agent → triage ─┬→ gate ─┐    route_pending (pure): "
 that survives a database restart; runs `setup()` on open), always with `SERDE_ALLOWLIST`. Supabase is plain Postgres here (hosted run ⟶ C10).
 
 **Stub agent** (`echo.py`). `EchoAgent` drafts the task's goal and proposes one
-`publish_public` action. It exists for the e2e test and is injected like any agent.
+`publish_public` action (or another type, `EchoAgent("draft_content")`, for the C7 cases). It exists for the e2e test and is injected like any agent.
 
 **e2e** (`tests/test_ops_e2e.py`). Task → echo agent → pause in a child process
 (`ops_e2e_child.py`) → resume in the test process from the checkpoint → done.
-Approve and reject cases, SQLite and Postgres, strict msgpack. The Postgres case
+Approve and reject cases, SQLite and Postgres, strict msgpack. C7 adds: a failed
+check pauses an "auto" action across the restart; a clean one runs without pausing. The Postgres case
 needs `MEASURED_OPS_TEST_DATABASE_URL`: it skips locally without it and fails in
 CI, which runs a Postgres service container. Every later step keeps this green and
 adds its own case.
 
 **Approval inbox** (`inbox/`, C4, ADR-0017). Optional `inbox` extra.
-- `service.Inbox(graph, policy)`: `list_pending()` finds threads from
+- `service.Inbox(graph, policy, prices=...)`: `list_pending()` finds threads from
   `checkpointer.alist(None)` and keeps those paused at `gate`; each `PendingItem` carries
-  the interrupt id, the payload and its `response_schema`. An action the policy has
+  the interrupt id, the payload and its `response_schema`, the checks from the
+  payload's `eval` block (`None` for a run paused before C7) and tokens and cost per
+  agent from `OpsState.usage` (C7). An action the policy has
   since tightened to "never" is listed `blocked_by_policy` (reject only), not hidden.
   `decide()` re-reads the thread, refuses an answer for an interrupt no longer pending
   (`AlreadyDecided`: the double-tap guard), and resumes with
   `Command(resume={interrupt_id: decision})`, never `ainvoke(None)`. A refused answer
   (`Refused`) leaves the run paused. A per-thread lock serialises simultaneous taps.
-- `web.create_inbox_app(settings, agents, policy)`: FastAPI, Jinja2 autoescaped pages,
+- `web.create_inbox_app(settings, agents, policy, prices=..., eval_context=...)`: FastAPI, Jinja2 autoescaped pages,
   no JavaScript. Sign-in: one passphrase checked against a scrypt hash, one attempt at a
   time, 5 failures lock it for 15 minutes; session cookie `__Host-mo_inbox`
   (`HttpOnly`/`Secure`/`SameSite=Strict`) whose server-side session id ends 12 hours after
   sign-in and is revoked on sign-out; size-limited forms; CSRF token on every POST;
-  strict CSP. A thread that can't be read is logged and skipped. Settings from
+  strict CSP. A thread that can't be read is logged and skipped. The detail page lists
+  each check (passed or failed, with its reason) and the run's cost; the list marks
+  "Check failed" and "Not evaluated". Settings from
   `MEASURED_OPS_INBOX_*` env vars, no secret defaults: it refuses to start without them.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
