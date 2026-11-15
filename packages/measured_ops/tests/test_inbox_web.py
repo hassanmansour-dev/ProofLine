@@ -299,14 +299,25 @@ def test_approve_clears_the_item(client: TestClient) -> None:
     assert client.get("/a/t1").status_code == 404
 
 
-def test_reject_with_feedback_clears_the_item(client: TestClient) -> None:
+def test_reject_without_feedback_clears_the_item(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    response = decide(client, html, "reject")
+
+    assert response.status_code == 303
+    assert "Nothing is waiting" in client.get("/").text
+
+
+def test_reject_with_feedback_brings_back_a_revised_item(client: TestClient) -> None:
     login(client)
     html = open_item(client)
 
     response = decide(client, html, "reject", feedback="Shorter, please.")
 
     assert response.status_code == 303
-    assert "Nothing is waiting" in client.get("/").text
+    again = open_item(client)
+    assert field(again, "action_id") != field(html, "action_id")
 
 
 def test_a_second_tap_is_already_decided(client: TestClient) -> None:

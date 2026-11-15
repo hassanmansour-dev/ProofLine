@@ -136,6 +136,7 @@ class ScriptedAgent:
         self.specs = actions or []
         self.fail = fail
         self.runs = 0
+        self.tasks: list[Task] = []  # every task it was given, in order
 
     def build(self) -> AgentGraph:
         agent = self
@@ -143,6 +144,7 @@ class ScriptedAgent:
         async def propose(state: _EchoState) -> dict[str, Any]:
             agent.runs += 1
             task = state["task"]
+            agent.tasks.append(task)
             if agent.fail:
                 result = AgentResult(
                     task_id=task.id, agent=agent.name, status="failed", summary="", error="boom"

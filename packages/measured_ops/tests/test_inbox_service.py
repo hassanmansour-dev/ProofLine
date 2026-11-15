@@ -115,7 +115,7 @@ async def test_approve_resumes_the_thread_and_it_leaves_the_inbox() -> None:
     assert [a.id for a in state["ready"]] == [item.action_id]
 
 
-async def test_reject_records_the_feedback_and_ends_the_run() -> None:
+async def test_reject_with_feedback_records_it_and_the_run_revises() -> None:
     saver = _saver()
     graph = _graph(saver, ScriptedAgent([APPROVAL]))
     await _start(graph, "t")
@@ -134,6 +134,24 @@ async def test_reject_records_the_feedback_and_ends_the_run() -> None:
     [decision] = state["decisions"]
     assert (decision.approved, decision.feedback) == (False, "Too long.")
     assert state["ready"] == []
+    # ADR-0019: the run revised in the same thread and waits on the new draft
+    [again] = await inbox.list_pending()
+    assert again.thread_id == "t"
+    assert again.action_id != item.action_id
+    assert state["task"].inputs["revision"] == 1
+
+
+async def test_reject_without_feedback_ends_the_run() -> None:
+    saver = _saver()
+    graph = _graph(saver, ScriptedAgent([APPROVAL]))
+    await _start(graph, "t")
+    inbox = Inbox(graph, load_policy())
+    [item] = await inbox.list_pending()
+
+    await inbox.decide(
+        "t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=False
+    )
+
     assert await inbox.list_pending() == []
 
 

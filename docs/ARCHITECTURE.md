@@ -316,11 +316,16 @@ outside LangChain aren't seen. Prices match the exact model id the response repo
 returns the uncompiled `StateGraph`; compile it with a checkpointer.
 
 ```
-START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pending (pure): "gate" while
-                                        │   ▲    │    pending_actions is non-empty, else END
-                                        │   └────┤
+START → call_agent → evaluate → triage ─┬→ gate ─┬→ gate   (more pending)
+           ▲                            │        ├→ revise ─┐   (rejected with feedback, revision < max)
+           └────────────────────────────┼────────┼──────────┘
                                         └────────┴→ END
 ```
+`route_pending` (pure, after triage): "gate" while `pending_actions` is non-empty, else
+END. `route_after_gate` (pure, C8): more pending → gate; else this round has a
+rejection with feedback and the task's `revision` (`Task.inputs["revision"]`, 0 when
+absent) is below `max_revisions` (default 3) → revise; else END. An invalid revision
+number fails closed (END, logged).
 
 - `build_supervisor` builds and checks every agent's graph at startup; duplicate
   names fail. `call_agent` runs the task through `run_agent` inside `collect_usage`,
@@ -346,8 +351,14 @@ START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pend
   for a new `Command(resume=...)`. The refused value stays as the pending resume
   until then, so never retry with a bare `ainvoke(None)`. (Raising after
   `interrupt()` returns would bind the bad answer and replay it on every resume.) An approved action goes
-  to `ready`; a rejection is recorded and the run ends.
-- Nothing executes `ready` yet (⟶ C5). Rejection feedback → revision `Task` (⟶ C8).
+  to `ready`; a rejection is recorded.
+- `revise` (C8, ADR-0019) builds the next `Task` for the same agent: `parent_id` = the
+  task it revises, the round's feedback (joined, capped at 4,000 characters), and
+  `inputs` + `previous_preview` (the rejected previews, joined with `---`) +
+  `revision` (+1). It writes `task` and the graph returns to `call_agent`; no interrupt
+  and no I/O, so it runs once per pass, and the gate is unchanged. A rejection without
+  feedback, or past the cap, ends the run.
+- Nothing executes `ready` yet (⟶ C5); `approve_draft` never will (ADR-0019).
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool

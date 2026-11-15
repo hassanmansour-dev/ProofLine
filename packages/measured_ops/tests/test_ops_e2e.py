@@ -56,7 +56,7 @@ async def test_task_to_approval_to_done_survives_restart(
     assert [r.status for r in done["results"]] == ["succeeded"]
 
 
-async def test_task_to_rejection_to_done_survives_restart(
+async def test_task_to_rejection_to_revision_survives_restart(
     checkpointer_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
@@ -70,7 +70,11 @@ async def test_task_to_rejection_to_done_survives_restart(
     assert (recorded.approved, recorded.feedback) == (False, "Shorter.")
     assert done["ready"] == []
     assert done["blocked"] == []
-    assert done["pending_actions"] == []
+    # ADR-0019: feedback revises in the same thread, after the restart too
+    [again] = done["__interrupt__"]
+    assert again.value["action_id"] != paused["action_id"]
+    assert done["task"].inputs["revision"] == 1
+    assert done["task"].inputs["previous_preview"] == paused["preview"]
 
 
 async def test_refused_answer_after_restart_keeps_the_run_paused(
