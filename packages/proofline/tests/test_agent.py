@@ -169,3 +169,24 @@ async def test_the_agent_logs_critic_scores_by_action_id_and_nothing_else(
     raw = path.read_text()
     assert make_draft().title not in raw
     assert "linkedin" not in raw
+
+
+async def test_a_judge_log_that_cannot_write_does_not_fail_the_run(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Review finding: a full disk must not throw away a paid pipeline run.
+    class BrokenLog:
+        def record_critic(self, action_id: str, scores: Any) -> None:
+            raise OSError("disk full")
+
+        def record_decision(self, action_id: str, eval_scores: Any, approved: bool) -> None:
+            raise OSError("disk full")
+
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
+    agent = ContentAgent(make_deps(tmp_path, llm), judge_log=BrokenLog())
+
+    out = await _app(agent).ainvoke(initial_ops_state(_task()), CFG)
+
+    assert out["results"][0].status == "succeeded"
+    assert out["__interrupt__"]
+    assert "couldn't write the judge log" in caplog.text

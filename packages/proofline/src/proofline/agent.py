@@ -126,7 +126,11 @@ class ContentAgent:
             critique = out.get("critique")
             if critique is not None:  # ids and scores only, never the draft (ADR-0019)
                 scores: dict[str, float] = {c.criterion: c.score for c in critique.scores}
-                judge_log.record_critic(action.id, {**scores, "overall": critique.overall})
+                try:
+                    judge_log.record_critic(action.id, {**scores, "overall": critique.overall})
+                except OSError:
+                    # the draft is paid for and stands; a lost log line must not undo it
+                    log.exception("content: couldn't write the judge log for %s", action.id)
             return {
                 "result": AgentResult(
                     task_id=task.id,
