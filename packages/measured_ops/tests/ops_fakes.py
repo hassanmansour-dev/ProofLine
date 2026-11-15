@@ -16,6 +16,13 @@ def make_task(**overrides: Any) -> Task:
     return Task(**fields)
 
 
+# What the eval node writes; tests that call policy.decide directly use these.
+PASSED = EvalScores({"quality": 1.0, "injection": 1.0, "pii": 1.0}, evaluator="test")
+FAILED = EvalScores(
+    {"quality": 1.0, "injection": 1.0, "pii": 0.0}, evaluator="test", reasons={"pii": "email found"}
+)
+
+
 def make_action(task_id: str, **overrides: Any) -> PendingAction:
     fields: dict[str, Any] = {
         "task_id": task_id,
@@ -111,7 +118,8 @@ class LeakyAgent:
 
 
 class ScriptedAgent:
-    """Proposes the actions it was given (as (type, risk_level) pairs), or fails.
+    """Proposes the actions it was given, as (type, risk_level) or (type, risk_level,
+    preview) tuples, or fails.
 
     Counts how often its graph runs, so tests can prove the supervisor never re-runs
     an agent when the approval gate resumes.
@@ -119,7 +127,7 @@ class ScriptedAgent:
 
     def __init__(
         self,
-        actions: list[tuple[str, str]] | None = None,
+        actions: list[tuple[str, str]] | list[tuple[str, str, str]] | None = None,
         *,
         name: str = "echo",
         fail: bool = False,
@@ -141,8 +149,13 @@ class ScriptedAgent:
                 )
                 return {"result": result}
             actions = tuple(
-                make_action(task.id, type=kind, risk_level=risk, preview=f"{kind} #{i}")
-                for i, (kind, risk) in enumerate(agent.specs)
+                make_action(
+                    task.id,
+                    type=spec[0],
+                    risk_level=spec[1],
+                    preview=spec[2] if len(spec) > 2 else f"{spec[0]} #{i}",
+                )
+                for i, spec in enumerate(agent.specs)
             )
             result = AgentResult(
                 task_id=task.id,
@@ -157,4 +170,47 @@ class ScriptedAgent:
         builder.add_node("propose", propose)
         builder.add_edge(START, "propose")
         builder.add_edge("propose", END)
+        return builder.compile()
+
+
+class LLMAgent:
+    """Calls a fake chat model once per scripted reply, then proposes an auto action.
+
+    Its node also records the config it ran with, so tests can check the tracing
+    names and metadata the supervisor gives each agent run.
+    """
+
+    def __init__(self, replies: list[Any], *, name: str = "echo") -> None:
+        from langchain_core.language_models import GenericFakeChatModel
+
+        self.name = name
+        self.model = GenericFakeChatModel(messages=iter(replies))
+        self.calls = len(replies)
+        self.seen_config: dict[str, Any] = {}
+
+    def build(self) -> AgentGraph:
+        from langchain_core.runnables import RunnableConfig
+
+        agent = self
+
+        async def work(state: _EchoState, config: RunnableConfig) -> dict[str, Any]:
+            agent.seen_config = {"tags": config.get("tags"), "metadata": config.get("metadata")}
+            for _ in range(agent.calls):
+                # its own config, without callbacks, like proofline's adapter
+                await agent.model.ainvoke("hi", config={"run_name": "llm", "tags": ["inner"]})
+            task = state["task"]
+            action = make_action(task.id, type="draft_content", risk_level="low", preview="ok")
+            result = AgentResult(
+                task_id=task.id,
+                agent=agent.name,
+                status="succeeded",
+                summary="x",
+                actions=(action,),
+            )
+            return {"result": result}
+
+        builder = StateGraph(_EchoState, input_schema=AgentInput, output_schema=AgentOutput)
+        builder.add_node("work", work)
+        builder.add_edge(START, "work")
+        builder.add_edge("work", END)
         return builder.compile()

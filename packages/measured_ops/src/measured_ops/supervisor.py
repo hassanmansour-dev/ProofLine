@@ -1,13 +1,17 @@
-"""The supervisor graph (C2, ADR-0016): one task → its agent → triage → approval gate.
+"""The supervisor graph (C2, ADR-0016; eval node C7, ADR-0018).
 
-    START ─▶ call_agent ─▶ triage ─┬─▶ gate ─┐  (one pending action per pass)
-                                   │    ▲    │
-                                   │    └────┤
-                                   └─────────┴─▶ END
+    START ─▶ call_agent ─▶ evaluate ─▶ triage ─┬─▶ gate ─┐  (one pending action per pass)
+                                               │    ▲    │
+                                               │    └────┤
+                                               └─────────┴─▶ END
 
 - `call_agent` runs the task through the injected agent's subgraph (`run_agent`)
-  and appends its `AgentResult`. Agents are passed in, never imported (ADR-0014).
-- `triage` classifies every proposed action with the policy, once: "auto" → `ready`,
+  and appends its `AgentResult`, plus the run's token usage per model. Agents are
+  passed in, never imported (ADR-0014). Each run is named `agent:<name>` for tracing.
+- `evaluate` scores every proposed action with `measured_evals` and writes the scored
+  copies to `evaluated_actions`. It is the only writer of `eval_scores` (ADR-0008).
+  The scoring context is the supervisor's (`eval_context`), never the agent's.
+- `triage` classifies every scored action with the policy, once: "auto" → `ready`,
   "never" → `blocked` (logged by the policy), "approval" → `pending_actions`. It
   runs before the gate because `policy.decide` logs, and the gate re-runs on resume.
 - `gate` pauses on the head of `pending_actions` with `interrupt()`. On resume it
@@ -23,20 +27,30 @@ content agent (C8).
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from pydantic import AfterValidator
 
-from measured_ops.agent import Agent, AgentContractError, AgentGraph, check_agent_graph, run_agent
+from measured_evals import EvalScores, evaluate
+from measured_ops.agent import (
+    Agent,
+    AgentContractError,
+    AgentGraph,
+    agent_run_config,
+    check_agent_graph,
+    run_agent,
+)
 from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction
 from measured_ops.policy import ApprovalPolicy
+from measured_ops.usage import collect_usage
 
 log = logging.getLogger("measured_ops.supervisor")
 
 SupervisorGraph = StateGraph[OpsState, None, OpsState, OpsState]
+Evaluator = Callable[[str, Mapping[str, object]], Awaitable[EvalScores]]
 
 
 def route_pending(state: OpsState) -> Literal["gate", "__end__"]:
@@ -44,8 +58,20 @@ def route_pending(state: OpsState) -> Literal["gate", "__end__"]:
     return "gate" if state.get("pending_actions") else "__end__"
 
 
+def eval_payload(scores: EvalScores | None) -> dict[str, Any] | None:
+    """JSON-safe eval block: names, scores and short reasons, never matched text."""
+    if scores is None:
+        return None
+    return {
+        "evaluator": scores.evaluator,
+        "passed": scores.passed,
+        "scores": dict(scores.scores),
+        "reasons": dict(scores.reasons),
+    }
+
+
 def gate_payload(action: PendingAction) -> dict[str, Any]:
-    """What the human (CLI now, inbox in C4) sees: JSON-safe, no eval scores yet (C7)."""
+    """What the human (CLI, inbox) sees: JSON-safe, with the eval node's scores (C7)."""
     return {
         "action_id": action.id,
         "task_id": action.task_id,
@@ -53,6 +79,7 @@ def gate_payload(action: PendingAction) -> dict[str, Any]:
         "target": action.target,
         "preview": action.preview,
         "risk_level": action.risk_level,
+        "eval": eval_payload(action.eval_scores),
     }
 
 
@@ -79,10 +106,20 @@ def answer_schema(action: PendingAction, policy: ApprovalPolicy) -> Any:
     return Annotated[ApprovalDecision, AfterValidator(_for_this_action)]
 
 
-def build_supervisor(agents: Sequence[Agent], policy: ApprovalPolicy) -> SupervisorGraph:
+def build_supervisor(
+    agents: Sequence[Agent],
+    policy: ApprovalPolicy,
+    *,
+    eval_context: Mapping[str, object] | None = None,
+    evaluator: Evaluator = evaluate,
+) -> SupervisorGraph:
     """Wire the supervisor. Compiles and checks every agent's graph now, so a broken
     agent fails at startup, not mid-run. Compile the result with a checkpointer from
-    `measured_ops.checkpoint.open_checkpointer` (the gate needs one to resume)."""
+    `measured_ops.checkpoint.open_checkpointer` (the gate needs one to resume).
+
+    `eval_context` goes to every eval (e.g. `{"pii_allow": [...]}` from private
+    config); `evaluator` defaults to `measured_evals.evaluate` (guard-v0)."""
+    context: Mapping[str, object] = dict(eval_context or {})
     graphs: dict[str, tuple[Agent, AgentGraph]] = {}
     for agent in agents:
         if agent.name in graphs:
@@ -98,7 +135,8 @@ def build_supervisor(agents: Sequence[Agent], policy: ApprovalPolicy) -> Supervi
                 f"no agent named {task.agent!r} for task {task.id}; known agents: {sorted(graphs)}"
             )
         agent, graph = graphs[task.agent]
-        result = await run_agent(agent, graph, task)
+        with collect_usage(agent.name) as usage:
+            result = await run_agent(agent, graph, task, config=agent_run_config(agent.name, task))
         log.info(
             "supervisor: task %s → agent %r %s with %d action(s)",
             task.id,
@@ -106,14 +144,27 @@ def build_supervisor(agents: Sequence[Agent], policy: ApprovalPolicy) -> Supervi
             result.status,
             len(result.actions),
         )
-        return {"results": [result]}
+        return {"results": [result], "usage": usage.totals()}
+
+    async def evaluate_actions(state: OpsState) -> dict[str, Any]:
+        scored: list[PendingAction] = []
+        for action in state["results"][-1].actions:
+            scores = await evaluator(action.preview, context)
+            # metric names only in the log: reasons and values stay out (ADR-0018)
+            log.info(
+                "eval: action %s (%s) %s",
+                action.id,
+                action.type,
+                "passed" if scores.passed else f"failed {list(scores.failing) or ['(no scores)']}",
+            )
+            scored.append(action.model_copy(update={"eval_scores": scores}))
+        return {"evaluated_actions": scored}
 
     async def triage(state: OpsState) -> dict[str, Any]:
-        result = state["results"][-1]
         ready: list[PendingAction] = []
         blocked: list[PendingAction] = []
         pending: list[PendingAction] = []
-        for action in result.actions:
+        for action in state["evaluated_actions"]:
             decision = policy.decide(action)
             {"auto": ready, "never": blocked, "approval": pending}[decision].append(action)
         return {"ready": ready, "blocked": blocked, "pending_actions": pending}
@@ -139,10 +190,12 @@ def build_supervisor(agents: Sequence[Agent], policy: ApprovalPolicy) -> Supervi
 
     builder: SupervisorGraph = StateGraph(OpsState)
     builder.add_node("call_agent", call_agent)
+    builder.add_node("evaluate", evaluate_actions)
     builder.add_node("triage", triage)
     builder.add_node("gate", gate)
     builder.add_edge(START, "call_agent")
-    builder.add_edge("call_agent", "triage")
+    builder.add_edge("call_agent", "evaluate")
+    builder.add_edge("evaluate", "triage")
     builder.add_conditional_edges("triage", route_pending, {"gate": "gate", END: END})
     builder.add_conditional_edges("gate", route_pending, {"gate": "gate", END: END})
     return builder
