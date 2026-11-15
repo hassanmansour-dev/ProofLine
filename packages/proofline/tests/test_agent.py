@@ -190,3 +190,29 @@ async def test_a_judge_log_that_cannot_write_does_not_fail_the_run(
     assert out["results"][0].status == "succeeded"
     assert out["__interrupt__"]
     assert "couldn't write the judge log" in caplog.text
+
+
+async def test_the_nested_pipeline_inherits_the_supervisors_tracer_and_thread(
+    tmp_path: Path,
+) -> None:
+    # The masked tracer passed to the supervisor run must see the pipeline's runs, and
+    # the finalizer keys its outputs by the supervisor's thread id (ADR-0018, ADR-0019).
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class Marker(BaseCallbackHandler):
+        def __init__(self) -> None:
+            self.names: list[str] = []
+
+        def on_chain_start(self, serialized: Any, inputs: Any, **kwargs: Any) -> None:
+            self.names.append(str(kwargs.get("name")))
+
+    marker = Marker()
+    agent = _agent(tmp_path)
+    cfg: Any = {**CFG, "callbacks": [marker]}
+
+    await _app(agent).ainvoke(initial_ops_state(_task()), cfg)
+
+    assert "agent:content" in marker.names
+    assert "content-pipeline" in marker.names
+    assert "finalizer" in marker.names
+    assert (agent.deps.settings.output_dir / "c1" / "script.md").exists()
