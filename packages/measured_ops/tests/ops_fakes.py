@@ -227,12 +227,21 @@ class GatedAgent:
     `release` before returning, so tests control when a background revision finishes.
     Tracks how many runs overlap, to prove revisions run one at a time."""
 
-    def __init__(self, *, name: str = "echo", fail_revisions: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        name: str = "echo",
+        fail_revisions: bool = False,
+        fail_first: bool = False,
+        actions: int = 1,
+    ) -> None:
         import asyncio
 
         self.name = name
         self.release = asyncio.Event()
         self.fail_revisions = fail_revisions
+        self.fail_first = fail_first  # raise on the very first run (a cut-off first pass)
+        self.actions = actions
         self.runs = 0
         self.active = 0
         self.max_active = 0
@@ -246,20 +255,26 @@ class GatedAgent:
             agent.active += 1
             agent.max_active = max(agent.max_active, agent.active)
             try:
+                if agent.fail_first and agent.runs == 1:
+                    raise RuntimeError("first pass broke")
                 if task.parent_id is not None:
                     if agent.fail_revisions:
                         raise RuntimeError("revision broke")
                     await agent.release.wait()
             finally:
                 agent.active -= 1
-            action = make_action(task.id, preview=f"Draft {task.inputs.get('revision', 0)}.")
+            n = task.inputs.get("revision", 0)
+            actions = tuple(
+                make_action(task.id, preview=f"Draft {n}{'' if i == 0 else chr(97 + i)}.")
+                for i in range(agent.actions)
+            )
             return {
                 "result": AgentResult(
                     task_id=task.id,
                     agent=agent.name,
                     status="succeeded",
                     summary="x",
-                    actions=(action,),
+                    actions=actions,
                 )
             }
 

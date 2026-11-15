@@ -78,21 +78,36 @@ START → call_agent → evaluate → triage ─┬→ gate ─┬→ (more pend
 - No new state field. Every pass appends to `results`, `decisions` and `usage` (so each
   revision's tokens and cost are recorded like the first draft's, and the inbox prices
   them per agent); `evaluated_actions` is replaced by the new pass.
-  `recursion_limit` stays a backstop (4 passes × 5 nodes fits in 40).
+  `recursion_limit` stays a backstop: it counts steps per invocation, and one resume runs
+at most about six (gate → revise → call_agent → evaluate → triage → gate).
 
 **6. Where a revision runs: the inbox, in the background.** Rejecting with feedback
 resumes the run, which now goes on into `call_agent`: a full content-agent run (research,
 up to 4 drafts and critiques), minutes, not seconds. The inbox's `decide` therefore
-resumes the thread in a background task and answers at once ("Revising…"); the run
-appears in the list again when it pauses at the gate. This needs:
+commits the gate step first (`ainvoke(resume, interrupt_after=["gate"])`: the decision is
+saved, and a refused answer still fails at once), then, if the next step is `revise`,
+continues the run in a background task and answers at once ("Revising…"); if it's the
+round's next action, it continues synchronously (the gate pauses at once). The run
+appears in the list again when it pauses at the gate. Approving the last action of a
+round that has a rejection with feedback revises in the background too. This needs:
 - the inbox process to be built with the agents (the private repo's `serve` passes the
   content agent; the public demo can't, since `measured_ops` never imports `proofline`,
   so `proofline` gets a small `proofline inbox` command that serves it with the content
   agent and demo config);
-- a startup sweep: a thread whose latest checkpoint is between nodes (not at `gate`, not
-  finished) is a revision cut off by a restart, and the inbox continues it with
+- a startup sweep: a thread whose latest checkpoint is after a gate step (next `revise`,
+  or a gate with no question pending), or between nodes on a revision task, can only be
+  the inbox's own work cut off by a restart; the inbox continues it with
   `ainvoke(None)`. That is safe there because no interrupt is pending (ADR-0016's rule
-  forbids it only at the gate). A thread that fails is logged and left for a human.
+  forbids it only at a pending gate). A first pass between nodes may be a `proofline
+  propose` run in another process: it counts as stopped only once it's stale. A thread
+  that fails is logged and left for a human.
+- **Agent runs never checkpoint** (the supervisor sets `checkpointer=False` on every
+  agent graph; the content agent's pipeline too): agents' private state types aren't in
+  OpsState's serde allowlist, so a run cut off mid-agent restarts from the start of
+  `call_agent` (C8 review).
+- **An approval stands** when its round is revised: the approved action stays in
+  `ready`, and the revision is a new task whose actions are new. With several actions
+  per task, C5's executor must expect a revision to re-propose an approved action.
 - **At most one revision runs at a time** (an `asyncio.Semaphore(1)` in the inbox);
   further rejections wait their turn and show "Revision queued".
 - **Each revision has a timeout** (`MEASURED_OPS_INBOX_REVISION_TIMEOUT_S`, default

@@ -402,12 +402,15 @@ adds its own case.
   each check (passed or failed, with its reason) and the run's cost; the list marks
   "Check failed" and "Not evaluated". Settings from
   `MEASURED_OPS_INBOX_*` env vars, no secret defaults: it refuses to start without them.
-- Background revisions (C8, ADR-0019): `decide` checks a rejection **with feedback**
-  at once, marks the thread revising and resumes it in a background task
-  (`Outcome.revising`); a semaphore runs one at a time, each under
+- Background revisions (C8, ADR-0019): `decide` commits the gate step first
+  (`interrupt_after=["gate"]`: saved, and refused answers still fail at once), logs the
+  decision, then continues: next `revise` → a background task (`Outcome.revising`), next
+  `gate` → synchronously (it pauses at once); a semaphore runs one at a time, each under
   `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` (default 600). `in_progress()` lists runs
-  not waiting: running, queued, stopped (cut off here, or between nodes and older than
-  the timeout) and elsewhere (newer: maybe another process). `retry()` continues a
+  not waiting: running, queued, stopped (cut off here; after a gate step; between nodes
+  on a revision task; or a stale first pass) and elsewhere (a fresh first pass: maybe
+  `proofline propose` in another process). Agent runs never checkpoint
+  (`checkpointer=False`), so a cut-off run restarts its agent from the start. `retry()` continues a
   stopped run with `ainvoke(None)` (safe: no interrupt pending); the lifespan calls
   `start()` (continue each stopped run once) and `aclose()` (cancel; they continue
   next start). `POST /r/{thread_id}/retry` (CSRF) is the Retry button. C10 moves this
@@ -419,7 +422,7 @@ adds its own case.
   bool only: the port has no parameter for text. GROW-13 joins them on `action_id`.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
-  (`docs/INBOX.md`). Edit is deferred to C8.
+  (`docs/INBOX.md`). Edit is deferred to C9.
 - e2e (`tests/test_inbox_e2e.py`): pause in another process → sign in → approve or
   reject over HTTP → the thread finishes, on SQLite and Postgres.
 

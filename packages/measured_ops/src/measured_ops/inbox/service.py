@@ -294,40 +294,35 @@ class Inbox:
             except ValidationError as exc:
                 raise Refused(_reason(exc)) from exc
             resume: Command[Any] = Command(resume={interrupt_id: decision.model_dump(mode="json")})
-            if not approved and text:
-                # May revise: check now what the gate would check, then run it in the
-                # background. Marked before the lock is released, so a second tap sees
-                # the run as no longer waiting.
-                if action_id != item.action_id:
-                    raise Refused(
-                        f"decision is for action {action_id}, not the action waiting "
-                        f"at the gate ({item.action_id})"
-                    )
-                self._schedule(thread_id, resume)
-                self._log_decision(item, approved=False)
-                log.info(
-                    "inbox: run %s action %s rejected with feedback; revising", thread_id, action_id
-                )
-                return Outcome(
-                    thread_id=thread_id, approved=False, still_paused=False, revising=True
-                )
+            cfg = {**_cfg(thread_id), "callbacks": self.callbacks}
             try:
-                out = await self.graph.ainvoke(
-                    resume, {**_cfg(thread_id), "callbacks": self.callbacks}
-                )
+                # Commit the gate step, and only it, before answering: the decision is
+                # saved even if what comes next (a revision) waits, fails or is cut off.
+                await self.graph.ainvoke(resume, cfg, interrupt_after=["gate"])
             except ValidationError as exc:  # the gate's answer_schema refused it
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
                 raise Refused(str(exc)) from exc
-            self._log_decision(item, approved=approved)
-        log.info(
-            "inbox: run %s action %s %s",
-            thread_id,
-            action_id,
-            "approved" if approved else "rejected",
-        )
-        still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
-        return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+            self._log_decision(item, approved=approved)  # saved: now it's a decision
+            log.info(
+                "inbox: run %s action %s %s",
+                thread_id,
+                action_id,
+                "approved" if approved else "rejected",
+            )
+            snap = await self.graph.aget_state(_cfg(thread_id))
+            if snap.next == ("revise",):
+                # A revision runs the agent for minutes: in the background (ADR-0019).
+                self._schedule(thread_id, None)
+                return Outcome(
+                    thread_id=thread_id, approved=approved, still_paused=False, revising=True
+                )
+            if snap.next == ("gate",):
+                # The round's next action: the gate pauses on it at once.
+                out = await self.graph.ainvoke(None, cfg)
+                still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
+                return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+        return Outcome(thread_id=thread_id, approved=approved, still_paused=False)
 
     def _log_decision(self, item: PendingItem, *, approved: bool) -> None:
         """Judge-agreement log: ids, eval scores and the decision; never text (ADR-0019)."""
@@ -380,11 +375,19 @@ class Inbox:
             return None
         if thread_id in self._revisions:
             return RunStatus(thread_id, task.agent, task.goal, self._revisions[thread_id])
-        if not snap.next or snap.next == ("gate",):
+        if not snap.next or (snap.next == ("gate",) and snap.interrupts):
             return None  # finished, or waiting for a human
+        if (
+            thread_id in self._stopped_here
+            or snap.next
+            in (("gate",), ("revise",))  # after a gate step: only the inbox stops there
+            or task.parent_id is not None  # a revision: only the inbox runs those
+        ):
+            return RunStatus(thread_id, task.agent, task.goal, "stopped")
+        # A first pass between nodes may be a `proofline propose` run in another process.
         age = _age_s(snap.created_at)
         stale = age is None or age > self.revision_timeout_s
-        state: RunState = "stopped" if thread_id in self._stopped_here or stale else "elsewhere"
+        state: RunState = "stopped" if stale else "elsewhere"
         return RunStatus(thread_id, task.agent, task.goal, state)
 
     async def in_progress(self) -> list[RunStatus]:

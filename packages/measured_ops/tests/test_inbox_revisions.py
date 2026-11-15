@@ -182,21 +182,13 @@ async def test_on_start_the_inbox_continues_each_stopped_run_once() -> None:
     assert fixed.runs == 1
 
 
-async def test_a_fresh_run_between_nodes_is_in_progress_elsewhere_not_stopped() -> None:
-    # A `proofline propose` run in another process looks the same in the checkpoint;
-    # only one older than the timeout (or cut off here) counts as stopped.
-    from langgraph.types import Command
-
-    from measured_ops import ApprovalDecision
-
+async def test_a_fresh_first_pass_between_nodes_is_elsewhere_not_stopped() -> None:
+    # A `proofline propose` run in another process looks like this in the checkpoint;
+    # a first pass (no parent task) only counts as stopped once it's stale.
     saver = _saver()
-    graph = _graph(saver, GatedAgent(fail_revisions=True))
-    await _paused(graph, "t")
-    cfg: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
-    action_id = (await graph.aget_state(cfg)).values["pending_actions"][0].id
-    decision = ApprovalDecision(action_id=action_id, approved=False, feedback="x")
-    with pytest.raises(RuntimeError, match="revision broke"):  # cut off outside the inbox
-        await graph.ainvoke(Command(resume=decision.model_dump()), cfg)
+    graph = _graph(saver, GatedAgent(fail_first=True))
+    with pytest.raises(RuntimeError, match="first pass broke"):  # cut off outside the inbox
+        await _paused(graph, "t")
     inbox = Inbox(graph, load_policy(), callbacks=[], revision_timeout_s=600)
 
     [status] = await inbox.in_progress()
@@ -204,6 +196,59 @@ async def test_a_fresh_run_between_nodes_is_in_progress_elsewhere_not_stopped() 
     await inbox.start()
     await inbox.wait_idle()
     assert (await inbox.in_progress())[0].state == "elsewhere"  # not continued
+
+
+async def test_a_queued_revision_survives_a_restart_with_its_feedback() -> None:
+    # Review finding: the decision is saved before the phone gets its answer, so a
+    # revision still queued at shutdown isn't lost.
+    saver = _saver()
+    agent = GatedAgent()
+    graph = _graph(saver, agent)
+    for thread in ("a", "b"):
+        await _paused(graph, thread)
+    inbox = Inbox(graph, load_policy(), callbacks=[])
+    await _reject(inbox, "a")
+    await _reject(inbox, "b", feedback="B feedback.")
+    await asyncio.sleep(0.01)
+    assert sorted(s.state for s in await inbox.in_progress()) == ["queued", "running"]
+    await inbox.aclose()
+
+    fresh = GatedAgent()
+    fresh.release.set()
+    restarted = Inbox(_graph(saver, fresh), load_policy(), callbacks=[], revision_timeout_s=600)
+    assert sorted(s.state for s in await restarted.in_progress()) == ["stopped", "stopped"]
+    await restarted.start()  # revisions are stopped at once, whatever their age
+    await restarted.wait_idle()
+
+    cfg: Any = {"configurable": {"thread_id": "b"}, "recursion_limit": 40}
+    values = (await restarted.graph.aget_state(cfg)).values
+    assert [d.feedback for d in values["decisions"]] == ["B feedback."]
+    assert values["task"].inputs["revision"] == 1
+    assert {i.thread_id for i in await restarted.list_pending()} == {"a", "b"}
+
+
+async def test_approving_the_last_action_of_a_rejected_round_revises_in_the_background() -> None:
+    # Review finding: the second decision of a round must not run the agent in the request.
+    agent = GatedAgent(actions=2)
+    graph = _graph(_saver(), agent)
+    await _paused(graph, "t")
+    inbox = Inbox(graph, load_policy(), callbacks=[])
+
+    first = await _reject(inbox, "t", feedback="A: shorter.")
+    assert (first.revising, first.still_paused) == (False, True)  # B still waits
+    [b] = await inbox.list_pending()
+    second = await inbox.decide(
+        "t", interrupt_id=b.interrupt_id, action_id=b.action_id, approved=True
+    )
+
+    assert second.revising is True
+    assert agent.runs == 1  # the revision hasn't run inside the call
+    agent.release.set()
+    await inbox.wait_idle()
+    cfg: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
+    values = (await graph.aget_state(cfg)).values
+    assert [a.preview for a in values["ready"]] == ["Draft 0b."]  # an approval stands
+    assert values["task"].inputs["revision"] == 1
 
 
 async def test_reject_with_feedback_for_another_action_is_refused_at_once() -> None:

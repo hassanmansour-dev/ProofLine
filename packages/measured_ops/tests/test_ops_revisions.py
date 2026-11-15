@@ -178,3 +178,19 @@ def test_graph_has_the_revise_node_and_its_edges() -> None:
     assert "revise" in mermaid
     assert "gate -.-> revise" in mermaid
     assert "revise --> call_agent" in mermaid
+
+
+async def test_an_approved_action_stays_ready_when_its_round_is_revised() -> None:
+    # ADR-0019: an approval stands. The revision is a new task; its actions are new.
+    agent = ScriptedAgent(
+        [("publish_public", "medium", "Post A."), ("publish_public", "medium", "Post B.")]
+    )
+    app = _app(agent)
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
+    out = await app.ainvoke(_answer(out, approved=False, feedback="A: shorter."), CFG)
+
+    out = await app.ainvoke(_answer(out, approved=True), CFG)
+
+    assert agent.runs == 2
+    assert [a.preview for a in out["ready"]] == ["Post B."]
+    assert {a.task_id for a in out["pending_actions"]} == {agent.tasks[1].id}
