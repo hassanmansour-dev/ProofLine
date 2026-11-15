@@ -228,7 +228,7 @@ critic scores, eval scores and the decision only. Default word limit 140 (about 
   most 3, run in the inbox's background one at a time with a timeout (ADR-0019)
 - [x] e2e: topic → reject with feedback → revision → approve across a restart
   (SQLite here; Postgres in CI)
-- [ ] Green in CI on the PR
+- [x] Green in CI on the PR (#13: Postgres e2e ran, 576 passed, 0 skipped)
 - [ ] First real draft in the inbox (Hassan: `proofline propose` with real keys, then
   `proofline inbox` on the phone)
 
