@@ -82,6 +82,22 @@ def critique_block(critique: Critique) -> str:
     return "\n".join(lines)
 
 
+_CITATION_MARKS = re.compile(r"\s*\[S\d+\]")
+
+
+def revision_text(preview: str) -> str:
+    """A rejected preview as the writer revises it: no `## Sources` sections (web titles
+    and URLs), no `[S1]` marks (ids from an earlier research pass)."""
+    kept: list[str] = []
+    in_sources = False
+    for line in preview.splitlines():
+        if line.startswith("## "):
+            in_sources = line.strip().lower() == "## sources"
+        if not in_sources:
+            kept.append(_CITATION_MARKS.sub("", line))
+    return "\n".join(kept)
+
+
 def revision_context(
     draft: Draft | None,
     critique: Critique | None,
@@ -92,13 +108,14 @@ def revision_context(
     """The writer's revision block. Empty string on the first draft.
 
     With no draft in state, a revision Task's `previous_preview` (the rejected action's
-    preview) stands in for it (ADR-0019). It's escaped: it quotes source titles, which
-    come from the web.
+    preview) stands in for it (ADR-0019), minus its Sources sections and citation marks
+    (`revision_text`): source titles are web text, and the old ids point at an earlier
+    research pass. What's left is escaped.
     """
     if draft is not None:
         previous = draft_block(draft)
     elif previous_preview:
-        previous = escape(previous_preview)
+        previous = escape(revision_text(previous_preview))
     else:
         return ""
     blocks = [
@@ -131,13 +148,11 @@ def script_markdown(draft: Draft, notes: ResearchNotes) -> str:
 # One action per topic; its preview holds three sections, all rendered here from what
 # the pipeline produced. No LLM call: the post and the clip come from the same draft.
 
-_CITATION_MARK = re.compile(r"\s*\[S\d+\]")
-
 
 def clip_script(draft: Draft) -> str:
     """The 1-minute clip: hook, body, call to action as spoken, citation marks removed."""
     parts = [draft.hook, draft.body.strip(), draft.call_to_action]
-    return "\n\n".join(_CITATION_MARK.sub("", p).strip() for p in parts)
+    return "\n\n".join(_CITATION_MARKS.sub("", p).strip() for p in parts)
 
 
 def lesson_outline(outline: Outline) -> str:
