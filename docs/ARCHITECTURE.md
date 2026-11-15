@@ -216,8 +216,9 @@ inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
   whose client redacts emails, phone numbers, SINs and card numbers
   (`measured_evals.checks.redact_pii`) in every input, output and error; it replaces
   LangChain's env tracer. Every process that starts or resumes a supervisor run passes
-  it as `callbacks` (the inbox and `seed` do). Not covered: the standalone `proofline
-  run` CLI until C8.
+  it as `callbacks`: the inbox (resumes and revisions), `seed`, `proofline run` and
+  `proofline propose` do (C8). The content agent's nested pipeline passes no
+  `callbacks`, so it inherits the supervisor's masked tracer.
 - ⟶ GROW-14/15 (`measured_evals`): judge metrics, prompt-injection suite, cost
   budgets; API auth and rate limiting in the app.
 

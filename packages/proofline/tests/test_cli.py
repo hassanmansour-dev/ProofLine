@@ -81,3 +81,51 @@ def test_inbox_serves_the_content_agent_and_the_demo_echo_agent(
     assert result.exit_code == 0, result.output
     assert served == [["content", "echo"]]
     assert logs[0] is logs[1]  # one judge log: the agent's critic lines, the inbox's decisions
+
+
+# ── Masked tracing (C8, ADR-0018/0019) ─────────────────────────────────────────
+
+
+def test_run_passes_the_masked_tracer_to_the_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class Marker(BaseCallbackHandler):
+        def __init__(self) -> None:
+            self.runs = 0
+
+        def on_chain_start(self, *args: object, **kwargs: object) -> None:
+            self.runs += 1
+
+    marker = Marker()
+    monkeypatch.setattr(cli, "masked_tracing_callbacks", lambda: [marker])
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
+
+    result = CliRunner().invoke(cli.app, ["run", "--topic", "Loops need exits"])
+
+    assert result.exit_code == 0, result.output
+    assert marker.runs > 0  # the pipeline's runs reached the tracer the CLI passed
+
+
+def test_cli_tracing_is_masked_and_replaces_the_default_tracer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.callbacks import CallbackManager
+    from langchain_core.tracers.langchain import LangChainTracer
+    from langsmith import utils as ls_utils
+
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key-not-real")
+    ls_utils.get_env_var.cache_clear()
+    try:
+        callbacks = cli.masked_tracing_callbacks()
+        manager = CallbackManager.configure(inheritable_callbacks=callbacks)
+        tracers = [h for h in manager.handlers if isinstance(h, LangChainTracer)]
+        assert len(callbacks) == 1
+        assert tracers == callbacks
+        masked = tracers[0].client._hide_run_inputs({"draft": "Mail jane.doe@example.com"})
+        assert "jane.doe@example.com" not in repr(masked)
+    finally:
+        ls_utils.get_env_var.cache_clear()

@@ -1,6 +1,7 @@
 """CLI: `proofline run --topic ... --audience ...` prints the finished script.
 
-It runs the pipeline graph (with its critic loop) with no checkpointer. There is no review prompt: approval
+It runs the pipeline graph (with its critic loop) with no checkpointer. With LangSmith
+tracing on, traces go through the PII-masked tracer (ADR-0018). There is no review prompt: approval
 happens in the supervisor's gate and inbox (C2, C4; ADR-0014).
 
 `.env` is loaded first, from the working directory (the same file Settings reads):
@@ -17,6 +18,7 @@ from typing import Annotated
 import typer
 from dotenv import find_dotenv, load_dotenv
 
+from measured_ops.tracing import masked_tracing_callbacks
 from proofline.config import get_settings
 from proofline.context import Deps, build_deps
 from proofline.graph import build_graph, invoke_config, new_thread_id
@@ -30,10 +32,12 @@ async def run_pipeline(topic: str, audience: str, deps: Deps) -> FinalScript:
     """One run: planner → researcher → writer ⇄ critic → finalizer."""
     settings = deps.settings
     graph = build_graph().compile()
+    # PII-masked LangSmith tracer when tracing is on, replacing LangChain's default one
+    # (ADR-0018); [] when it's off.
+    cfg = invoke_config(new_thread_id(), settings)
+    cfg["callbacks"] = masked_tracing_callbacks()
     out = await graph.ainvoke(
-        initial_state(topic, audience, settings.run_config()),
-        invoke_config(new_thread_id(), settings),
-        context=deps,
+        initial_state(topic, audience, settings.run_config()), cfg, context=deps
     )
     final: FinalScript = out["final_script"]
     return final
