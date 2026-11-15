@@ -217,10 +217,20 @@ the lesson outline; rejections with feedback revise in the same thread, at most 
 supervisor-level retry (network nodes keep their own); the judge log holds action id,
 critic scores, eval scores and the decision only. Default word limit 140 (about 56 s at 150 wpm).
 
-- [ ] One topic → LinkedIn post + clip script + lesson outline, built from the
+- [x] One topic → LinkedIn post + clip script + lesson outline, built from the
   existing pipeline nodes; output goes through the eval node to the inbox
-- [ ] Never publishes. LinkedIn posts stay approved drafts Hassan pastes himself
-- [ ] Trace and judge-agreement logging on from day one
+  (`ContentAgent`, one `approve_draft` per topic; `proofline propose`)
+- [x] Never publishes. LinkedIn posts stay approved drafts Hassan pastes himself
+  (`approve_draft` has no executor; a test pins it, ADR-0019)
+- [x] Trace and judge-agreement logging on from day one (masked tracing in `run`,
+  `propose` and the inbox; `measured_ops.judge_log`: ids, scores, decisions, no text)
+- [x] Critic loop wired; revisions in the same thread on rejection with feedback, at
+  most 3, run in the inbox's background one at a time with a timeout (ADR-0019)
+- [x] e2e: topic → reject with feedback → revision → approve across a restart
+  (SQLite here; Postgres in CI)
+- [ ] Green in CI on the PR
+- [ ] First real draft in the inbox (Hassan: `proofline propose` with real keys, then
+  `proofline inbox` on the phone)
 
 **Done when:** e2e passes and the first real draft appears in the inbox.
 

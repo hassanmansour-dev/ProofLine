@@ -2,7 +2,8 @@
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
-built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018). Sections 3–11
+built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018); **content agent and
+same-thread revisions built** (C8, ADR-0019). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
 interface, the approval policy, the supervisor, its eval node, its gate and the inbox. Planned parts
