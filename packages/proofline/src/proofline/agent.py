@@ -73,7 +73,10 @@ class ContentAgent:
     def build(self) -> AgentGraph:
         deps = self.deps
         judge_log = self.judge_log
-        pipeline = build_graph().compile()  # nested: uses the parent's checkpointer
+        # No checkpoints of its own: its state types aren't in the supervisor's serde
+        # allowlist, so a cut-off run must restart, not resume from an unreadable
+        # checkpoint. It still gets the thread id and callbacks from the supervisor.
+        pipeline = build_graph().compile(checkpointer=False)
 
         async def draft(state: _State) -> dict[str, Any]:
             task = state["task"]

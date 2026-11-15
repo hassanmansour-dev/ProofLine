@@ -103,3 +103,64 @@ async def test_topic_to_rejection_to_revision_to_approval(
         ("decision", False),
         ("decision", True),
     ]
+
+
+class HangOnceLLM(FakeLLM):
+    """The first writer call of a revision hangs until released (a slow model call)."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        super().__init__()
+        self.release = asyncio.Event()
+        self.hung = False
+
+    async def generate(self, prompt: Any, schema: Any, *, role: Any, run_config: Any) -> Any:
+        if role == "writer" and not self.hung:
+            self.hung = True
+            await self.release.wait()
+        return await super().generate(prompt, schema, role=role, run_config=run_config)
+
+
+async def test_a_revision_cut_off_inside_the_pipeline_can_be_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review finding: the nested pipeline must not checkpoint into the supervisor's
+    # database (its state types aren't in the supervisor's serde allowlist), or a cut-off
+    # revision resumes from a checkpoint it can't load, forever.
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    url = f"sqlite:///{tmp_path / 'cp.db'}"
+    thread_id = "cut-off"
+    _pause_in_another_process(url, thread_id, tmp_path)
+
+    llm = HangOnceLLM()
+    # the cut-off pass uses one outline; the retry restarts the pipeline from the planner
+    llm.queue(make_outline(), make_outline(), make_draft(), make_critique(9))
+    agent = ContentAgent(make_deps(tmp_path, llm))
+    async with open_checkpointer(url) as saver:
+        graph = build_supervisor([agent], load_policy()).compile(checkpointer=saver)
+        inbox = Inbox(graph, load_policy(), callbacks=[], revision_timeout_s=0.3)
+        [item] = await inbox.list_pending()
+        await inbox.decide(
+            thread_id,
+            interrupt_id=item.interrupt_id,
+            action_id=item.action_id,
+            approved=False,
+            feedback="Shorter.",
+        )
+        await inbox.wait_idle()  # timed out inside the writer
+        assert [s.state for s in await inbox.in_progress()] == ["stopped"]
+
+        namespaces = {
+            c.config["configurable"].get("checkpoint_ns", "")
+            async for c in saver.alist({"configurable": {"thread_id": thread_id}})
+        }
+        assert namespaces == {""}, f"nested checkpoints written: {namespaces}"
+
+        llm.release.set()
+        inbox.revision_timeout_s = 30
+        await inbox.retry(thread_id)
+        await inbox.wait_idle()
+
+        [again] = await inbox.list_pending()
+        assert again.action_id != item.action_id

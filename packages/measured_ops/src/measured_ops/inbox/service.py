@@ -184,7 +184,10 @@ class Inbox:
     async def _thread_ids(self) -> list[str]:
         seen: dict[str, None] = {}
         async for checkpoint in self.graph.checkpointer.alist(None):
-            seen.setdefault(checkpoint.config["configurable"]["thread_id"], None)
+            configurable = checkpoint.config["configurable"]
+            if configurable.get("checkpoint_ns", ""):
+                continue  # a subgraph's checkpoint (older runs): the thread's own is enough
+            seen.setdefault(configurable["thread_id"], None)
         return list(seen)
 
     async def get(self, thread_id: str) -> PendingItem | None:

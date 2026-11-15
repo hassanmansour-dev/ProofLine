@@ -212,6 +212,10 @@ def build_supervisor(
             raise AgentContractError(f"duplicate agent name {agent.name!r}")
         graph = agent.build()
         check_agent_graph(graph)
+        # Agent runs never checkpoint (C8 review): their private state types aren't in
+        # OpsState's serde allowlist, so a run cut off mid-agent restarts from the start
+        # of call_agent instead of resuming from a checkpoint it can't load.
+        graph.checkpointer = False
         graphs[agent.name] = (agent, graph)
 
     async def call_agent(state: OpsState) -> dict[str, Any]:

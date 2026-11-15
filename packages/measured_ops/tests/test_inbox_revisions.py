@@ -173,6 +173,7 @@ async def test_on_start_the_inbox_continues_each_stopped_run_once() -> None:
     fixed.release.set()
     restarted = Inbox(_graph(saver, fixed), load_policy(), callbacks=[], revision_timeout_s=0.01)
     await restarted.start()
+    restarted.revision_timeout_s = 30  # stale by the tiny timeout; the revision itself gets time
     await restarted.wait_idle()
     await restarted.start()  # a second call does nothing
 
