@@ -226,7 +226,7 @@ def build_supervisor(
                 result = await run_agent(
                     agent, graph, task, config=agent_run_config(agent.name, task)
                 )
-            except Exception:
+            except BaseException:  # incl. cancellation (an inbox revision's timeout)
                 # the run's spend is lost with the state update: keep it in the log
                 per_model: dict[str, int] = {}
                 for u in usage.calls():

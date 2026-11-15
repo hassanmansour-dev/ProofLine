@@ -12,6 +12,17 @@
 - Each item carries the eval node's checks (from the gate payload: what the gate
   showed) and the run's tokens and cost per agent (C7, ADR-0018). A run paused
   before C7 has no checks; it still lists, as "not evaluated".
+- Revisions run in the background (C8, ADR-0019). A rejection **with feedback** is
+  checked at once (right action, still waiting), then the resume runs as a background
+  task, so the phone gets an answer in a second while the agent revises for minutes.
+  At most one revision runs at a time (a semaphore); each has a timeout. While queued
+  or running, the thread is not "waiting" (a second tap is `AlreadyDecided`) and shows
+  in `in_progress()`. A run whose latest checkpoint sits between nodes and is older
+  than the timeout was cut off (timeout, error, restart): it shows as "stopped",
+  `retry()` continues it, and `start()` continues each one once. A newer one may be a
+  run in progress in another process (`proofline propose`): "elsewhere", left alone.
+  Continuing uses `ainvoke(None)`, which is safe there because no interrupt is pending
+  (ADR-0016 forbids it only at the gate). C10 moves this to a worker with budget caps.
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -23,7 +34,8 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
@@ -38,6 +50,8 @@ from measured_ops.tracing import masked_tracing_callbacks
 log = logging.getLogger("measured_ops.inbox")
 
 RECURSION_LIMIT = 40
+DEFAULT_REVISION_TIMEOUT_S = 600.0
+RunState = Literal["queued", "running", "stopped", "elsewhere"]
 
 
 class AlreadyDecided(LookupError):
@@ -105,10 +119,21 @@ class PendingItem:
 
 
 @dataclass(frozen=True)
+class RunStatus:
+    """A run that isn't waiting for a human: revising here, cut off, or busy elsewhere."""
+
+    thread_id: str
+    agent: str
+    goal: str
+    state: RunState
+
+
+@dataclass(frozen=True)
 class Outcome:
     thread_id: str
     approved: bool
     still_paused: bool  # the run paused again, on its next action
+    revising: bool = False  # a rejection with feedback: the revision runs in the background
 
 
 def _cfg(thread_id: str) -> Any:
@@ -134,6 +159,7 @@ class Inbox:
         *,
         prices: Mapping[str, ModelPrice] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
+        revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -142,6 +168,12 @@ class Inbox:
         self.prices = load_model_prices() if prices is None else prices
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
+        self.revision_timeout_s = revision_timeout_s
+        self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
+        self._revisions: dict[str, Literal["queued", "running"]] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._stopped_here: set[str] = set()  # cut off in this process: stopped, any age
+        self._started = False
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_users: dict[str, int] = {}  # so a lock is dropped once nobody holds it
 
@@ -153,6 +185,8 @@ class Inbox:
 
     async def get(self, thread_id: str) -> PendingItem | None:
         """The action `thread_id` is waiting on, or None if it isn't waiting."""
+        if thread_id in self._revisions:
+            return None  # revising: not waiting for a human
         snap = await self.graph.aget_state(_cfg(thread_id))
         if snap.next != ("gate",) or not snap.interrupts:
             return None
@@ -253,6 +287,22 @@ class Inbox:
             except ValidationError as exc:
                 raise Refused(_reason(exc)) from exc
             resume: Command[Any] = Command(resume={interrupt_id: decision.model_dump(mode="json")})
+            if not approved and text:
+                # May revise: check now what the gate would check, then run it in the
+                # background. Marked before the lock is released, so a second tap sees
+                # the run as no longer waiting.
+                if action_id != item.action_id:
+                    raise Refused(
+                        f"decision is for action {action_id}, not the action waiting "
+                        f"at the gate ({item.action_id})"
+                    )
+                self._schedule(thread_id, resume)
+                log.info(
+                    "inbox: run %s action %s rejected with feedback; revising", thread_id, action_id
+                )
+                return Outcome(
+                    thread_id=thread_id, approved=False, still_paused=False, revising=True
+                )
             try:
                 out = await self.graph.ainvoke(
                     resume, {**_cfg(thread_id), "callbacks": self.callbacks}
@@ -269,3 +319,106 @@ class Inbox:
         )
         still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
         return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+
+    # ---- background revisions (C8, ADR-0019) ----------------------------------------
+
+    def _schedule(self, thread_id: str, value: Command[Any] | None) -> None:
+        self._stopped_here.discard(thread_id)
+        self._revisions[thread_id] = "queued"
+        task = asyncio.create_task(self._revise(thread_id, value), name=f"revise:{thread_id}")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _revise(self, thread_id: str, value: Command[Any] | None) -> None:
+        try:
+            async with self._revision_slot:
+                self._revisions[thread_id] = "running"
+                await asyncio.wait_for(
+                    self.graph.ainvoke(value, {**_cfg(thread_id), "callbacks": self.callbacks}),
+                    timeout=self.revision_timeout_s,
+                )
+                log.info("inbox: run %s revised", thread_id)
+                return
+        except TimeoutError:
+            log.error(
+                "inbox: revision of run %s timed out after %ss; stopped (retry from the inbox)",
+                thread_id,
+                self.revision_timeout_s,
+            )
+        except asyncio.CancelledError:
+            log.warning("inbox: revision of run %s cancelled; stopped", thread_id)
+            raise
+        except Exception:
+            log.exception("inbox: revision of run %s failed; stopped", thread_id)
+        finally:
+            self._revisions.pop(thread_id, None)
+        self._stopped_here.add(thread_id)  # reached only if it didn't finish
+
+    async def _status(self, thread_id: str) -> RunStatus | None:
+        snap = await self.graph.aget_state(_cfg(thread_id))
+        values = snap.values or {}
+        task: Task | None = values.get("task")
+        if task is None:
+            return None
+        if thread_id in self._revisions:
+            return RunStatus(thread_id, task.agent, task.goal, self._revisions[thread_id])
+        if not snap.next or snap.next == ("gate",):
+            return None  # finished, or waiting for a human
+        age = _age_s(snap.created_at)
+        stale = age is None or age > self.revision_timeout_s
+        state: RunState = "stopped" if thread_id in self._stopped_here or stale else "elsewhere"
+        return RunStatus(thread_id, task.agent, task.goal, state)
+
+    async def in_progress(self) -> list[RunStatus]:
+        """Runs that aren't waiting for a human and aren't finished."""
+        out: list[RunStatus] = []
+        for thread_id in await self._thread_ids():
+            try:
+                status = await self._status(thread_id)
+            except Exception:
+                log.exception("inbox: can't read run %s; skipped", thread_id)
+                continue
+            if status is not None:
+                out.append(status)
+        return out
+
+    async def retry(self, thread_id: str) -> None:
+        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped."""
+        lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        async with lock:
+            status = await self._status(thread_id)
+            if status is None or status.state != "stopped":
+                raise AlreadyDecided(f"run {thread_id} is not stopped")
+            self._schedule(thread_id, None)
+        log.info("inbox: retrying run %s", thread_id)
+
+    async def start(self) -> None:
+        """Once per process: continue every run a restart (or a timeout) cut off."""
+        if self._started:
+            return
+        self._started = True
+        for status in await self.in_progress():
+            if status.state == "stopped":
+                log.info("inbox: continuing stopped run %s", status.thread_id)
+                self._schedule(status.thread_id, None)
+
+    async def wait_idle(self) -> None:
+        """Wait until no revision is queued or running (tests, shutdown)."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+    async def aclose(self) -> None:
+        """Cancel running revisions: their runs stay stopped and continue on next start."""
+        for task in list(self._tasks):
+            task.cancel()
+        await self.wait_idle()
+
+
+def _age_s(created_at: str | None) -> float | None:
+    if not created_at:
+        return None
+    try:
+        then = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    return (datetime.now(UTC) - then).total_seconds()

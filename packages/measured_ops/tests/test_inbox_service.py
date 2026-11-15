@@ -129,6 +129,7 @@ async def test_reject_with_feedback_records_it_and_the_run_revises() -> None:
         approved=False,
         feedback="Too long.",
     )
+    await inbox.wait_idle()  # the revision runs in the background (ADR-0019)
 
     state = (await graph.aget_state(_cfg("t"))).values
     [decision] = state["decisions"]

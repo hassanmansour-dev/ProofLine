@@ -99,6 +99,19 @@ def open_item(c: TestClient, thread: str = "t1") -> str:
     return page.text
 
 
+def wait_for_item(c: TestClient, thread: str = "t1", seconds: float = 5.0) -> str:
+    """Background revisions (ADR-0019): poll until the run waits at the gate again."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        page = c.get(f"/a/{thread}")
+        if page.status_code == 200:
+            return page.text
+        time.sleep(0.02)
+    raise AssertionError(f"run {thread} didn't come back to the inbox in {seconds}s")
+
+
 def decide(c: TestClient, html: str, decision: str, **extra: str) -> Any:
     data = {
         "csrf": field(html, "csrf"),
@@ -316,7 +329,7 @@ def test_reject_with_feedback_brings_back_a_revised_item(client: TestClient) -> 
     response = decide(client, html, "reject", feedback="Shorter, please.")
 
     assert response.status_code == 303
-    again = open_item(client)
+    again = wait_for_item(client)
     assert field(again, "action_id") != field(html, "action_id")
 
 
