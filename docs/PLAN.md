@@ -201,7 +201,7 @@ if they differ; allowlisted addresses passed per call from private config.
   preview (tests capture logs and the payload)
 - [x] e2e: a failed check pauses an "auto" action across a restart; a clean one runs
   (SQLite + Postgres)
-- [ ] Green in CI on the PR
+- [x] Green in CI on the PR (#12: Postgres e2e ran, 463 passed, 0 skipped)
 
 ### C8 · Content agent v0 (GROW-87)
 
