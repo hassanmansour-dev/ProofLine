@@ -129,3 +129,70 @@ def test_cli_tracing_is_masked_and_replaces_the_default_tracer(
         assert "jane.doe@example.com" not in repr(masked)
     finally:
         ls_utils.get_env_var.cache_clear()
+
+
+# ── propose: one topic into the inbox (C8, ADR-0019) ──────────────────────────
+
+
+def test_propose_pauses_one_approve_draft_in_the_inbox_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import json
+
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    from measured_ops import load_policy
+    from measured_ops.checkpoint import open_checkpointer
+    from measured_ops.supervisor import build_supervisor
+    from proofline.agent import ContentAgent
+
+    class Marker(BaseCallbackHandler):
+        runs = 0
+
+        def on_chain_start(self, *args: object, **kwargs: object) -> None:
+            Marker.runs += 1
+
+    url = f"sqlite:///{tmp_path / 'ops.db'}"
+    monkeypatch.setenv("MEASURED_OPS_INBOX_CHECKPOINTER_URL", url)
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    monkeypatch.setattr(cli, "masked_tracing_callbacks", lambda: [Marker()])
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
+    deps = make_deps(tmp_path, llm)
+    monkeypatch.setattr(cli, "build_deps", lambda settings: deps)
+
+    result = CliRunner().invoke(
+        cli.app, ["propose", "--topic", "Loops need exits", "--audience", "devs"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "waiting in the inbox" in result.output
+    thread_id = result.output.strip().split()[-1]
+    assert Marker.runs > 0
+
+    async def state() -> object:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([ContentAgent(deps)], load_policy()).compile(
+                checkpointer=saver
+            )
+            return await graph.aget_state({"configurable": {"thread_id": thread_id}})
+
+    snap = asyncio.run(state())
+    assert snap.next == ("gate",)  # type: ignore[attr-defined]
+    [action] = snap.values["pending_actions"]  # type: ignore[attr-defined]
+    assert action.type == "approve_draft"
+    task = snap.values["task"]  # type: ignore[attr-defined]
+    assert task.inputs == {"topic": "Loops need exits", "audience": "devs"}
+    log_path = Path(str(tmp_path / "judge_log.jsonl"))
+    [line] = [json.loads(x) for x in log_path.read_text().splitlines()]
+    assert line["action_id"] == action.id
+
+
+def test_propose_reports_a_failed_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEASURED_OPS_INBOX_CHECKPOINTER_URL", f"sqlite:///{tmp_path / 'o.db'}")
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path))
+
+    result = CliRunner().invoke(cli.app, ["propose", "--topic", "   "])
+
+    assert result.exit_code == 1
+    assert "topic" in result.output

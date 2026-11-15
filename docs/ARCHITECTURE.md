@@ -163,6 +163,11 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 ## 9. Interfaces
 
 **CLI** (`cli.py`, Typer):
+- `proofline propose --topic … --audience …` (C8) runs the supervisor with the content
+  agent against the inbox's database (`MEASURED_OPS_INBOX_CHECKPOINTER_URL`), masked
+  tracing on, and prints the run's id once the draft waits at the gate; a failed draft
+  exits 1 with the agent's error. `proofline inbox` serves the inbox with the content
+  agent (`measured_ops.inbox.server.serve`).
 - `proofline run --topic … --audience … [-v]` runs the graph and prints the Markdown
   script (stdout); file paths go to stderr.
 - `proofline mermaid` prints the graph.

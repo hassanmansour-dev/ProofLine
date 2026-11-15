@@ -51,7 +51,10 @@ uv run python -m measured_ops.inbox serve            # 127.0.0.1:8765, one proce
 
 With the content agent (C8): `uv run proofline inbox` serves the same inbox with the
 content agent (and the demo echo agent), so rejecting with feedback can revise a draft
-in this process. It needs the same keys as `proofline run`.
+in this process. It needs the same keys as `proofline run`. Put a topic in with
+`uv run proofline propose --topic "..." --audience "..."`: it drafts one post, clip
+script and lesson outline into the inbox's database and prints the run's id; the draft
+then waits in the list. Until C6, that's how topics get in.
 
 `serve` always binds `127.0.0.1` and runs one worker. Don't start it with
 `uvicorn --workers N`: decisions are serialised in memory, and a second process

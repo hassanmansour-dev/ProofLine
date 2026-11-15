@@ -60,6 +60,7 @@ uv run proofline run --topic "Why every AI loop needs an exit" --audience "devel
 uv run uvicorn proofline.api:app --reload                       # API (/health only)
 uv run python -m measured_ops.inbox serve                       # approval inbox, 127.0.0.1 (docs/INBOX.md)
 uv run proofline inbox                                          # the same inbox with the content agent (C8)
+uv run proofline propose --topic "..." --audience "..."         # one draft into the inbox (C8, until C6)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 

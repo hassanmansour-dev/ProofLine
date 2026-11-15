@@ -92,6 +92,64 @@ def _deps_or_exit() -> Deps:
         raise typer.Exit(code=1) from exc
 
 
+async def propose_topic(topic: str, audience: str, deps: Deps) -> tuple[str, bool, str]:
+    """Start one content-agent run in the inbox's database (ADR-0019).
+
+    Returns (thread id, paused at the gate, the agent's summary or error)."""
+    from measured_ops import Task, initial_ops_state
+    from measured_ops.checkpoint import open_checkpointer
+    from measured_ops.inbox.settings import checkpointer_url, env_path
+    from measured_ops.judge_log import judge_log_from_env
+    from measured_ops.policy import load_policy
+    from measured_ops.supervisor import build_supervisor
+    from proofline.agent import ContentAgent
+
+    agent = ContentAgent(deps, judge_log=judge_log_from_env())
+    task = Task(
+        agent=agent.name,
+        goal="Draft a LinkedIn post, a 1-minute clip script and a lesson outline.",
+        inputs={"topic": topic, "audience": audience},
+    )
+    thread_id = new_thread_id()
+    policy = load_policy(env_path("MEASURED_OPS_POLICY_PATH"))
+    async with open_checkpointer(checkpointer_url()) as saver:
+        graph = build_supervisor([agent], policy).compile(checkpointer=saver)
+        out = await graph.ainvoke(
+            initial_ops_state(task),
+            {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": 40,
+                "callbacks": masked_tracing_callbacks(),  # PII-masked traces (ADR-0018)
+            },
+        )
+    result = out["results"][-1]
+    return thread_id, bool(out.get("__interrupt__")), result.error or result.summary
+
+
+@app.command()
+def propose(
+    topic: Annotated[str, typer.Option(help="What the post is about")],
+    audience: Annotated[str, typer.Option(help="Who it's for")] = "developers new to AI",
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="log each node")] = False,
+) -> None:
+    """Draft one topic with the content agent; the draft waits in the inbox for approval.
+
+    Until C6 creates tasks, this is how a topic gets in. Uses the inbox's database
+    (MEASURED_OPS_INBOX_CHECKPOINTER_URL, docs/INBOX.md). Never publishes (ADR-0019).
+    """
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    deps = _deps_or_exit()
+    thread_id, paused, summary = asyncio.run(propose_topic(topic, audience, deps))
+    if not paused:
+        typer.echo(f"error: no draft is waiting: {summary}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(summary, err=True)
+    typer.echo(f"waiting in the inbox: {thread_id}")
+
+
 @app.command()
 def inbox() -> None:
     """Serve the approval inbox with the content agent (127.0.0.1, one process).
