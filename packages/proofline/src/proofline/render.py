@@ -5,6 +5,7 @@ Kept out of the nodes so prompts and output formatting can be tested without a g
 
 from __future__ import annotations
 
+import re
 from xml.sax.saxutils import escape, quoteattr
 
 from proofline.schemas import Critique, Draft, Outline, ResearchNotes, Source
@@ -114,3 +115,42 @@ def script_markdown(draft: Draft, notes: ResearchNotes) -> str:
     if sources:
         out += ["", "## Sources"] + [f"- [{s.id}] [{s.title}]({s.url})" for s in sources]
     return "\n".join(out).rstrip() + "\n"
+
+
+# ── approve_draft preview (C8, ADR-0019) ──────────────────────────────────────
+# One action per topic; its preview holds three sections, all rendered here from what
+# the pipeline produced. No LLM call: the post and the clip come from the same draft.
+
+_CITATION_MARK = re.compile(r"\s*\[S\d+\]")
+
+
+def clip_script(draft: Draft) -> str:
+    """The 1-minute clip: hook, body, call to action as spoken, citation marks removed."""
+    parts = [draft.hook, draft.body.strip(), draft.call_to_action]
+    return "\n\n".join(_CITATION_MARK.sub("", p).strip() for p in parts)
+
+
+def lesson_outline(outline: Outline) -> str:
+    """The planner's outline as a lesson plan: angle, sections in order, key questions."""
+    out = [outline.angle, ""]
+    out += [f"{i}. **{s.title}**: {s.goal}" for i, s in enumerate(outline.sections, start=1)]
+    out += ["", "Questions it answers:"] + [f"- {q}" for q in outline.key_questions]
+    return "\n".join(out)
+
+
+def approve_draft_preview(draft: Draft, notes: ResearchNotes, outline: Outline) -> str:
+    """What Hassan approves on the phone: the post, the clip script, the lesson outline."""
+    sections = [
+        "## LinkedIn post",
+        "",
+        script_markdown(draft, notes).strip(),
+        "",
+        f"## Clip script (~{draft.estimated_seconds}s)",
+        "",
+        clip_script(draft),
+        "",
+        "## Lesson outline",
+        "",
+        lesson_outline(outline),
+    ]
+    return "\n".join(sections).rstrip() + "\n"
