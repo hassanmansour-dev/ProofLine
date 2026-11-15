@@ -214,7 +214,7 @@ one `approve_draft` action per topic, its preview holding the post, the clip scr
 the lesson outline; rejections with feedback revise in the same thread, at most 3 times
 (ADR-0019, written before the supervisor changes); inbox edit moves to C9; no
 supervisor-level retry (network nodes keep their own); the judge log holds action id,
-critic scores, eval scores and the decision only.
+critic scores, eval scores and the decision only. Default word limit 140 (about 56 s at 150 wpm).
 
 - [ ] One topic → LinkedIn post + clip script + lesson outline, built from the
   existing pipeline nodes; output goes through the eval node to the inbox

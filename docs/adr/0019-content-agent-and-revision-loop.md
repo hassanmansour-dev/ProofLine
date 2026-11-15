@@ -1,6 +1,7 @@
 # ADR-0019: Content agent v0, approve_draft, and revisions in the same thread
 
-- Status: proposed (2026-11-14, C8; written before the supervisor changes, for Hassan's review)
+- Status: accepted (2026-11-14, Hassan's review: background revisions with a one-at-a-time
+  semaphore, a timeout and per-pass usage; revision number carried in the task)
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C8 (GROW-87)
 
@@ -57,21 +58,26 @@ START → call_agent → evaluate → triage ─┬→ gate ─┬→ (more pend
 
 - `gate` is unchanged: it records the decision and pops the action. It stays idempotent
   on resume: nothing before `interrupt()` has side effects, and nothing after it raises.
+- The revision number travels **in the task**: `Task.inputs["revision"]` (absent or 0
+  on the first task, then 1, 2, 3), next to `previous_preview`. Counting results
+  would break once a thread holds more than one task (C6).
 - A new pure router after `gate`: more pending actions → `gate`; otherwise, if this
-  round has a rejection **with feedback** and fewer than `max_revisions` (default 3)
-  revisions have run (`len(results) - 1`), → `revise`; otherwise → `END`. A rejection
-  without feedback ends the run, as today.
+  round has a rejection **with feedback** and the current task's `revision` is below
+  `max_revisions` (default 3), → `revise`; otherwise → `END`. A rejection without
+  feedback ends the run, as today.
 - `revise` builds the next `Task`: same agent and goal, `parent_id` = the task it
   revises, `feedback` = the rejection feedback (several joined, if several actions were
   rejected), and `inputs` = the old inputs plus `previous_preview` (the rejected
-  action's preview text). It writes `task`, and the graph goes to `call_agent`. No
-  interrupt, no I/O, so it runs once per pass.
+  action's preview text) and `revision` = the current task's `revision` + 1. It writes
+  `task`, and the graph goes to `call_agent`. No interrupt, no I/O, so it runs once
+  per pass.
 - The previous draft reaches the writer without a contract change: the supervisor
   doesn't know agent internals, so it passes the preview text, and
   `render.revision_context` gains a feedback-only branch that uses
   `previous_preview` when there is no `draft` in state (ADR-0014's gap, with a test).
-- No new state field: the revision count is `len(results) - 1`. Every pass appends to
-  `results`, `decisions`, `usage`; `evaluated_actions` is replaced by the new pass.
+- No new state field. Every pass appends to `results`, `decisions` and `usage` (so each
+  revision's tokens and cost are recorded like the first draft's, and the inbox prices
+  them per agent); `evaluated_actions` is replaced by the new pass.
   `recursion_limit` stays a backstop (4 passes × 5 nodes fits in 40).
 
 **6. Where a revision runs: the inbox, in the background.** Rejecting with feedback
@@ -87,7 +93,18 @@ appears in the list again when it pauses at the gate. This needs:
   finished) is a revision cut off by a restart, and the inbox continues it with
   `ainvoke(None)`. That is safe there because no interrupt is pending (ADR-0016's rule
   forbids it only at the gate). A thread that fails is logged and left for a human.
+- **At most one revision runs at a time** (an `asyncio.Semaphore(1)` in the inbox);
+  further rejections wait their turn and show "Revision queued".
+- **Each revision has a timeout** (`MEASURED_OPS_INBOX_REVISION_TIMEOUT_S`, default
+  600). On timeout the task is cancelled and logged; the thread stays between nodes and
+  shows "Revision stopped" with a **Retry** button (`ainvoke(None)` under the same
+  semaphore and timeout). The startup sweep tries each stopped thread once per process
+  start, so a revision that always times out costs at most one try per restart.
+- Each revision pass records its usage in `OpsState.usage` through `call_agent`, the
+  same as the first draft; the detail page's cost covers every pass.
 - The page shows runs in progress as "Revising…", so a revision isn't invisible.
+- **This is v0.** In C10 revisions move to a separate worker process with budget caps
+  (per run and per day), and the inbox goes back to only recording decisions.
 
 **7. Judge-agreement log** (`proofline/judge_log.py`, a port with a JSONL adapter).
 Two kinds of line, and **only these fields**, never draft text, previews or targets:
@@ -128,8 +145,10 @@ adapter its repair retry; a failed agent run fails loudly with its usage logged
 - Good: the first real agent runs end to end on the phone; rejections improve the draft
   without leaving the thread; agreement data accrues from the first draft.
 - Bad / cost: the inbox now runs agents (keys and network in that process) and gets a
-  background task and a restart sweep; a revision costs a full pipeline run; the lesson
-  outline is only as good as the planner's outline.
-- Revisit when: C6 creates tasks (replaces `proofline propose`), C9 adds edit, C10 moves
-  work to scheduled jobs (revisions may move to a worker), C5 builds the executor table
-  (must exclude `approve_draft`).
+  background task, a one-at-a-time semaphore, a timeout and a restart sweep; a
+  revision costs a full pipeline run; the lesson outline is only as good as the
+  planner's outline.
+- Revisit when: C6 creates tasks (replaces `proofline propose`; threads may then hold
+  several tasks, which is why the revision number lives in the task), C9 adds edit, C10
+  moves revisions to a worker with budget caps, C5 builds the executor table (must
+  exclude `approve_draft`).
