@@ -216,7 +216,14 @@ inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
   it (C7, ADR-0018): structure, instruction-like text, PII. A failed check only adds a
   human approval. Check reasons name the kind of problem, never the matched value, so
   personal data stays out of scores, logs and the inbox's check rows; the preview
-  itself is shown as the agent wrote it.
+  itself is shown as the agent wrote it (the human approves what they see). Logs name
+  actions by id and type, never the target.
+- Traces: `measured_ops.tracing.masked_tracing_callbacks()` returns a LangSmith tracer
+  whose client redacts emails, phone numbers, SINs and card numbers
+  (`measured_evals.checks.redact_pii`) in every input, output and error; it replaces
+  LangChain's env tracer. Every process that starts or resumes a supervisor run passes
+  it as `callbacks` (the inbox and `seed` do). Not covered: the standalone `proofline
+  run` CLI until C8.
 - ⟶ GROW-14/15 (`measured_evals`): judge metrics, prompt-injection suite, cost
   budgets; API auth and rate limiting in the app.
 
@@ -264,7 +271,8 @@ bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, p
 `bulk_export_personal_data` and `act_outside_own_systems` as `"never"`);
 `load_policy(path)` reads the private one. `decide(action)`:
 
-1. row is `"never"` → **never**: blocked, logged at WARNING, recorded in
+1. row is `"never"` → **never**: blocked, logged at WARNING (id, type, task; never the
+   target), recorded in
    `OpsState.blocked`, never sent to the inbox (risk level and scores can't change this);
 2. `risk_level="high"` → approval;
 3. an "auto" row with **missing or failed `eval_scores` → approval** (C7, fail
@@ -293,14 +301,18 @@ A check that raises propagates. Judge metrics ⟶ GROW-14, injection suite ⟶ G
 
 **Usage and cost** (`measured_evals.cost`, `measured_ops.usage`, `measured_ops.prices`).
 `Usage(agent, model, input_tokens, output_tokens, cache_read_tokens,
-cache_write_5m_tokens, cache_write_1h_tokens)`: `input_tokens` is uncached input
-only. `cost(usage, prices)` per million tokens; a model missing from the table → `None`
-("unknown"), never 0. `collect_usage(agent)` puts a callback handler in a context
+cache_write_5m_tokens, cache_write_1h_tokens, calls=1)`: `input_tokens` is uncached
+input only; `prompt_tokens` is all input (uncached + cache reads + writes).
+`cost(usage, prices)` per million tokens; a model missing from the table → `None`
+("unknown"), never 0. A `long_context` tier (Haiku 5.5: prompt over 100,000 tokens,
+cache included) applies per call from that call's `prompt_tokens`; a multi-call total
+on a tiered model → `None`, never under-priced. `collect_usage(agent)` puts a callback handler in a context
 variable that LangChain adds to every callback manager configured inside, so it sees
 every chat model call in the agent's subgraph without replacing the run's other
 callbacks. It converts langchain-anthropic's `usage_metadata` (whose `input_tokens`
 includes cache tokens; cache writes split `ephemeral_5m/1h`, or unsplit
-`cache_creation` = 5 minutes) and sums per model. A call without a model name counts
+`cache_creation` = 5 minutes) and records one `Usage` per call (`calls()`), so tiered
+prices stay per call. A call without a model name counts
 as `unknown`. Nested blocks: only the innermost counts a call. Model calls made
 outside LangChain aren't seen. Prices match the exact model id the response reports. Demo prices: `measured_ops/config/model_prices.demo.toml`;
 `load_model_prices(path)` reads a private table.

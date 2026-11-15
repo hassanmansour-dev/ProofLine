@@ -1,6 +1,7 @@
 # ADR-0018: Eval/guard node v0: placement, fail-closed escalation, usage and cost
 
-- Status: proposed (2026-11-14, built in C7; plan and its four choices approved by Hassan the same day)
+- Status: proposed (2026-11-14, built in C7; plan and its four choices approved by Hassan
+  the same day; PR #12 review fixes applied: prices, Haiku tier, trace masking, policy log)
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C7 (GROW-86)
 
@@ -18,6 +19,8 @@ PII checks, plus tracing and cost per agent, using `measured_evals`. Open questi
 4. What "quality" means before judge models exist (GROW-14).
 5. How usage and cost are counted, including Anthropic prompt-cache tokens.
 6. How the inbox shows a failed PII check without showing the personal data.
+7. How personal data stays out of LangSmith traces, which carry node inputs and
+   outputs (previews, targets, state) in full.
 
 ## Decision
 
@@ -63,17 +66,36 @@ Each check scores 0 or 1 and gives a short reason that never contains matched te
 `EvalScores` gains `reasons` (metric → short text). A check that raises fails the node
 loudly; it is never turned into a silent score.
 
-**No matched PII value is stored or shown anywhere**: not in `EvalScores`, the inbox,
-logs, traces or the gate payload. Reasons name the kind ("email found"), never the
-value. A test captures logs and the payload to check.
+**Where personal data may appear.** The preview is shown **unmasked** in the inbox and
+the gate payload: the human approves what they see (Hassan's call, PR #12 review).
+Everywhere else, no matched value:
+- **Eval output** (`EvalScores`, reasons, the payload's `eval` block, the inbox's check
+  rows): reasons name the kind ("email found"), never the value.
+- **Logs**: eval and policy logs name actions by id, type and metric only; a blocked
+  action's log omits its target (a target can be an address: `message_person`).
+- **Traces**: `measured_ops.tracing.masked_tracing_callbacks()` gives a
+  `LangChainTracer` whose LangSmith client (`Client(anonymizer=...)`) runs every
+  input, output and error through `measured_evals.checks.redact_pii`, the same
+  patterns as the PII check, before anything is sent. It replaces LangChain's
+  env-driven tracer, which is only added when no `LangChainTracer` is present. The
+  inbox's resumes and the seed command pass it; every process that starts or resumes a
+  supervisor run must too. With tracing off it's `[]`.
+Tests capture logs at every level, the payload, the inbox page, and the masked
+client's inputs, outputs and errors.
 
 **Usage and cost.** `measured_evals.Usage` (agent, model, input tokens, output
 tokens, cache-read tokens, cache-write tokens at 5 minutes and at 1 hour) and
 `cost(usage, prices)`. Cache reads and writes are counted separately from normal input
 because they're priced differently. A model missing from the price table gives
-`None` ("unknown"), never 0. Demo prices ship in
-`measured_ops/config/model_prices.demo.toml`; real ones go in private config if they
-ever differ. A LangChain callback handler, passed to each agent run by `run_agent`,
+`None` ("unknown"), never 0. **Prompt-length tiers are priced per call**: Claude Haiku
+5.5 charges higher rates on everything for a request whose prompt is over 100,000
+tokens, counting cache reads and writes (pricing page, checked 2026-11-14). The price
+table models that as a `long_context` tier (`above_prompt_tokens` + rates); usage is
+recorded **one `Usage` per call**, and `cost` applies the tier from that call's own
+prompt. A total over several calls on a tiered model (`Usage.calls > 1`) costs `None`:
+it can't tell which calls crossed the threshold, and a guess could under-price. Demo
+prices ship in `measured_ops/config/model_prices.demo.toml`, pinned by a test to the
+pricing page; real ones go in private config if they ever differ. A LangChain callback handler, passed to each agent run by `run_agent`,
 collects usage from every LLM call inside the agent's subgraph into a new append-only
 field, `OpsState.usage`; with nested blocks (a sub-agent run inside an agent) only the
 innermost counts a call. If an agent raises, its token totals are logged before the
@@ -112,7 +134,18 @@ allowlist (ADR-0006).
   ("Not evaluated", cost "Not tracked", never shown as free). A pre-C7 run that
   crashed between `call_agent` and `triage` fails loudly on resume (no
   `evaluated_actions`); start it again.
-- Not counted: model calls an agent makes outside LangChain. Prices match the exact
-  model id the response reports; a dated id the table doesn't list shows "unknown".
+- Known limits:
+  - Model calls an agent makes outside LangChain aren't counted.
+  - Prices match the exact model id the response reports; a dated id the table
+    doesn't list shows "unknown". Other pricing modifiers (US-only inference 1.1x,
+    batch, fast mode, data residency) aren't modelled: those calls are under-priced if
+    used. None are used today; model them before turning one on.
+  - Trace masking covers runs whose config carries `masked_tracing_callbacks()`. A
+    process that traces without it (the standalone `proofline run` CLI before C8, or a
+    runner that forgets it) sends unmasked inputs. The redaction uses guard-v0's
+    patterns, so it misses what they miss (names, addresses, unseparated SINs).
+  - The checks are heuristics until GROW-15 (false negatives: rephrased overrides,
+    data in a link path; false positives: ZWJ emoji, every sourced link).
+  - `OpsState.usage` grows by one record per model call (a few dozen per run).
 - Revisit when: judges arrive (GROW-14), the injection suite lands (GROW-15), or a
   budget cap needs cost before the run ends (C10).

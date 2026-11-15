@@ -201,6 +201,8 @@ if they differ; allowlisted addresses passed per call from private config.
   preview (tests capture logs and the payload)
 - [x] e2e: a failed check pauses an "auto" action across a restart; a clean one runs
   (SQLite + Postgres)
+- [x] PR #12 review: Sonnet 5.5 cache reads 0.05x; Haiku 5.5 long-context tier priced
+  per call; PII masked in LangSmith traces; blocked-action log without the target
 - [x] Green in CI on the PR (#12: Postgres e2e ran, 463 passed, 0 skipped)
 
 ### C8 · Content agent v0 (GROW-87)

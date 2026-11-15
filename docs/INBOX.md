@@ -103,6 +103,8 @@ Never run `tailscale funnel` for this port.
   checks existed show "Not evaluated".
 - "Cost of this run" shows tokens and dollars per agent from the price table. A
   model the table doesn't list shows "unknown".
+- With LangSmith tracing on, the inbox sends traces with emails, phone numbers, SINs
+  and card numbers redacted. The page itself shows the preview as written.
 - **Approve** clears it to `ready` (nothing executes before C5). **Reject** records the
   decision and your optional feedback, and ends the run (C8 turns feedback into a
   revision task). Edit comes with C8.
