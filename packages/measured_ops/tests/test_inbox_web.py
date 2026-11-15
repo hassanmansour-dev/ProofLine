@@ -464,3 +464,105 @@ def test_pii_value_appears_only_inside_the_preview(settings: InboxSettings, cloc
     assert "email found" in rest
     assert "jane.doe" not in rest
     assert "Check failed" in listing
+
+
+# ---- background revisions on the page (C8, ADR-0019) ------------------------------------
+
+
+def test_reject_with_feedback_says_it_is_revising(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    decide(client, html, "reject", feedback="Shorter, please.")
+    listing = client.get("/").text
+
+    assert "Rejected. Revising" in listing
+    wait_for_item(client)
+
+
+def test_list_shows_runs_in_progress_and_retry_for_stopped_ones(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    from measured_ops.inbox.service import RunStatus
+
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+
+        async def fake_in_progress() -> list[RunStatus]:
+            return [
+                RunStatus("r1", "echo", "Running goal.", "running"),
+                RunStatus("r2", "echo", "Queued goal.", "queued"),
+                RunStatus("r3", "echo", "Stopped goal.", "stopped"),
+                RunStatus("r4", "echo", "Elsewhere goal.", "elsewhere"),
+            ]
+
+        c.app.state.inbox.in_progress = fake_in_progress  # type: ignore[attr-defined]
+        html = c.get("/").text
+
+    for text in ("Revising…", "Revision queued", "Revision stopped", "In progress elsewhere"):
+        assert text in html
+    assert html.count('action="/r/') == 1  # Retry only on the stopped run
+    assert 'action="/r/r3/retry"' in html
+
+
+def test_retry_continues_a_stopped_run(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        calls: list[str] = []
+
+        async def fake_retry(thread_id: str) -> None:
+            calls.append(thread_id)
+
+        c.app.state.inbox.retry = fake_retry  # type: ignore[attr-defined]
+        page = c.get("/")
+        response = c.post("/r/r3/retry", data={"csrf": field(page.text, "csrf")})
+
+    assert response.status_code == 303
+    assert calls == ["r3"]
+
+
+def test_retry_needs_the_csrf_token(client: TestClient) -> None:
+    login(client)
+    assert client.post("/r/r3/retry", data={"csrf": "wrong"}).status_code == 403
+
+
+def test_retry_of_a_run_that_is_not_stopped_says_so(client: TestClient) -> None:
+    login(client)
+    page = client.get("/")
+    response = client.post("/r/t1/retry", data={"csrf": field(page.text, "csrf")})
+    assert response.status_code == 409
+    assert "Not stopped" in response.text
+
+
+def test_revision_timeout_comes_from_the_environment() -> None:
+    env = {
+        "MEASURED_OPS_INBOX_PASSPHRASE_HASH": hash_passphrase(PASSPHRASE, n=2**10),
+        "MEASURED_OPS_INBOX_SESSION_SECRET": "k" * 40,
+        "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": "120",
+    }
+    assert InboxSettings.from_env(env).revision_timeout_s == 120.0
+    assert (
+        InboxSettings.from_env(
+            {**env, "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": ""}
+        ).revision_timeout_s
+        == 600.0
+    )
+
+
+def test_lifespan_starts_recovery_and_closes_revisions(
+    settings: InboxSettings, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.inbox import service
+
+    seen: list[str] = []
+    monkeypatch.setattr(service.Inbox, "start", lambda self: _note(seen, "start"))
+    monkeypatch.setattr(service.Inbox, "aclose", lambda self: _note(seen, "aclose"))
+    with _client(settings, clock):
+        assert seen == ["start"]
+    assert seen == ["start", "aclose"]
+
+
+async def _note(seen: list[str], what: str) -> None:
+    seen.append(what)

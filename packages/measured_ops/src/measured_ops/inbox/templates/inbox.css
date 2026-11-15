@@ -78,3 +78,5 @@ button {
 .notice { background: var(--ok-bg); color: var(--ok-fg); }
 .empty { color: var(--muted); border: 1px dashed var(--line); text-align: center; }
 code { font-size: 0.95em; }
+.run-stopped { border-color: var(--warn-fg); }
+.run form { margin-top: 8px; }

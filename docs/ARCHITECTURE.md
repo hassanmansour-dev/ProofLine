@@ -395,6 +395,16 @@ adds its own case.
   each check (passed or failed, with its reason) and the run's cost; the list marks
   "Check failed" and "Not evaluated". Settings from
   `MEASURED_OPS_INBOX_*` env vars, no secret defaults: it refuses to start without them.
+- Background revisions (C8, ADR-0019): `decide` checks a rejection **with feedback**
+  at once, marks the thread revising and resumes it in a background task
+  (`Outcome.revising`); a semaphore runs one at a time, each under
+  `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` (default 600). `in_progress()` lists runs
+  not waiting: running, queued, stopped (cut off here, or between nodes and older than
+  the timeout) and elsewhere (newer: maybe another process). `retry()` continues a
+  stopped run with `ainvoke(None)` (safe: no interrupt pending); the lifespan calls
+  `start()` (continue each stopped run once) and `aclose()` (cancel; they continue
+  next start). `POST /r/{thread_id}/retry` (CSRF) is the Retry button. C10 moves this
+  to a worker with budget caps.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
   (`docs/INBOX.md`). Edit is deferred to C8.

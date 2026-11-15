@@ -24,4 +24,26 @@
   {% endfor %}
 </ul>
 {% endif %}
+{% if running %}
+<h2>In progress</h2>
+<ul class="items">
+  {% for run in running %}
+  <li class="card run run-{{ run.state }}">
+    <span class="goal">{{ run.goal }}</span>
+    <span class="meta">{{ run.agent }} ·
+      {% if run.state == "running" %}Revising…
+      {% elif run.state == "queued" %}Revision queued
+      {% elif run.state == "stopped" %}Revision stopped (timeout, error or restart)
+      {% else %}In progress elsewhere{% endif %}
+    </span>
+    {% if run.state == "stopped" %}
+    <form method="post" action="/r/{{ run.thread_id | urlpart }}/retry">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="primary">Retry</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% endblock %}

@@ -29,6 +29,7 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_LOCK_PATH` | no | `.data/inbox.lock` |
 | `MEASURED_OPS_POLICY_PATH` | no | the bundled demo policy |
 | `MEASURED_OPS_PRICES_PATH` | no | the bundled demo price table |
+| `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
@@ -105,9 +106,16 @@ Never run `tailscale funnel` for this port.
   model the table doesn't list shows "unknown".
 - With LangSmith tracing on, the inbox sends traces with emails, phone numbers, SINs
   and card numbers redacted. The page itself shows the preview as written.
-- **Approve** clears it to `ready` (nothing executes before C5). **Reject** records the
-  decision and your optional feedback, and ends the run (C8 turns feedback into a
-  revision task). Edit comes with C8.
+- **Approve** clears it to `ready` (nothing executes before C5; an `approve_draft` never
+  executes: you paste the post yourself). **Reject** without feedback ends the run.
+  **Reject with feedback** revises it (C8, ADR-0019): the page answers at once
+  ("Revising…"), the agent writes a new draft in the background, and it comes back to
+  the list when it's ready, at most 3 times per run. One revision runs at a time; the
+  others wait as "Revision queued". Edit comes with C9.
+- "In progress" lists runs not waiting for you. "Revision stopped" means a revision
+  hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
+  continues stopped runs once when it starts. "In progress elsewhere" is a run another
+  process is working on (e.g. `proofline propose`); it's left alone.
 - An action marked **Blocked by policy** was paused before the policy changed to
   "never". It can only be rejected.
 - Tapping twice is safe: the second tap says "Already decided".

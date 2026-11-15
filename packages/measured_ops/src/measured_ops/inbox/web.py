@@ -1,6 +1,7 @@
 """The inbox web app (C4, ADR-0017): FastAPI, server-rendered, phone first, no JavaScript.
 
     GET|HEAD /login, POST /login, POST /logout
+    POST /r/{thread_id}/retry    continue a stopped revision (C8, ADR-0019)
     GET  /                       actions waiting at the gate
     GET  /a/{thread_id}          one action: preview, approve / reject with feedback
     POST /a/{thread_id}/decision resume the run with the answer
@@ -112,9 +113,15 @@ def create_inbox_app(
                 graph = build_supervisor(agents, policy, eval_context=eval_context).compile(
                     checkpointer=saver
                 )
-                app.state.inbox = Inbox(graph, policy, prices=prices)
+                app.state.inbox = Inbox(
+                    graph, policy, prices=prices, revision_timeout_s=settings.revision_timeout_s
+                )
                 log.info("inbox: serving runs from %s", settings.checkpointer_url.split(":")[0])
-                yield
+                await app.state.inbox.start()  # continue revisions a restart cut off
+                try:
+                    yield
+                finally:
+                    await app.state.inbox.aclose()  # cut-off revisions continue on next start
 
     app = FastAPI(
         title="Measured Ops inbox",
@@ -255,8 +262,9 @@ def create_inbox_app(
         if not signed_in(request):
             return to_login()
         items = await inbox(request).list_pending()
+        running = await inbox(request).in_progress()
         flash = request.session.pop("flash", None)
-        return render(request, "list.html", items=items, flash=flash)
+        return render(request, "list.html", items=items, running=running, flash=flash)
 
     # `:path` so a thread id containing "/" still routes (links quote it fully).
     @app.get("/a/{thread_id:path}", response_class=HTMLResponse)
@@ -306,8 +314,25 @@ def create_inbox_app(
                 error=str(exc),
             )
         verb = "Approved" if outcome.approved else "Rejected"
-        more = " The run has another action waiting." if outcome.still_paused else ""
+        if outcome.revising:
+            more = " Revising: the new draft comes back here when it's ready."
+        else:
+            more = " The run has another action waiting." if outcome.still_paused else ""
         request.session["flash"] = f"{verb}.{more}"
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/r/{thread_id:path}/retry")
+    async def retry(request: Request, thread_id: str) -> Response:
+        if not signed_in(request):
+            return to_login()
+        form = await request.form(max_files=0, max_fields=2)
+        if not csrf_ok(request, form.get("csrf")):
+            return forbidden(request)
+        try:
+            await inbox(request).retry(thread_id)
+        except AlreadyDecided:
+            return message(request, 409, "Not stopped", "This run isn't stopped. Nothing changed.")
+        request.session["flash"] = "Retrying the revision."
         return RedirectResponse("/", status_code=303)
 
     return app

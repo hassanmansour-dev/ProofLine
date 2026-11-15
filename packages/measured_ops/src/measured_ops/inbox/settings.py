@@ -29,6 +29,7 @@ class InboxSettings:
     lock_path: Path = Path(".data/inbox.lock")
     port: int = 8765
     session_hours: int = 12
+    revision_timeout_s: float = 600.0  # one background revision (ADR-0019)
 
     def check(self) -> None:
         """Raise InboxConfigError unless the secrets are present and usable."""
@@ -65,6 +66,9 @@ class InboxSettings:
             checkpointer_url=env.get(f"{PREFIX}CHECKPOINTER_URL", defaults.checkpointer_url),
             lock_path=Path(env.get(f"{PREFIX}LOCK_PATH", str(defaults.lock_path))),
             port=int(env.get(f"{PREFIX}PORT", str(defaults.port))),
+            revision_timeout_s=float(
+                env.get(f"{PREFIX}REVISION_TIMEOUT_S") or defaults.revision_timeout_s
+            ),
         )
         settings.check()
         return settings
