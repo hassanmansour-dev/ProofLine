@@ -16,7 +16,7 @@ Weights live in `schemas.CRITERION_WEIGHTS`. Overall = weighted mean, 1 dp.
 | `audience_fit` | 1.0 | Depth and examples match the stated audience |
 | `actionability` | 1.0 | Viewer leaves with something they can do or check |
 | `voice` | 1.0 | Sounds like the brand (see BRAND_VOICE.md), spoken not written |
-| `length_fit` | 1.0 | Within the word limit (default 200) and uses it well |
+| `length_fit` | 1.0 | Within the word limit (default 140) and uses it well |
 
 ## Anchors
 

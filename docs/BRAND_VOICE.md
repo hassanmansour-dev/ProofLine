@@ -35,7 +35,7 @@
   disclosed as "AI me."
 
 ## Format
-- One short script (default ≤200 words), used as a LinkedIn post and a 1-minute
+- One short script (default ≤140 words), used as a LinkedIn post and a 1-minute
   video:
   1. **Hook**: a concrete problem or a surprising result from a real build, in one
      line. No questions like "Have you ever…?"

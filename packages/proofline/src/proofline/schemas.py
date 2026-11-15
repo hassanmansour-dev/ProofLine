@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ModelRole = Literal["planner", "researcher", "writer", "critic"]
 
 # One output format (ADR-0012): a short script for a LinkedIn post or a 1-minute video.
-MAX_WORDS = 200
+MAX_WORDS = 140  # about 56 s at WORDS_PER_MINUTE: a 1-minute clip (C8)
 WORDS_PER_MINUTE = 150
 
 SOURCE_ID_RE = re.compile(r"^S\d+$")

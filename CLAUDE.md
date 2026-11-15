@@ -2,7 +2,7 @@
 
 **Proofline: a multi-agent content pipeline where nothing ships without passing
 the evals and a human sign-off.** It turns a topic and an audience into an
-approved, sourced short technical script (≤200 words: a LinkedIn post and a
+approved, sourced short technical script (≤140 words: a LinkedIn post and a
 1-minute video) for a configurable brand (`PROOFLINE_BRAND_NAME`): plan → research
 → write → critique (loop) → finalize, then human approval in the supervisor's
 gate and inbox (ADR-0014).

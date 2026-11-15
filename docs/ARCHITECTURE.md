@@ -12,7 +12,7 @@ need to be torn up when they land.
 ## 1. What it does
 
 Input: a topic and an audience. Output: one short technical script (title, hook,
-body, call to action; at most 200 words by default) for a LinkedIn post and a
+body, call to action; at most 140 words by default, about 56 s at 150 wpm) for a LinkedIn post and a
 1-minute video, with inline citations, saved as Markdown + JSON.
 
 A human is the final gate (the approval gate in C2, the inbox in C4). The machine's job is to get a draft good enough

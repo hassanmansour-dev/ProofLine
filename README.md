@@ -7,7 +7,7 @@ without passing the evals and a human sign-off.**
 
 Give Proofline a topic and an audience. It plans an angle, researches it, writes a
 short technical script with inline citations, and formats the result: a title, a
-hook, a body and a call to action, under 200 words. The same script works as a
+hook, a body and a call to action, under 140 words. The same script works as a
 LinkedIn post and as a 1-minute video about AI engineering.
 
 Built in public. **Proofline v1 is Measured Ops** ([ADR-0013](docs/adr/0013-measured-ops-is-proofline-v1.md)):
@@ -94,7 +94,7 @@ Configuration comes from environment variables (see [`.env.example`](.env.exampl
 | `PROOFLINE_LLM_PROVIDER` | `anthropic` | Model provider (adapters live in `llm.py`) |
 | `PROOFLINE_PLANNER_MODEL`, `_WRITER_MODEL`, … | Haiku / Sonnet | Model per node role |
 | `PROOFLINE_BRAND_NAME` | `Build Clearly` | Brand the scripts are written for |
-| `PROOFLINE_MAX_WORDS` | `200` | Word limit for the script |
+| `PROOFLINE_MAX_WORDS` | `140` | Word limit for the script (about 56 s spoken) |
 | `PROOFLINE_RESEARCHER` | `stub` | `stub` = fixed notes, no network; `web` = Tavily search (needs `TAVILY_API_KEY`) |
 
 The voice the writer follows lives in [`docs/BRAND_VOICE.md`](docs/BRAND_VOICE.md).
