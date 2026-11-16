@@ -38,8 +38,10 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, PackageLoader, select_autoescape
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from measured_evals import ModelPrice
@@ -101,12 +103,18 @@ def create_inbox_app(
     # get checked before any failure counts. One user, so serialising costs nothing.
     signin_lock = asyncio.Lock()
     live_sessions: dict[str, float] = {}  # session id -> sign-in time; revoked on sign-out
+    # Loaded once, now, and never re-read: a running inbox must not pair its code with
+    # templates changed on disk later (a 500 on Hassan's phone after an upgrade).
     templates = Environment(
         loader=PackageLoader("measured_ops.inbox", "templates"),
         autoescape=select_autoescape(["html"]),
+        auto_reload=False,
+        cache_size=-1,
     )
     templates.filters["urlpart"] = lambda value: quote(str(value), safe="")
     templates.filters["dollars"] = lambda v: "unknown" if v is None else f"${v:,.4f}"
+    for name in templates.list_templates(extensions=["html"]):
+        templates.get_template(name)
     css = files("measured_ops.inbox").joinpath("templates", "inbox.css").read_text("utf-8")
     js = files("measured_ops.inbox").joinpath("templates", "inbox.js").read_text("utf-8")
 
@@ -138,6 +146,41 @@ def create_inbox_app(
         redoc_url=None,
         openapi_url=None,
     )
+    app.state.templates = templates
+
+    # ---- errors: always an HTML page, never a JSON body a phone downloads -------------
+
+    def error_page(status: int, heading: str, text: str) -> HTMLResponse:
+        html = templates.get_template("error.html").render(
+            heading=heading, message=text, signed_in=False
+        )
+        return HTMLResponse(html, status_code=status, headers=SECURITY_HEADERS)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
+        headings = {404: "Not found", 405: "Not allowed", 401: "Sign in", 403: "Not allowed"}
+        heading = headings.get(exc.status_code, "Something's not right")
+        text = (
+            "That page doesn't exist."
+            if exc.status_code == 404
+            else "That request isn't allowed here."
+        )
+        return error_page(exc.status_code, heading, text)
+
+    @app.exception_handler(RequestValidationError)
+    async def bad_request(request: Request, exc: RequestValidationError) -> HTMLResponse:
+        return error_page(400, "Bad request", "The form wasn't complete. Reload and try again.")
+
+    @app.exception_handler(Exception)
+    async def server_error(request: Request, exc: Exception) -> HTMLResponse:
+        log.exception("inbox: error on %s %s", request.method, request.url.path, exc_info=exc)
+        return error_page(
+            500,
+            "Something went wrong",
+            "The inbox logged the error. If you were deciding, reload the list to see "
+            "whether it went through before trying again.",
+        )
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,

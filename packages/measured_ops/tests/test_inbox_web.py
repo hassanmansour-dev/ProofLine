@@ -772,3 +772,109 @@ def test_marking_an_unknown_draft_is_a_404(client: TestClient) -> None:
 def test_the_header_links_to_ready_to_paste(client: TestClient) -> None:
     login(client)
     assert 'href="/ready"' in client.get("/").text
+
+
+# ---- runs saved by earlier versions; HTML errors only (C8, Hassan's phone report) --------
+
+
+def seed_old_format(url: str, thread: str = "old1") -> None:
+    """A run as an earlier version saved it: gate payload without `eval` (C4) or
+    `failing` (early C7), no `revision` in the task, no `usage` in the state."""
+
+    def c4_payload(action: Any) -> dict[str, Any]:
+        return {
+            "action_id": action.id,
+            "task_id": action.task_id,
+            "type": action.type,
+            "target": action.target,
+            "preview": action.preview,
+            "risk_level": action.risk_level,
+        }
+
+    async def run() -> None:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent()], load_policy()).compile(checkpointer=saver)
+            cfg: Any = {"configurable": {"thread_id": thread}, "recursion_limit": 40}
+            state = {
+                k: v
+                for k, v in initial_ops_state(Task(agent="echo", goal="Old run.")).items()
+                if k != "usage"
+            }
+            await graph.ainvoke(state, cfg)
+
+    # Scoped: undoing the test's own monkeypatch would also undo the conftest's tmp_path
+    # redirection of the judge log (the repo guard caught exactly that).
+    from measured_ops import supervisor
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(supervisor, "gate_payload", c4_payload)
+        asyncio.run(run())
+
+
+def test_a_run_saved_by_an_earlier_version_opens_and_decides(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_old_format(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        html = open_item(c, "old1")
+        assert "Not evaluated" in html
+        assert "First draft · up to 3 revisions" in html
+
+        response = decide(c, html, "approve", thread="old1")
+
+    assert response.status_code == 303
+    assert _thread_state(settings.checkpointer_url, "old1").next == ()
+
+
+def test_templates_are_loaded_once_at_startup(settings: InboxSettings, clock: Clock) -> None:
+    # A running inbox must never pair its code with templates changed on disk later
+    # (the phone's 500: old code in memory, new detail.html read from disk).
+    app = create_inbox_app(settings, [EchoAgent()], load_policy(), clock=clock)
+    env = app.state.templates
+    assert env.auto_reload is False
+    names = {
+        "base.html",
+        "detail.html",
+        "list.html",
+        "login.html",
+        "message.html",
+        "ready.html",
+        "error.html",
+    }
+    assert names <= {key[1] for key in env.cache}
+
+
+def _html_error(response: Any, status: int) -> None:
+    assert response.status_code == status
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<!doctype html>" in response.text.lower()
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "content-security-policy" in response.headers
+
+
+def test_an_unknown_page_is_an_html_404(client: TestClient) -> None:
+    _html_error(client.get("/no/such/page"), 404)
+
+
+def test_a_wrong_method_is_an_html_405(client: TestClient) -> None:
+    _html_error(client.put("/login"), 405)
+
+
+def test_a_server_error_is_an_html_500_never_json(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url)
+    app = create_inbox_app(settings, [EchoAgent()], load_policy(), clock=clock)
+    with TestClient(
+        app, base_url="https://testserver", follow_redirects=False, raise_server_exceptions=False
+    ) as c:
+        login(c)
+
+        async def broken(thread_id: str) -> Any:
+            raise RuntimeError("boom")
+
+        app.state.inbox.get = broken
+        response = c.get("/a/t1")
+
+    _html_error(response, 500)
+    assert "boom" not in response.text  # no internals on the page
+    assert "Something went wrong" in response.text

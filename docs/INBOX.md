@@ -149,3 +149,5 @@ Never run `tailscale funnel` for this port.
 | Phone can't load the page | the laptop is asleep or off the tailnet, or Serve is off (`tailscale serve status`) |
 | Signed out unexpectedly | the inbox restarted, or 12 hours passed since sign-in |
 | A run is missing from the list | it couldn't be read: the log has `can't read run <id>; skipped` |
+| "Something went wrong" page | an error in the inbox: the terminal has `inbox: error on ...` with the traceback |
+| Errors right after updating the code | restart the inbox after every `git pull`: a running inbox keeps the code and templates it started with |

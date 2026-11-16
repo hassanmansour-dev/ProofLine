@@ -46,6 +46,7 @@ from langgraph.types import Command
 from pydantic import ValidationError
 
 from measured_evals import ModelPrice, total_by_agent
+from measured_evals.scores import DEFAULT_THRESHOLD
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
@@ -100,7 +101,11 @@ def _eval_view(block: Any) -> EvalView | None:
     if not isinstance(block, dict):
         return None
     reasons: dict[str, str] = block.get("reasons") or {}
-    failing = set(block.get("failing") or ())
+    scores: dict[str, float] = block.get("scores") or {}
+    if "failing" in block:
+        failing = set(block.get("failing") or ())
+    else:  # saved before `failing` existed (early C7): below the default threshold
+        failing = {n for n, v in scores.items() if float(v) < DEFAULT_THRESHOLD}
     checks = tuple(
         CheckView(name, name not in failing, float(score), reasons.get(name))
         for name, score in (block.get("scores") or {}).items()
