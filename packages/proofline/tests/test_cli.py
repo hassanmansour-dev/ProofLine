@@ -216,3 +216,105 @@ def test_propose_gives_up_after_the_revision_timeout(
 
     assert result.exit_code == 1
     assert "timed out after 0.2s" in result.output
+
+
+# ── ready: approved drafts to paste (C8, ADR-0020) ────────────────────────────
+
+
+def _proposed_and_approved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, topic: str) -> str:
+    """propose a topic, approve it through the inbox service; return the action id."""
+    import asyncio
+
+    from measured_ops import load_policy
+    from measured_ops.checkpoint import open_checkpointer
+    from measured_ops.inbox.service import Inbox
+    from measured_ops.supervisor import build_supervisor
+
+    llm = FakeLLM().queue(make_outline(), make_draft(title=f"About {topic}"), make_critique(9))
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
+    result = CliRunner().invoke(cli.app, ["propose", "--topic", topic])
+    assert result.exit_code == 0, result.output
+    thread_id = result.output.strip().split()[-1]
+
+    async def approve() -> str:
+        async with open_checkpointer(f"sqlite:///{tmp_path / 'ops.db'}") as saver:
+            graph = build_supervisor([], load_policy()).compile(checkpointer=saver)
+            inbox = Inbox(graph, load_policy(), callbacks=[])
+            [item] = [i for i in await inbox.list_pending() if i.thread_id == thread_id]
+            await inbox.decide(
+                thread_id, interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+            )
+            return item.action_id
+
+    return asyncio.run(approve())
+
+
+@pytest.fixture
+def inbox_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("MEASURED_OPS_INBOX_CHECKPOINTER_URL", f"sqlite:///{tmp_path / 'ops.db'}")
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+    return tmp_path
+
+
+def test_ready_prints_approved_not_posted_drafts_as_markdown_newest_first(
+    inbox_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.posted import posted_log_from_env
+
+    posted = _proposed_and_approved(inbox_db, monkeypatch, "Posted one")
+    _proposed_and_approved(inbox_db, monkeypatch, "Older")
+    _proposed_and_approved(inbox_db, monkeypatch, "Newer")
+    posted_log_from_env().mark(posted)
+    monkeypatch.setattr(cli, "get_settings", lambda: make_settings(inbox_db))
+
+    result = CliRunner().invoke(cli.app, ["ready"])
+
+    assert result.exit_code == 0, result.output
+    out = result.stdout
+    assert "About Posted one" not in out
+    assert out.index("About Newer") < out.index("About Older")
+    for heading in ("## LinkedIn post", "## Clip script", "## Lesson outline"):
+        assert heading in out
+
+
+def test_ready_with_nothing_approved_says_so(
+    inbox_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "get_settings", lambda: make_settings(inbox_db))
+    result = CliRunner().invoke(cli.app, ["ready"])
+    assert result.exit_code == 0
+    assert "Nothing is ready to paste." in result.output
+
+
+def test_ready_out_writes_under_outputs_only(
+    inbox_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _proposed_and_approved(inbox_db, monkeypatch, "Saved")
+    settings = make_settings(inbox_db)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    ok = CliRunner().invoke(cli.app, ["ready", "--out", str(settings.output_dir / "ready.md")])
+    outside = CliRunner().invoke(cli.app, ["ready", "--out", str(inbox_db / "elsewhere.md")])
+
+    assert ok.exit_code == 0, ok.output
+    assert "About Saved" in (settings.output_dir / "ready.md").read_text()
+    assert outside.exit_code == 1
+    assert "under" in outside.output
+    assert not (inbox_db / "elsewhere.md").exists()
+
+
+def test_ready_only_reads_it_never_touches_a_run(
+    inbox_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    _proposed_and_approved(inbox_db, monkeypatch, "Read only")
+    monkeypatch.setattr(cli, "get_settings", lambda: make_settings(inbox_db))
+
+    def count() -> int:
+        with sqlite3.connect(inbox_db / "ops.db") as db:
+            return int(db.execute("select count(*) from checkpoints").fetchone()[0])
+
+    before = count()
+    assert CliRunner().invoke(cli.app, ["ready"]).exit_code == 0
+    assert count() == before

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -161,6 +162,58 @@ def propose(
         raise typer.Exit(code=1)
     typer.echo(summary, err=True)
     typer.echo(f"waiting in the inbox: {thread_id}")
+
+
+async def ready_markdown() -> str:
+    """Approved, not-yet-posted drafts as Markdown, newest first (ADR-0020). Reads only."""
+    from measured_ops.checkpoint import open_checkpointer
+    from measured_ops.inbox.service import Inbox
+    from measured_ops.inbox.settings import checkpointer_url, env_path
+    from measured_ops.policy import load_policy
+    from measured_ops.supervisor import build_supervisor
+
+    policy = load_policy(env_path("MEASURED_OPS_POLICY_PATH"))
+    async with open_checkpointer(checkpointer_url()) as saver:
+        graph = build_supervisor([], policy).compile(checkpointer=saver)
+        items = await Inbox(graph, policy, callbacks=[]).list_ready()
+    if not items:
+        return "Nothing is ready to paste.\n"
+    parts: list[str] = []
+    for item in items:
+        parts.append(
+            f"# {item.goal}\n\n*approved {item.approved_at[:16].replace('T', ' ')}"
+            f" · run {item.thread_id} · action {item.action_id}*\n"
+        )
+        parts += [f"## {title}\n\n{text}\n" for title, text in item.blocks]
+        parts.append("---\n")
+    return "\n".join(parts)
+
+
+@app.command()
+def ready(
+    out: Annotated[
+        Path | None, typer.Option(help="Also write the Markdown to this file, under outputs/")
+    ] = None,
+) -> None:
+    """Print approved drafts not yet marked as posted, as Markdown (newest first).
+
+    Reads the inbox's database; changes nothing. Copy from here, or from the inbox's
+    Ready to paste page; mark them as posted there.
+    """
+    load_dotenv(find_dotenv(usecwd=True))
+    settings = get_settings()
+    if out is not None:
+        root = settings.output_dir.resolve()
+        target = out.resolve()
+        if not target.is_relative_to(root):
+            typer.echo(f"error: --out must be under {settings.output_dir}/ (git-ignored)", err=True)
+            raise typer.Exit(code=1)
+    markdown = asyncio.run(ready_markdown())
+    typer.echo(markdown, nl=False)
+    if out is not None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(markdown, encoding="utf-8")
+        typer.echo(f"saved to {out}", err=True)
 
 
 @app.command()
