@@ -394,7 +394,7 @@ adds its own case.
   `Command(resume={interrupt_id: decision})`, never `ainvoke(None)`. A refused answer
   (`Refused`) leaves the run paused. A per-thread lock serialises simultaneous taps.
 - `web.create_inbox_app(settings, agents, policy, prices=..., eval_context=...)`: FastAPI, Jinja2 autoescaped pages,
-  no JavaScript. Sign-in: one passphrase checked against a scrypt hash, one attempt at a
+  one first-party script since C8 (ADR-0020). Sign-in: one passphrase checked against a scrypt hash, one attempt at a
   time, 5 failures lock it for 15 minutes; session cookie `__Host-mo_inbox`
   (`HttpOnly`/`Secure`/`SameSite=Strict`) whose server-side session id ends 12 hours after
   sign-in and is revoked on sign-out; size-limited forms; CSRF token on every POST;
@@ -420,6 +420,16 @@ adds its own case.
   (`MEASURED_OPS_JUDGE_LOG_PATH`, default `.data/judge_log.jsonl`); the content agent
   appends `{"kind": "critic", "action_id", "critic"}` when it proposes. Ids, scores and a
   bool only: the port has no parameter for text. GROW-13 joins them on `action_id`.
+- Ready to paste (C8, ADR-0020): `GET /ready` lists approved `approve_draft` actions
+  (`list_ready`: from each thread's `ready` and approving decisions, newest first), each
+  preview split on its `## ` headings into read-only blocks with a Copy button.
+  `POST /ready/{action_id}/posted` (CSRF) appends `{"action_id", "posted_at"}` to
+  `measured_ops.posted` (`MEASURED_OPS_POSTED_PATH`, default `.data/posted.jsonl`) and
+  hides it; it never resumes or writes to a run. `proofline ready [--out]` prints the
+  same list. The decision form is explicit: Approve, Revise with this feedback (needs
+  text and a revision left; shows "Revision 2 of 3"), Reject and stop (drops any text).
+  The inbox's one script, `/static/inbox.js` (CSP `script-src 'self'`), copies blocks
+  and disables Revise while the box is empty; pages work without it.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
   (`docs/INBOX.md`). Edit is deferred to C9.

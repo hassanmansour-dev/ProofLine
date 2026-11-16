@@ -61,6 +61,7 @@ uv run uvicorn proofline.api:app --reload                       # API (/health o
 uv run python -m measured_ops.inbox serve                       # approval inbox, 127.0.0.1 (docs/INBOX.md)
 uv run proofline inbox                                          # the same inbox with the content agent (C8)
 uv run proofline propose --topic "..." --audience "..."         # one draft into the inbox (C8, until C6)
+uv run proofline ready [--out outputs/ready.md]                 # approved drafts to paste (C8)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 
@@ -102,6 +103,7 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     prices.py       load_model_prices(); config/model_prices.demo.toml (demo values)
     tracing.py      masked_tracing_callbacks(): LangSmith tracer with PII redacted (C7)
     judge_log.py    judge-agreement log: action id, critic/eval scores, decision; no text (C8)
+    posted.py       posted marks for approved drafts: action id + time only (C8, ADR-0020)
     checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
     echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
     inbox/          approval inbox (C4, ADR-0017): service.py (list/decide, background
