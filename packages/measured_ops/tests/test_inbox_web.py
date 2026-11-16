@@ -99,7 +99,20 @@ def open_item(c: TestClient, thread: str = "t1") -> str:
     return page.text
 
 
-def decide(c: TestClient, html: str, decision: str, **extra: str) -> Any:
+def wait_for_item(c: TestClient, thread: str = "t1", seconds: float = 5.0) -> str:
+    """Background revisions (ADR-0019): poll until the run waits at the gate again."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        page = c.get(f"/a/{thread}")
+        if page.status_code == 200:
+            return page.text
+        time.sleep(0.02)
+    raise AssertionError(f"run {thread} didn't come back to the inbox in {seconds}s")
+
+
+def decide(c: TestClient, html: str, decision: str, *, thread: str = "t1", **extra: str) -> Any:
     data = {
         "csrf": field(html, "csrf"),
         "interrupt_id": field(html, "interrupt_id"),
@@ -108,7 +121,7 @@ def decide(c: TestClient, html: str, decision: str, **extra: str) -> Any:
         "feedback": "",
     }
     data.update(extra)
-    return c.post("/a/t1/decision", data=data)
+    return c.post(f"/a/{thread}/decision", data=data)
 
 
 # ---- startup ----------------------------------------------------------------------------
@@ -299,14 +312,25 @@ def test_approve_clears_the_item(client: TestClient) -> None:
     assert client.get("/a/t1").status_code == 404
 
 
-def test_reject_with_feedback_clears_the_item(client: TestClient) -> None:
+def test_reject_without_feedback_clears_the_item(client: TestClient) -> None:
     login(client)
     html = open_item(client)
 
-    response = decide(client, html, "reject", feedback="Shorter, please.")
+    response = decide(client, html, "reject")
 
     assert response.status_code == 303
     assert "Nothing is waiting" in client.get("/").text
+
+
+def test_reject_with_feedback_brings_back_a_revised_item(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    response = decide(client, html, "revise", feedback="Shorter, please.")
+
+    assert response.status_code == 303
+    again = wait_for_item(client)
+    assert field(again, "action_id") != field(html, "action_id")
 
 
 def test_a_second_tap_is_already_decided(client: TestClient) -> None:
@@ -440,3 +464,417 @@ def test_pii_value_appears_only_inside_the_preview(settings: InboxSettings, cloc
     assert "email found" in rest
     assert "jane.doe" not in rest
     assert "Check failed" in listing
+
+
+# ---- background revisions on the page (C8, ADR-0019) ------------------------------------
+
+
+def test_reject_with_feedback_says_it_is_revising(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    decide(client, html, "revise", feedback="Shorter, please.")
+    listing = client.get("/").text
+
+    assert "Revising" in listing
+    wait_for_item(client)
+
+
+def test_list_shows_runs_in_progress_and_retry_for_stopped_ones(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    from measured_ops.inbox.service import RunStatus
+
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+
+        async def fake_in_progress() -> list[RunStatus]:
+            return [
+                RunStatus("r1", "echo", "Running goal.", "running"),
+                RunStatus("r2", "echo", "Queued goal.", "queued"),
+                RunStatus("r3", "echo", "Stopped goal.", "stopped"),
+                RunStatus("r4", "echo", "Elsewhere goal.", "elsewhere"),
+            ]
+
+        c.app.state.inbox.in_progress = fake_in_progress  # type: ignore[attr-defined]
+        html = c.get("/").text
+
+    for text in ("Revising…", "Revision queued", "Revision stopped", "In progress elsewhere"):
+        assert text in html
+    assert html.count('action="/r/') == 1  # Retry only on the stopped run
+    assert 'action="/r/r3/retry"' in html
+
+
+def test_retry_continues_a_stopped_run(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        calls: list[str] = []
+
+        async def fake_retry(thread_id: str) -> None:
+            calls.append(thread_id)
+
+        c.app.state.inbox.retry = fake_retry  # type: ignore[attr-defined]
+        page = c.get("/")
+        response = c.post("/r/r3/retry", data={"csrf": field(page.text, "csrf")})
+
+    assert response.status_code == 303
+    assert calls == ["r3"]
+
+
+def test_retry_needs_the_csrf_token(client: TestClient) -> None:
+    login(client)
+    assert client.post("/r/r3/retry", data={"csrf": "wrong"}).status_code == 403
+
+
+def test_retry_of_a_run_that_is_not_stopped_says_so(client: TestClient) -> None:
+    login(client)
+    page = client.get("/")
+    response = client.post("/r/t1/retry", data={"csrf": field(page.text, "csrf")})
+    assert response.status_code == 409
+    assert "Not stopped" in response.text
+
+
+def test_revision_timeout_comes_from_the_environment() -> None:
+    env = {
+        "MEASURED_OPS_INBOX_PASSPHRASE_HASH": hash_passphrase(PASSPHRASE, n=2**10),
+        "MEASURED_OPS_INBOX_SESSION_SECRET": "k" * 40,
+        "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": "120",
+    }
+    assert InboxSettings.from_env(env).revision_timeout_s == 120.0
+    assert (
+        InboxSettings.from_env(
+            {**env, "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": ""}
+        ).revision_timeout_s
+        == 600.0
+    )
+
+
+def test_lifespan_starts_recovery_and_closes_revisions(
+    settings: InboxSettings, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.inbox import service
+
+    seen: list[str] = []
+    monkeypatch.setattr(service.Inbox, "start", lambda self: _note(seen, "start"))
+    monkeypatch.setattr(service.Inbox, "aclose", lambda self: _note(seen, "aclose"))
+    with _client(settings, clock):
+        assert seen == ["start"]
+    assert seen == ["start", "aclose"]
+
+
+async def _note(seen: list[str], what: str) -> None:
+    seen.append(what)
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "nan", "inf"])
+def test_a_bad_revision_timeout_is_refused(bad: str) -> None:
+    from measured_ops.inbox.settings import InboxConfigError
+
+    env = {
+        "MEASURED_OPS_INBOX_PASSPHRASE_HASH": hash_passphrase(PASSPHRASE, n=2**10),
+        "MEASURED_OPS_INBOX_SESSION_SECRET": "k" * 40,
+        "MEASURED_OPS_INBOX_REVISION_TIMEOUT_S": bad,
+    }
+    with pytest.raises(InboxConfigError, match="REVISION_TIMEOUT_S"):
+        InboxSettings.from_env(env)
+
+
+# ---- explicit reject: revise or stop (C8, ADR-0020) ---------------------------------------
+
+
+def test_the_form_has_approve_revise_and_reject_and_stop(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    assert 'value="approve"' in html
+    assert ">Revise with this feedback<" in html
+    assert 'data-needs-feedback="feedback"' in html  # inbox.js disables it while empty
+    assert ">Reject and stop<" in html
+    assert '<script src="/static/inbox.js" defer></script>' in html
+    assert "First draft · up to 3 revisions" in html
+
+
+def test_revise_with_an_empty_box_is_refused_and_the_run_waits(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    response = decide(client, html, "revise", feedback="   ")
+
+    assert response.status_code == 400
+    assert "write what to change" in response.text
+    assert field(open_item(client), "action_id") == field(html, "action_id")
+
+
+def test_reject_and_stop_ignores_the_text_and_never_revises(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        html = open_item(c)
+
+        response = decide(c, html, "reject", feedback="This text must not revise anything.")
+
+        assert response.status_code == 303
+        assert "Nothing is waiting" in c.get("/").text
+        assert "In progress" not in c.get("/").text  # no revision queued or running
+    state = _thread_state(settings.checkpointer_url, "t1")
+    [decision] = state.values["decisions"]
+    assert (decision.approved, decision.feedback) == (False, None)
+    assert state.next == ()
+    assert state.values["task"].inputs.get("revision", 0) == 0
+
+
+def test_the_page_shows_the_revision_number(client: TestClient) -> None:
+    login(client)
+    decide(client, open_item(client), "revise", feedback="Shorter.")
+
+    again = wait_for_item(client)
+
+    assert "Revision 1 of 3" in again
+
+
+def test_with_no_revisions_left_revise_is_refused(client: TestClient) -> None:
+    login(client)
+    for _ in range(3):
+        decide(
+            client,
+            open_item(client) if _ == 0 else wait_for_item(client),
+            "revise",
+            feedback="Again.",
+        )
+    html = wait_for_item(client)
+    assert "Revision 3 of 3" in html
+    assert "No revisions left" in html
+
+    response = decide(client, html, "revise", feedback="Once more.")
+
+    assert response.status_code == 400
+    assert "no revisions left" in response.text
+
+
+def test_inbox_js_is_served_and_the_csp_allows_only_self_scripts(client: TestClient) -> None:
+    js = client.get("/static/inbox.js")
+    assert js.status_code == 200
+    assert js.headers["content-type"].startswith("text/javascript")
+    csp = client.get("/login").headers["content-security-policy"]
+    assert "script-src 'self'" in csp
+    assert "unsafe-inline" not in csp
+
+
+def _thread_state(url: str, thread_id: str) -> Any:
+    async def read() -> Any:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent()], load_policy()).compile(checkpointer=saver)
+            return await graph.aget_state({"configurable": {"thread_id": thread_id}})
+
+    return asyncio.run(read())
+
+
+# ---- ready to paste (C8, ADR-0020) ---------------------------------------------------------
+
+
+def seed_draft(
+    url: str, goal: str = "Say why every AI loop needs an exit.", thread: str = "d1"
+) -> None:
+    async def run() -> None:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent("approve_draft")], load_policy()).compile(
+                checkpointer=saver
+            )
+            cfg: Any = {"configurable": {"thread_id": thread}, "recursion_limit": 40}
+            await graph.ainvoke(initial_ops_state(Task(agent="echo", goal=goal)), cfg)
+
+    asyncio.run(run())
+
+
+def _approve_draft(c: TestClient, thread: str = "d1") -> None:
+    assert decide(c, open_item(c, thread), "approve", thread=thread).status_code == 303
+
+
+def test_ready_needs_sign_in(client: TestClient) -> None:
+    assert client.get("/ready").status_code in (303, 307)
+
+
+def test_an_approved_draft_is_ready_to_paste_with_copy_buttons(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_draft(settings.checkpointer_url, goal="Exits <b>matter</b>")
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        html = c.get("/ready").text
+
+    assert "Ready to paste" in html
+    assert "Draft post: Exits &lt;b&gt;matter&lt;/b&gt;" in html  # escaped, in a text box
+    assert "<b>matter</b>" not in html
+    assert 'data-copy="block-0-0"' in html
+    assert '<textarea id="block-0-0" readonly' in html
+    assert ">Mark as posted<" in html
+
+
+def test_ready_lists_newest_first(settings: InboxSettings, clock: Clock) -> None:
+    seed_draft(settings.checkpointer_url, goal="Older goal.", thread="d1")
+    seed_draft(settings.checkpointer_url, goal="Newer goal.", thread="d2")
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c, "d1")
+        _approve_draft(c, "d2")
+        html = c.get("/ready").text
+
+    assert html.index("Newer goal.") < html.index("Older goal.")
+
+
+def test_mark_as_posted_hides_it_and_never_resumes_a_run(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_draft(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        page = c.get("/ready").text
+        action_id = re.search(r'action="/ready/([^/"]+)/posted"', page).group(1)  # type: ignore[union-attr]
+        before = _thread_state(settings.checkpointer_url, "d1")
+
+        response = c.post(f"/ready/{action_id}/posted", data={"csrf": field(page, "csrf")})
+
+        assert response.status_code == 303
+        assert "Nothing is ready to paste" in c.get("/ready").text
+    after = _thread_state(settings.checkpointer_url, "d1")
+    assert (
+        after.config["configurable"]["checkpoint_id"]
+        == before.config["configurable"]["checkpoint_id"]
+    )
+    assert after.next == ()
+
+
+def test_mark_as_posted_needs_csrf(settings: InboxSettings, clock: Clock) -> None:
+    seed_draft(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        page = c.get("/ready").text
+        action_id = re.search(r'action="/ready/([^/"]+)/posted"', page).group(1)  # type: ignore[union-attr]
+
+        assert c.post(f"/ready/{action_id}/posted", data={"csrf": "wrong"}).status_code == 403
+        assert action_id in c.get("/ready").text
+
+
+def test_marking_an_unknown_draft_is_a_404(client: TestClient) -> None:
+    login(client)
+    page = client.get("/")
+    response = client.post("/ready/nope/posted", data={"csrf": field(page.text, "csrf")})
+    assert response.status_code == 404
+
+
+def test_the_header_links_to_ready_to_paste(client: TestClient) -> None:
+    login(client)
+    assert 'href="/ready"' in client.get("/").text
+
+
+# ---- runs saved by earlier versions; HTML errors only (C8, Hassan's phone report) --------
+
+
+def seed_old_format(url: str, thread: str = "old1") -> None:
+    """A run as an earlier version saved it: gate payload without `eval` (C4) or
+    `failing` (early C7), no `revision` in the task, no `usage` in the state."""
+
+    def c4_payload(action: Any) -> dict[str, Any]:
+        return {
+            "action_id": action.id,
+            "task_id": action.task_id,
+            "type": action.type,
+            "target": action.target,
+            "preview": action.preview,
+            "risk_level": action.risk_level,
+        }
+
+    async def run() -> None:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent()], load_policy()).compile(checkpointer=saver)
+            cfg: Any = {"configurable": {"thread_id": thread}, "recursion_limit": 40}
+            state = {
+                k: v
+                for k, v in initial_ops_state(Task(agent="echo", goal="Old run.")).items()
+                if k != "usage"
+            }
+            await graph.ainvoke(state, cfg)
+
+    # Scoped: undoing the test's own monkeypatch would also undo the conftest's tmp_path
+    # redirection of the judge log (the repo guard caught exactly that).
+    from measured_ops import supervisor
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(supervisor, "gate_payload", c4_payload)
+        asyncio.run(run())
+
+
+def test_a_run_saved_by_an_earlier_version_opens_and_decides(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_old_format(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        html = open_item(c, "old1")
+        assert "Not evaluated" in html
+        assert "First draft · up to 3 revisions" in html
+
+        response = decide(c, html, "approve", thread="old1")
+
+    assert response.status_code == 303
+    assert _thread_state(settings.checkpointer_url, "old1").next == ()
+
+
+def test_templates_are_loaded_once_at_startup(settings: InboxSettings, clock: Clock) -> None:
+    # A running inbox must never pair its code with templates changed on disk later
+    # (the phone's 500: old code in memory, new detail.html read from disk).
+    app = create_inbox_app(settings, [EchoAgent()], load_policy(), clock=clock)
+    env = app.state.templates
+    assert env.auto_reload is False
+    names = {
+        "base.html",
+        "detail.html",
+        "list.html",
+        "login.html",
+        "message.html",
+        "ready.html",
+        "error.html",
+    }
+    assert names <= {key[1] for key in env.cache}
+
+
+def _html_error(response: Any, status: int) -> None:
+    assert response.status_code == status
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<!doctype html>" in response.text.lower()
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "content-security-policy" in response.headers
+
+
+def test_an_unknown_page_is_an_html_404(client: TestClient) -> None:
+    _html_error(client.get("/no/such/page"), 404)
+
+
+def test_a_wrong_method_is_an_html_405(client: TestClient) -> None:
+    _html_error(client.put("/login"), 405)
+
+
+def test_a_server_error_is_an_html_500_never_json(settings: InboxSettings, clock: Clock) -> None:
+    seed(settings.checkpointer_url)
+    app = create_inbox_app(settings, [EchoAgent()], load_policy(), clock=clock)
+    with TestClient(
+        app, base_url="https://testserver", follow_redirects=False, raise_server_exceptions=False
+    ) as c:
+        login(c)
+
+        async def broken(thread_id: str) -> Any:
+            raise RuntimeError("boom")
+
+        app.state.inbox.get = broken
+        response = c.get("/a/t1")
+
+    _html_error(response, 500)
+    assert "boom" not in response.text  # no internals on the page
+    assert "Something went wrong" in response.text

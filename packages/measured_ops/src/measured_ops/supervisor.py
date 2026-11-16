@@ -1,8 +1,9 @@
-"""The supervisor graph (C2, ADR-0016; eval node C7, ADR-0018).
+"""The supervisor graph (C2, ADR-0016; eval node C7, ADR-0018; revisions C8, ADR-0019).
 
-    START ─▶ call_agent ─▶ evaluate ─▶ triage ─┬─▶ gate ─┐  (one pending action per pass)
-                                               │    ▲    │
-                                               │    └────┤
+    START ─▶ call_agent ─▶ evaluate ─▶ triage ─┬─▶ gate ─┬─▶ gate      (more pending)
+                ▲                              │         ├─▶ revise ─┐ (rejected with feedback,
+                │                              │         │           │  revision < max)
+                └──────────────────────────────┼─────────┼───────────┘
                                                └─────────┴─▶ END
 
 - `call_agent` runs the task through the injected agent's subgraph (`run_agent`)
@@ -19,9 +20,15 @@
   `interrupt()` itself, then moves the action to `ready` or records the rejection.
   Nothing before the `interrupt()` call has side effects.
 
-Nothing in `ready` executes yet: tools arrive in C5. A rejection ends the run with
-the decision recorded; turning feedback into a revision `Task` lands with the
-content agent (C8).
+- `revise` (C8, ADR-0019): when every action of the round is decided and one was
+  rejected **with feedback**, it builds the next `Task` for the same agent: `parent_id`
+  = the task it revises, the feedback, and `inputs` + `previous_preview` (the rejected
+  preview) + `revision` (the task's number + 1). The cap reads that number, never the
+  count of results (a thread may hold several tasks once C6 creates them). No
+  interrupt and no I/O, so it runs once per pass; the gate is unchanged.
+
+Nothing in `ready` executes yet: tools arrive in C5. A rejection without feedback, or
+past the cap, ends the run with the decision recorded.
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ from measured_ops.agent import (
     check_agent_graph,
     run_agent,
 )
-from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction
+from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction, Task
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.usage import collect_usage
 
@@ -57,6 +64,64 @@ Evaluator = Callable[[str, Mapping[str, object]], Awaitable[EvalScores]]
 def route_pending(state: OpsState) -> Literal["gate", "__end__"]:
     """Pure router: back to the gate while anything waits for a human."""
     return "gate" if state.get("pending_actions") else "__end__"
+
+
+DEFAULT_MAX_REVISIONS = 3
+FEEDBACK_MAX = 4000  # Task.feedback's limit
+PREVIEW_SEPARATOR = "\n\n---\n\n"
+
+
+def task_revision(task: Task) -> int | None:
+    """The task's revision number (0 for a first task), or None if it's not a valid one."""
+    value = task.inputs.get("revision", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def rejected_with_feedback(state: OpsState) -> list[tuple[PendingAction, str]]:
+    """This round's actions that a human rejected with feedback, in decision order."""
+    round_actions = {a.id: a for a in state.get("evaluated_actions") or []}
+    return [
+        (round_actions[d.action_id], d.feedback)
+        for d in state.get("decisions") or []
+        if not d.approved and d.feedback and d.action_id in round_actions
+    ]
+
+
+def route_after_gate(state: OpsState, max_revisions: int) -> Literal["gate", "revise", "__end__"]:
+    """Pure router: next pending action; else a revision if earned and allowed; else END."""
+    if state.get("pending_actions"):
+        return "gate"
+    if not rejected_with_feedback(state):
+        return "__end__"
+    revision = task_revision(state["task"])
+    if revision is None:
+        log.warning(
+            "supervisor: task %s has an invalid revision number; not revising",
+            state["task"].id,
+        )
+        return "__end__"
+    return "revise" if revision < max_revisions else "__end__"
+
+
+def revision_task(state: OpsState) -> Task:
+    """The next Task for a round rejected with feedback (ADR-0019)."""
+    task = state["task"]
+    rejected = rejected_with_feedback(state)
+    feedback = "\n\n".join(f for _, f in rejected)
+    if len(feedback) > FEEDBACK_MAX:
+        feedback = feedback[: FEEDBACK_MAX - 1] + "…"
+    previous = PREVIEW_SEPARATOR.join(a.preview for a, _ in rejected)
+    revision = task_revision(task)
+    assert revision is not None  # route_after_gate checked it
+    return Task(
+        agent=task.agent,
+        goal=task.goal,
+        inputs={**task.inputs, "previous_preview": previous, "revision": revision + 1},
+        feedback=feedback,
+        parent_id=task.id,
+    )
 
 
 def eval_payload(scores: EvalScores | None) -> dict[str, Any] | None:
@@ -125,6 +190,7 @@ def build_supervisor(
     eval_context: Mapping[str, object] | None = None,
     evaluator: Evaluator = evaluate,
     target_evaluator: Evaluator | None = None,
+    max_revisions: int = DEFAULT_MAX_REVISIONS,
 ) -> SupervisorGraph:
     """Wire the supervisor. Compiles and checks every agent's graph now, so a broken
     agent fails at startup, not mid-run. Compile the result with a checkpointer from
@@ -146,6 +212,10 @@ def build_supervisor(
             raise AgentContractError(f"duplicate agent name {agent.name!r}")
         graph = agent.build()
         check_agent_graph(graph)
+        # Agent runs never checkpoint (C8 review): their private state types aren't in
+        # OpsState's serde allowlist, so a run cut off mid-agent restarts from the start
+        # of call_agent instead of resuming from a checkpoint it can't load.
+        graph.checkpointer = False
         graphs[agent.name] = (agent, graph)
 
     async def call_agent(state: OpsState) -> dict[str, Any]:
@@ -160,7 +230,7 @@ def build_supervisor(
                 result = await run_agent(
                     agent, graph, task, config=agent_run_config(agent.name, task)
                 )
-            except Exception:
+            except BaseException:  # incl. cancellation (an inbox revision's timeout)
                 # the run's spend is lost with the state update: keep it in the log
                 per_model: dict[str, int] = {}
                 for u in usage.calls():
@@ -182,6 +252,14 @@ def build_supervisor(
         return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
+        decided = {d.action_id for d in state.get("decisions") or []}
+        reused = sorted(a.id for a in state["results"][-1].actions if a.id in decided)
+        if reused:
+            # Revisions key on action ids: a reused id could match an earlier round's
+            # rejection and revise again (C8 review). Ids must be new every round.
+            raise AgentContractError(
+                f"agent {state['task'].agent!r} reused already-decided action ids {reused}"
+            )
         scored: list[PendingAction] = []
         for action in state["results"][-1].actions:
             scores = _merge(
@@ -226,14 +304,33 @@ def build_supervisor(
             "ready": [action] if decision.approved else [],
         }
 
+    async def revise(state: OpsState) -> dict[str, Any]:
+        # No interrupt, no I/O: runs once per pass (ADR-0019).
+        task = revision_task(state)
+        log.info(
+            "supervisor: task %s rejected with feedback; revision %s as task %s",
+            task.parent_id,
+            task.inputs["revision"],
+            task.id,
+        )
+        return {"task": task}
+
+    if max_revisions < 0:
+        raise ValueError(f"max_revisions must be >= 0, got {max_revisions}")
     builder: SupervisorGraph = StateGraph(OpsState)
     builder.add_node("call_agent", call_agent)
     builder.add_node("evaluate", evaluate_actions)
     builder.add_node("triage", triage)
     builder.add_node("gate", gate)
+    builder.add_node("revise", revise)
     builder.add_edge(START, "call_agent")
     builder.add_edge("call_agent", "evaluate")
     builder.add_edge("evaluate", "triage")
     builder.add_conditional_edges("triage", route_pending, {"gate": "gate", END: END})
-    builder.add_conditional_edges("gate", route_pending, {"gate": "gate", END: END})
+    builder.add_conditional_edges(
+        "gate",
+        lambda state: route_after_gate(state, max_revisions),
+        {"gate": "gate", "revise": "revise", END: END},
+    )
+    builder.add_edge("revise", "call_agent")
     return builder

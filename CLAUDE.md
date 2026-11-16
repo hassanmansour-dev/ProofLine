@@ -2,7 +2,7 @@
 
 **Proofline: a multi-agent content pipeline where nothing ships without passing
 the evals and a human sign-off.** It turns a topic and an audience into an
-approved, sourced short technical script (≤200 words: a LinkedIn post and a
+approved, sourced short technical script (≤140 words: a LinkedIn post and a
 1-minute video) for a configurable brand (`PROOFLINE_BRAND_NAME`): plan → research
 → write → critique (loop) → finalize, then human approval in the supervisor's
 gate and inbox (ADR-0014).
@@ -59,6 +59,9 @@ uv run mypy
 uv run proofline run --topic "Why every AI loop needs an exit" --audience "developers new to AI"
 uv run uvicorn proofline.api:app --reload                       # API (/health only)
 uv run python -m measured_ops.inbox serve                       # approval inbox, 127.0.0.1 (docs/INBOX.md)
+uv run proofline inbox                                          # the same inbox with the content agent (C8)
+uv run proofline propose --topic "..." --audience "..."         # one draft into the inbox (C8, until C6)
+uv run proofline ready [--out outputs/ready.md]                 # approved drafts to paste (C8)
 uv run python -m proofline.graph --mermaid                      # print graph
 ```
 
@@ -99,10 +102,13 @@ packages/measured_ops/      Measured Ops (ADR-0014): supervisor side, NEVER impo
     usage.py        collect_usage(agent): tokens per agent run via a context-var callback (C7)
     prices.py       load_model_prices(); config/model_prices.demo.toml (demo values)
     tracing.py      masked_tracing_callbacks(): LangSmith tracer with PII redacted (C7)
+    judge_log.py    judge-agreement log: action id, critic/eval scores, decision; no text (C8)
+    posted.py       posted marks for approved drafts: action id + time only (C8, ADR-0020)
     checkpoint.py   open_checkpointer(url): memory | sqlite | postgres, OpsState serde allowlist
     echo.py         EchoAgent: stub agent for the e2e test (injected, never imported by the supervisor)
-    inbox/          approval inbox (C4, ADR-0017): service.py (list/decide), web.py (FastAPI,
-                    passphrase sign-in), __main__.py (hash | seed | serve); `inbox` extra
+    inbox/          approval inbox (C4, ADR-0017): service.py (list/decide, background
+                    revisions C8), web.py (FastAPI, passphrase sign-in), server.py (serve(agents)),
+                    __main__.py (hash | seed | serve); `inbox` extra
 packages/measured_evals/    standalone eval + security package: guard-v0 checks + usage cost (C7), metrics in GROW-14
   src/measured_evals/       NEVER imports proofline or measured_ops — tests/test_boundary.py + CI enforce it
 scripts/pii_scan.py         pre-commit + CI PII scan for this public repo (with gitleaks; C0)
@@ -183,6 +189,10 @@ Data flow rules:
 
 Configured in `.claude/settings.json`, scripts in `.claude/hooks/`:
 - Bash guard blocks force-push, `rm -rf`, reading `.env`, and direct `pip install`.
+- Bash guard blocks deleting, moving or truncating anything under `.data/` or `outputs/`
+  (rm, unlink, truncate, `>` redirects, inline Python, `git clean -x`): that's runtime
+  data and may be Hassan's. A root `conftest.py` fails the test run if the real
+  judge log or posted marks change.
 - Edits to `.env*`, `uv.lock`, and `*.db` are blocked (use `uv` for the lock).
 - Every edited `.py` file is auto-formatted and linted; remaining lint errors are
   reported back to you — fix them before moving on.

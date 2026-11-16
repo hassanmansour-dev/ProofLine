@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Ready to paste ({{ items | length }}){% endblock %}
+{% block main %}
+{% if flash %}<p class="notice" role="status">{{ flash }}</p>{% endif %}
+<h1>Ready to paste <span class="count">{{ items | length }}</span></h1>
+<p class="muted">Approved drafts, newest first. Nothing here is published: copy, paste it
+  yourself, then mark it as posted.</p>
+{% if not items %}
+<p class="empty">Nothing is ready to paste.</p>
+{% else %}
+{% for item in items %}
+{% set outer = loop.index0 %}
+<section class="card ready">
+  <span class="goal">{{ item.goal }}</span>
+  <span class="when">approved {{ item.approved_at[:16] | replace("T", " ") }}</span>
+  {% for title, text in item.blocks %}
+  <h2>{{ title }}</h2>
+  <textarea id="block-{{ outer }}-{{ loop.index0 }}" readonly rows="8" class="paste">{{ text }}</textarea>
+  <button type="button" class="secondary" data-copy="block-{{ outer }}-{{ loop.index0 }}">Copy</button>
+  {% endfor %}
+  <form method="post" action="/ready/{{ item.action_id | urlpart }}/posted">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="primary">Mark as posted</button>
+  </form>
+</section>
+{% endfor %}
+{% endif %}
+{% endblock %}

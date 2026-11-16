@@ -48,16 +48,17 @@ Open from the earlier Week 0–1:
 
 What the first live run surfaced (fix in the step named, not before):
 - The writer describes the critic loop as live, but it isn't wired until C8 → C8
+  (wired in C8, task 1)
 - 195 words is too long for a 1-minute video: revisit the default `max_words`
   and the words-per-minute estimate → C8
 - Weak hook → fill in `docs/BRAND_VOICE.md` (above)
 
 From C1 (ADR-0014), for C8: a revision Task's feedback reaches the writer only if
 the previous draft comes with it (in `Task.inputs`, or a feedback-only branch in
-`render.revision_context`), with a test.
+`render.revision_context`), with a test. Done in C8 (task 5): the revision Task carries the rejected preview.
 
-From C4 (ADR-0017), for C8: **edit** in the inbox (approve an edited preview). Needs an
-ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by
+From C4 (ADR-0017), moved to **C9** (Hassan, 2026-11-14): **edit** in the inbox (approve
+an edited preview). Needs an ADR: an `ApprovalDecision` field for the edited content, the edited text re-checked by
 the eval/guard node (C7) before it can be approved, and what a preview becomes when the
 action runs (C5). Until then, reject with feedback.
 
@@ -176,7 +177,7 @@ table on his phone. Decisions: ADR-0017.
 **Done when:** e2e covers approve and reject (edit moved to C8, ADR-0017), and it's
 usable on the phone.
 
-### C7 · Eval/guard node v0 using `measured_evals` (GROW-86) ◀ CURRENT
+### C7 · Eval/guard node v0 using `measured_evals` (GROW-86) ✅ (PR #12)
 
 Waits on: C4. Scope: quality, injection and PII checks, plus tracing and cost per
 agent, all in `measured_evals`. Rules: `measured_evals` never imports `proofline` or
@@ -205,14 +206,33 @@ if they differ; allowlisted addresses passed per call from private config.
   per call; PII masked in LangSmith traces; blocked-action log without the target
 - [x] Green in CI on the PR (#12: Postgres e2e ran, 483 passed, 0 skipped, after the review fixes)
 
-### C8 · Content agent v0 (GROW-87)
+### C8 · Content agent v0 (GROW-87) ◀ CURRENT
 
 Waits on: C6 and C7. **First useful slice: get it live as early as possible.**
+Started before C5/C6 with Hassan's OK (2026-11-14): topics go in by hand with
+`proofline propose`; C6 takes over task creation later. Decisions (Hassan, 2026-11-14):
+one `approve_draft` action per topic, its preview holding the post, the clip script and
+the lesson outline; rejections with feedback revise in the same thread, at most 3 times
+(ADR-0019, written before the supervisor changes); inbox edit moves to C9; no
+supervisor-level retry (network nodes keep their own); the judge log holds action id,
+critic scores, eval scores and the decision only. Default word limit 140 (about 56 s at 150 wpm).
 
-- [ ] One topic → LinkedIn post + clip script + lesson outline, built from the
+- [x] One topic → LinkedIn post + clip script + lesson outline, built from the
   existing pipeline nodes; output goes through the eval node to the inbox
-- [ ] Never publishes. LinkedIn posts stay approved drafts Hassan pastes himself
-- [ ] Trace and judge-agreement logging on from day one
+  (`ContentAgent`, one `approve_draft` per topic; `proofline propose`)
+- [x] Never publishes. LinkedIn posts stay approved drafts Hassan pastes himself
+  (`approve_draft` has no executor; a test pins it, ADR-0019)
+- [x] Trace and judge-agreement logging on from day one (masked tracing in `run`,
+  `propose` and the inbox; `measured_ops.judge_log`: ids, scores, decisions, no text)
+- [x] Critic loop wired; revisions in the same thread on rejection with feedback, at
+  most 3, run in the inbox's background one at a time with a timeout (ADR-0019)
+- [x] e2e: topic → reject with feedback → revision → approve across a restart
+  (SQLite here; Postgres in CI)
+- [x] Ready to paste in the inbox (Copy per block, Mark as posted only records) and
+  `proofline ready`; explicit Revise / Reject and stop with "Revision n of 3" (ADR-0020)
+- [x] Green in CI on the PR (#13: Postgres e2e ran, 600 passed, 0 skipped, with Ready to paste)
+- [ ] First real draft in the inbox (Hassan: `proofline propose` with real keys, then
+  `proofline inbox` on the phone)
 
 **Done when:** e2e passes and the first real draft appears in the inbox.
 
@@ -224,6 +244,9 @@ with real traces (GROW-34), and the case study's traces (GROW-16).
 Waits on: C8. Approve or edit 5+ drafts on the phone; log what's wrong as comments.
 Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 
+- [ ] Inbox edit: approve an edited preview, re-checked by the eval node first (moved
+  from C8; needs an ADR, see the note under "Already built")
+
 ### C10 · Staging as scheduled jobs (GROW-89)
 
 Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
@@ -232,6 +255,8 @@ Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
   from C0, because the free tier is full. Check that `projects create` reads the DB
   password from the environment and that `-o json` (not `--output-format json`)
   gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier)
+- [ ] Judge log and posted marks move into Postgres when runs are hosted (now local
+  JSONL files under `.data/`, ADR-0019, ADR-0020; Hassan, 2026-11-16)
 
 **Done when:** it runs unattended for 3 days with digests arriving.
 

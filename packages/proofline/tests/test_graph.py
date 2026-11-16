@@ -9,7 +9,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
 from proofline.context import Deps
-from proofline.graph import LINEAR_NODES, build_graph, invoke_config
+from proofline.graph import PIPELINE_NODES, build_graph, invoke_config
 from proofline.schemas import ExtractedFindings, Finding
 from proofline.state import initial_state
 from tests.fakes import (
@@ -23,9 +23,6 @@ from tests.fakes import (
 )
 
 pytestmark = pytest.mark.anyio
-
-# The wiring is linear today, so these fail on assertions until their step lands.
-C8_TARGET = pytest.mark.xfail(strict=True, reason="C8 target")
 
 
 def _llm(critic_scores: list[int], drafts: int | None = None) -> FakeLLM:
@@ -61,13 +58,13 @@ def _inputs(deps: Deps) -> Any:
     )
 
 
-# ── Linear flow ────────────────────────────────────────────────────────────────────
+# ── One pass: the first draft passes the critic ───────────────────────────────────
 
 
-async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
-    llm = FakeLLM().queue(make_outline(), make_draft())
+async def test_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_outline(), make_draft(), make_critique(9))
     deps = make_deps(tmp_path, llm)  # stub researcher: no network, no LLM call
-    app = build_graph().compile()  # linear flow: no checkpointer
+    app = build_graph().compile()  # no checkpointer
     cfg = invoke_config("w1", deps.settings)
     updates: list[dict[str, Any]] = []
     values: dict[str, Any] = {}
@@ -77,31 +74,32 @@ async def test_linear_run_end_to_end_with_fake_model(tmp_path: Path) -> None:
             updates.append(data)
         else:
             values = data
-    assert tuple(node for chunk in updates for node in chunk) == LINEAR_NODES
-    assert [c.role for c in llm.calls] == ["planner", "writer"]
+    assert tuple(node for chunk in updates for node in chunk) == PIPELINE_NODES
+    assert [c.role for c in llm.calls] == ["planner", "writer", "critic"]
     # initial_state() defaults survive the graph's input schema (see graph.py)
     assert values["feedback"] is None
-    assert values["critique"] is None
-    assert values["score"] is None
+    assert values["score"] == values["critique"].overall  # computed in Python (ADR-0008)
 
     final = values["final_script"]
     assert final.thread_id == "w1"
     assert final.word_count <= deps.settings.max_words
     assert final.markdown.startswith(f"# {make_draft().title}")
     assert final.source_urls  # the draft cites the stub's sources
+    assert final.final_score == values["score"]
     assert (deps.settings.output_dir / "w1" / "script.md").read_text() == final.markdown
 
 
-async def test_mermaid_renders_the_week1_nodes() -> None:
+async def test_mermaid_renders_every_node_and_the_loop() -> None:
     mermaid = build_graph().compile().get_graph().draw_mermaid()
-    for node in LINEAR_NODES:
+    for node in PIPELINE_NODES:
         assert node in mermaid
+    assert "critic -.-> writer" in mermaid
+    assert "critic -.-> finalizer" in mermaid
 
 
 # ── Week 2 ────────────────────────────────────────────────────────────────────
 
 
-@C8_TARGET
 async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([6, 7, 8]))
     app = build_graph().compile(checkpointer=InMemorySaver())
@@ -114,7 +112,6 @@ async def test_critic_loop_revises_until_threshold(tmp_path: Path) -> None:
     assert [h.kind for h in state["history"]].count("critique") == 3
 
 
-@C8_TARGET
 async def test_critic_loop_stops_at_revision_budget(tmp_path: Path) -> None:
     deps = _deps(tmp_path, _llm([5, 5, 5, 5]))  # max_revisions=3 → 4 drafts, then stop
     app = build_graph().compile(checkpointer=InMemorySaver())

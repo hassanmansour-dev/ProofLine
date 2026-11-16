@@ -21,6 +21,8 @@ run_evals = "auto"
 
 # real impact: public under Hassan's name, production, money, real people, learner data
 publish_public = "approval"
+# a content draft Hassan approves on the phone and pastes himself; never executed (ADR-0019)
+approve_draft = "approval"
 deploy_production = "approval"
 spend_money = "approval"
 message_person = "approval"

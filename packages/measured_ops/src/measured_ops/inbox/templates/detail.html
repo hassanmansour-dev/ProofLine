@@ -8,6 +8,11 @@
   <span class="risk risk-{{ item.risk_level }}">{{ item.risk_level }} risk</span>
   · {{ item.agent }} agent
 </p>
+<p class="meta">
+  {% if item.revision == 0 %}First draft · up to {{ item.max_revisions }} revisions
+  {% else %}Revision {{ item.revision }} of {{ item.max_revisions }}{% endif %}
+  {% if item.revision >= item.max_revisions %} · No revisions left{% endif %}
+</p>
 {% if error %}<p class="error" role="alert">Not accepted: {{ error }}. Nothing changed; the run is still waiting.</p>{% endif %}
 {% if item.blocked_by_policy %}
 <p class="error" role="alert"><strong>Blocked by policy.</strong> The approval policy now never allows
@@ -46,13 +51,18 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="interrupt_id" value="{{ item.interrupt_id }}">
   <input type="hidden" name="action_id" value="{{ item.action_id }}">
-  <label for="feedback">Feedback (optional)</label>
+  <label for="feedback">What to change (for Revise)</label>
   <textarea id="feedback" name="feedback" rows="4" maxlength="{{ feedback_max }}"></textarea>
-  <div class="actions">
+  <div class="actions actions-three">
     {% if not item.blocked_by_policy %}
     <button type="submit" name="decision" value="approve" class="primary">Approve</button>
     {% endif %}
-    <button type="submit" name="decision" value="reject" class="danger">Reject</button>
+    {% if item.revision < item.max_revisions and not item.blocked_by_policy %}
+    <button type="submit" name="decision" value="revise" class="secondary"
+            data-needs-feedback="feedback">Revise with this feedback</button>
+    {% endif %}
+    <button type="submit" name="decision" value="reject" class="danger">Reject and stop</button>
   </div>
+  <p class="muted">Reject and stop ends the run and ignores the text above.</p>
 </form>
 {% endblock %}

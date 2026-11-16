@@ -1,6 +1,7 @@
 # ADR-0017: Approval inbox v0: location, sign-in, network, and edit deferred
 
 - Status: accepted (2026-11-14, Hassan's review of PR #10; options chosen by Hassan the same day)
+- Amended by ADR-0020: the inbox gets one first-party script (copy, Revise guard).
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C4 (GROW-83)
 

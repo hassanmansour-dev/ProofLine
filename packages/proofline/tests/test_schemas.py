@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -65,3 +67,15 @@ def test_source_id_pattern_enforced() -> None:
 @pytest.mark.parametrize("model", [make_draft(), make_critique(7)], ids=["draft", "critique"])
 def test_models_round_trip_json(model: Draft | Critique) -> None:
     assert type(model).model_validate_json(model.model_dump_json()) == model
+
+
+# ── Word limit for a 1-minute clip (C8) ───────────────────────────────────────
+
+
+def test_default_word_limit_is_140_and_fits_a_one_minute_clip(tmp_path: Path) -> None:
+    from proofline.schemas import MAX_WORDS, WORDS_PER_MINUTE
+    from tests.fakes import make_settings
+
+    assert MAX_WORDS == 140
+    assert make_settings(tmp_path).max_words == 140
+    assert MAX_WORDS / WORDS_PER_MINUTE * 60 <= 60  # about 56 s at 150 wpm

@@ -24,6 +24,7 @@ AUTO = [
 ]
 APPROVAL = [
     "publish_public",
+    "approve_draft",  # C8: the content agent's draft, never executed (ADR-0019)
     "deploy_production",
     "spend_money",
     "message_person",

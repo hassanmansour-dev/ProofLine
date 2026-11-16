@@ -13,6 +13,13 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _judge_log_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tests never append to the real judge log (.data/judge_log.jsonl, ADR-0019)."""
+    monkeypatch.setenv("MEASURED_OPS_JUDGE_LOG_PATH", str(tmp_path / "judge_log.jsonl"))
+    monkeypatch.setenv("MEASURED_OPS_POSTED_PATH", str(tmp_path / "posted.jsonl"))
+
+
 @pytest.fixture(params=["sqlite", "postgres"])
 def checkpointer_url(request: pytest.FixtureRequest, tmp_path: Path) -> str:
     """A checkpointer URL per e2e case. Postgres needs MEASURED_OPS_TEST_DATABASE_URL:

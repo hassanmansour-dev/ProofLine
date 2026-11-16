@@ -78,3 +78,13 @@ button {
 .notice { background: var(--ok-bg); color: var(--ok-fg); }
 .empty { color: var(--muted); border: 1px dashed var(--line); text-align: center; }
 code { font-size: 0.95em; }
+.run-stopped { border-color: var(--warn-fg); }
+.run form { margin-top: 8px; }
+.actions-three { grid-template-columns: 1fr; }
+@media (min-width: 520px) { .actions-three { grid-template-columns: 1fr 1fr 1fr; } }
+button.secondary { background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.nav { margin-left: auto; color: var(--accent); text-decoration: none; font-weight: 600; }
+.ready { margin-bottom: 14px; }
+.ready h2 { margin-top: 14px; }
+textarea.paste { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin-bottom: 6px; }

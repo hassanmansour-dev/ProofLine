@@ -11,8 +11,8 @@ LangChain adds its own environment-driven tracer only when no `LangChainTracer` 
 present, so this one replaces it rather than running beside it. With tracing off it
 returns `[]`, and nothing is traced.
 
-Not covered: anything traced by a process that doesn't pass these callbacks (e.g. the
-standalone `proofline run` CLI before C8).
+Not covered: anything traced by a process that doesn't pass these callbacks. The inbox,
+`seed`, `proofline run` and `proofline propose` pass them (C8).
 """
 
 from __future__ import annotations

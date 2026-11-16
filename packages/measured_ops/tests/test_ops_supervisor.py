@@ -111,7 +111,11 @@ async def test_approve_moves_the_action_to_ready_exactly_once() -> None:
 
 
 async def test_reject_records_the_decision_and_feedback_and_stops() -> None:
-    app = _app(ScriptedAgent([APPROVAL]))
+    # revisions off: this checks the record (revisions: test_ops_revisions.py)
+    saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=SERDE_ALLOWLIST))
+    app = build_supervisor([ScriptedAgent([APPROVAL])], load_policy(), max_revisions=0).compile(
+        checkpointer=saver
+    )
     action_id = (await _start(app))["__interrupt__"][0].value["action_id"]
 
     done = await app.ainvoke(_resume(action_id, approved=False, feedback="Too long."), _cfg())
@@ -273,5 +277,6 @@ def test_graph_shape() -> None:
         "evaluate",
         "triage",
         "gate",
+        "revise",
         "__end__",
     }

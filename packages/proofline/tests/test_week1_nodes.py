@@ -11,7 +11,7 @@ import pytest
 from proofline.context import Deps
 from proofline.nodes import critic, finalizer, planner, researcher, writer
 from proofline.nodes.researcher import RETRY_POLICY, normalize_url
-from proofline.schemas import Critique, Draft, ExtractedFindings, Finding, Outline
+from proofline.schemas import MAX_WORDS, Critique, Draft, ExtractedFindings, Finding, Outline
 from proofline.search import SearchResult, SearchUnavailableError
 from proofline.state import FIELD_OWNERS
 from tests.fakes import (
@@ -173,6 +173,23 @@ async def test_writer_first_draft_sets_revision_zero(tmp_path: Path) -> None:
     assert "<previous_draft>" not in llm.calls[0].prompt.user
 
 
+async def test_writer_revises_from_a_rejected_preview_with_the_feedback(tmp_path: Path) -> None:
+    llm = FakeLLM().queue(make_draft())
+    deps = _deps(tmp_path, llm)
+    state = base_state(
+        deps.settings,
+        outline=make_outline(),
+        research_notes=make_notes(),
+        feedback="The hook is too slow.",
+        previous_preview="## LinkedIn post\n\n# Old title\n\nOld hook.",
+    )
+    update = await run_node("writer", writer, state, deps)
+    user = llm.calls[0].prompt.user
+    assert "Old hook." in user
+    assert "The hook is too slow." in user
+    assert update["revision_count"] == 0  # the pipeline's own count; the task carries its own
+
+
 async def test_writer_drops_citations_to_unknown_sources(tmp_path: Path) -> None:
     llm = FakeLLM().queue(make_draft(cited=["S1", "S42"]))
     deps = _deps(tmp_path, llm)
@@ -202,7 +219,7 @@ async def test_critic_uses_critic_role_and_logs_score(tmp_path: Path) -> None:
     assert isinstance(update["critique"], Critique)
     assert llm.calls[0].role == "critic"
     words = make_draft().word_count
-    assert f"This draft is {words} words; the limit is 200." in llm.calls[0].prompt.user
+    assert f"This draft is {words} words; the limit is {MAX_WORDS}." in llm.calls[0].prompt.user
     assert update["score"] == make_critique(7).overall
     assert update["history"][0].score == make_critique(7).overall
     assert update["history"][0].revision == 1
@@ -378,7 +395,7 @@ async def test_writer_asks_for_one_cut_when_over_the_word_limit(tmp_path: Path) 
     assert update["draft"] == short
     first, second = llm.calls
     assert "<previous_draft>" not in first.prompt.user
-    assert f"is {long.word_count} words; the limit is 200" in second.prompt.user
+    assert f"is {long.word_count} words; the limit is {MAX_WORDS}" in second.prompt.user
 
 
 async def test_writer_keeps_a_draft_still_over_the_limit_after_one_cut(tmp_path: Path) -> None:
@@ -387,7 +404,7 @@ async def test_writer_keeps_a_draft_still_over_the_limit_after_one_cut(tmp_path:
     deps = _deps(tmp_path, llm)
     state = base_state(deps.settings, outline=make_outline(), research_notes=make_notes(3))
     update = await run_node("writer", writer, state, deps)
-    assert update["draft"].word_count > 200
+    assert update["draft"].word_count > MAX_WORDS
     assert len(llm.calls) == 2  # no third attempt
 
 
@@ -431,7 +448,7 @@ async def test_writer_cut_keeps_the_revision_context(tmp_path: Path) -> None:
     cut_prompt = llm.calls[1].prompt.user
     assert "<human_feedback>" in cut_prompt
     assert "<critique>" in cut_prompt
-    assert "the limit is 200" in cut_prompt
+    assert f"the limit is {MAX_WORDS}" in cut_prompt
 
 
 async def test_writer_never_keeps_a_longer_cut(tmp_path: Path) -> None:

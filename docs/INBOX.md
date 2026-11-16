@@ -29,6 +29,9 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_LOCK_PATH` | no | `.data/inbox.lock` |
 | `MEASURED_OPS_POLICY_PATH` | no | the bundled demo policy |
 | `MEASURED_OPS_PRICES_PATH` | no | the bundled demo price table |
+| `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
+| `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
+| `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
@@ -46,6 +49,13 @@ everyone out.
 uv run python -m measured_ops.inbox seed --count 3   # demo runs that pause at the gate
 uv run python -m measured_ops.inbox serve            # 127.0.0.1:8765, one process
 ```
+
+With the content agent (C8): `uv run proofline inbox` serves the same inbox with the
+content agent (and the demo echo agent), so rejecting with feedback can revise a draft
+in this process. It needs the same keys as `proofline run`. Put a topic in with
+`uv run proofline propose --topic "..." --audience "..."`: it drafts one post, clip
+script and lesson outline into the inbox's database and prints the run's id; the draft
+then waits in the list. Until C6, that's how topics get in.
 
 `serve` always binds `127.0.0.1` and runs one worker. Don't start it with
 `uvicorn --workers N`: decisions are serialised in memory, and a second process
@@ -105,9 +115,23 @@ Never run `tailscale funnel` for this port.
   model the table doesn't list shows "unknown".
 - With LangSmith tracing on, the inbox sends traces with emails, phone numbers, SINs
   and card numbers redacted. The page itself shows the preview as written.
-- **Approve** clears it to `ready` (nothing executes before C5). **Reject** records the
-  decision and your optional feedback, and ends the run (C8 turns feedback into a
-  revision task). Edit comes with C8.
+- **Approve** clears it to `ready` (nothing executes before C5; an `approve_draft` never
+  executes: you paste the post yourself). **Reject and stop** ends the run and ignores
+  any text in the box. **Revise with this feedback** (needs text, and a revision left)
+  revises it (C8, ADR-0019, ADR-0020); the page shows "First draft" or "Revision 2 of 3": the page answers at once
+  ("Revising…"), the agent writes a new draft in the background, and it comes back to
+  the list when it's ready, at most 3 times per run. One revision runs at a time; the
+  others wait as "Revision queued". Edit comes with C9.
+- **Ready to paste** (link at the top) lists approved drafts, newest first: the
+  LinkedIn post, the clip script and the lesson outline, each in its own box with a
+  **Copy** button (if the browser won't copy, it selects the text for you). **Mark as
+  posted** only records that you posted it and hides it; nothing is ever published from
+  here. `proofline ready` prints the same list in the terminal.
+- "In progress" lists runs not waiting for you. "Revision stopped" means a revision
+  hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
+  continues stopped runs once when it starts. "In progress elsewhere" is a run another
+  process is working on (e.g. `proofline propose`, which gives up after the same timeout);
+  it's left alone, and shows as stopped only after twice the timeout.
 - An action marked **Blocked by policy** was paused before the policy changed to
   "never". It can only be rejected.
 - Tapping twice is safe: the second tap says "Already decided".
@@ -125,3 +149,5 @@ Never run `tailscale funnel` for this port.
 | Phone can't load the page | the laptop is asleep or off the tailnet, or Serve is off (`tailscale serve status`) |
 | Signed out unexpectedly | the inbox restarted, or 12 hours passed since sign-in |
 | A run is missing from the list | it couldn't be read: the log has `can't read run <id>; skipped` |
+| "Something went wrong" page | an error in the inbox: the terminal has `inbox: error on ...` with the traceback |
+| Errors right after updating the code | restart the inbox after every `git pull`: a running inbox keeps the code and templates it started with |

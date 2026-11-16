@@ -63,6 +63,75 @@ def test_guard_bash(command: str, expected: str | None) -> None:
     assert _decision(out) == expected
 
 
+# Runtime data (judge log, posted marks, checkpoints, drafts) may be Hassan's: no command
+# may delete or truncate it. Reading, listing and appending stay allowed.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm .data/judge_log.jsonl",
+        "rm -f .data/posted.jsonl",
+        "cd /home/x/proofline && rm .data/judge_log.jsonl",
+        "ls .data && rm -rf .data",
+        "rm -r outputs/abc",
+        "rm outputs",
+        "/bin/rm ./.data/ops_checkpoints.db",
+        "unlink .data/judge_log.jsonl",
+        "shred -u outputs/abc/script.md",
+        "truncate -s 0 .data/judge_log.jsonl",
+        "rmdir .data",
+        "find .data -name '*.jsonl' -delete",
+        "find outputs -type f -exec rm {} +",
+        "mv .data/judge_log.jsonl /tmp/x",
+        "mv /tmp/x .data/posted.jsonl",
+        "cp /dev/null .data/judge_log.jsonl",
+        "dd if=/dev/null of=.data/judge_log.jsonl",
+        ": > .data/judge_log.jsonl",
+        "echo '' > outputs/abc/script.md",
+        "printf x >| .data/posted.jsonl",
+        "tee .data/judge_log.jsonl < /dev/null",
+        "python3 -c \"import os; os.remove('.data/judge_log.jsonl')\"",
+        "uv run python -c \"from pathlib import Path; Path('.data/posted.jsonl').unlink()\"",
+        "python3 - <<'EOF'\nimport shutil; shutil.rmtree('outputs')\nEOF",
+        "python3 -c \"open('.data/judge_log.jsonl', 'w').close()\"",
+        "git clean -fdx",
+        "git clean -fX",
+        "sqlite3 .data/ops_checkpoints.db 'DELETE FROM checkpoints'",
+    ],
+)
+def test_guard_bash_never_deletes_or_truncates_runtime_data(command: str) -> None:
+    code, out, _ = _run("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert code == 0
+    assert _decision(out) == "deny", command
+    assert "runtime data" in json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls -la .data/",
+        "head -c 200 .data/judge_log.jsonl",
+        "wc -l .data/judge_log.jsonl",
+        "cat outputs/abc/script.md",
+        "echo x >> .data/notes.txt",
+        "tee -a .data/judge_log.jsonl < /dev/null",
+        "cp outputs/abc/script.md /tmp/copy.md",
+        "rm packages/proofline/tests/test_zz_dbg.py",
+        "uv run pytest -m 'not live' -q",
+        "git status --short .data",
+        "sqlite3 .data/ops_checkpoints.db 'select count(*) from checkpoints'",
+        "grep -n outputs docs/PLAN.md",
+        'git commit -m "docs: the guard denies git clean -x/-X on .data/"',
+        # Python that writes a source file, next to a separate read of .data/
+        "python3 - <<'EOF'\nfrom pathlib import Path\nPath('x.py').write_text('')\nEOF\n"
+        "stat -c '%s' .data/judge_log.jsonl",
+    ],
+)
+def test_guard_bash_allows_reading_runtime_data(command: str) -> None:
+    code, out, _ = _run("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": command}})
+    assert code == 0
+    assert _decision(out) != "deny", command
+
+
 @pytest.mark.parametrize(
     ("path", "expected"),
     [

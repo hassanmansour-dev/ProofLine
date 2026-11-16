@@ -12,6 +12,20 @@
 - Each item carries the eval node's checks (from the gate payload: what the gate
   showed) and the run's tokens and cost per agent (C7, ADR-0018). A run paused
   before C7 has no checks; it still lists, as "not evaluated".
+- Revisions run in the background (C8, ADR-0019). `decide` commits the gate step first
+  (`interrupt_after=["gate"]`), so the decision is saved before the phone gets its
+  answer; if the next step is `revise`, the rest runs as a background task while the
+  agent revises for minutes. At most one revision runs at a time (a semaphore); each has
+  a timeout. While queued or running, the thread is not "waiting" (a second tap is
+  `AlreadyDecided`) and shows in `in_progress()`.
+- "Stopped" (cut off: timeout, error, restart): a run that stopped here, or after a gate
+  step (next `revise`, or a gate with no question pending), or between nodes on a
+  revision task: only the inbox makes those. A first pass between nodes may be
+  `proofline propose` in another process, which runs under the same timeout: it's
+  "elsewhere" (left alone) until twice the timeout has passed. `retry()` continues a
+  stopped run and `start()` continues each one once, with `ainvoke(None)`: safe there
+  because no interrupt is pending (ADR-0016 forbids it only at a pending gate). C10
+  moves this to a worker with budget caps.
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -21,23 +35,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
 from pydantic import ValidationError
 
 from measured_evals import ModelPrice, total_by_agent
+from measured_evals.scores import DEFAULT_THRESHOLD
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
+from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
+from measured_ops.posted import JsonlPostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
+from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
 from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
 
 RECURSION_LIMIT = 40
+DEFAULT_REVISION_TIMEOUT_S = 600.0
+RunState = Literal["queued", "running", "stopped", "elsewhere"]
+
+
+class NotReady(LookupError):
+    """No approved, paste-ready draft has this action id (ADR-0020)."""
 
 
 class AlreadyDecided(LookupError):
@@ -52,6 +78,7 @@ class Refused(ValueError):
 class CheckView:
     name: str
     passed: bool
+    score: float
     reason: str | None  # a few words, never the matched text
 
 
@@ -74,10 +101,14 @@ def _eval_view(block: Any) -> EvalView | None:
     if not isinstance(block, dict):
         return None
     reasons: dict[str, str] = block.get("reasons") or {}
-    failing = set(block.get("failing") or ())
+    scores: dict[str, float] = block.get("scores") or {}
+    if "failing" in block:
+        failing = set(block.get("failing") or ())
+    else:  # saved before `failing` existed (early C7): below the default threshold
+        failing = {n for n, v in scores.items() if float(v) < DEFAULT_THRESHOLD}
     checks = tuple(
-        CheckView(name, name not in failing, reasons.get(name))
-        for name in block.get("scores") or {}
+        CheckView(name, name not in failing, float(score), reasons.get(name))
+        for name, score in (block.get("scores") or {}).items()
     )
     return EvalView(str(block.get("evaluator", "")), bool(block.get("passed")), checks)
 
@@ -100,8 +131,94 @@ class PendingItem:
     response_schema: dict[str, Any]
     blocked_by_policy: bool
     eval: EvalView | None = None  # None: paused before the eval node existed (pre-C7)
+    revision: int = 0  # the task's revision number (ADR-0019): 0 = first draft
+    max_revisions: int = DEFAULT_MAX_REVISIONS
     # None: the run predates usage tracking (pre-C7), which is not the same as free
     costs: tuple[CostView, ...] | None = ()
+
+
+DEFAULT_PASTE_TYPES = frozenset({"approve_draft"})
+
+
+@dataclass(frozen=True)
+class ReadyItem:
+    """An approved draft to paste (ADR-0020), its preview split into blocks."""
+
+    thread_id: str
+    action_id: str
+    goal: str
+    type: str
+    approved_at: str  # ISO timestamp of the approval
+    preview: str
+    blocks: tuple[tuple[str, str], ...]  # (heading, text), in preview order
+    posted: bool = False
+
+
+def split_blocks(preview: str) -> tuple[tuple[str, str], ...]:
+    """The preview's `## ` sections as (heading, text); one "Draft" block if none."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in preview.splitlines():
+        if line.startswith("## "):
+            blocks.append((line[3:].strip(), []))
+        elif blocks:
+            blocks[-1][1].append(line)
+    if not blocks:
+        return (("Draft", preview.strip()),)
+    return tuple((title, "\n".join(body).strip()) for title, body in blocks)
+
+
+async def list_ready(
+    graph: Any,
+    thread_ids: list[str],
+    *,
+    posted: set[str],
+    paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
+    include_posted: bool = False,
+) -> list[ReadyItem]:
+    """Approved drafts of `paste_types` across `thread_ids`, newest approval first."""
+    items: list[ReadyItem] = []
+    for thread_id in thread_ids:
+        try:
+            snap = await graph.aget_state(_cfg(thread_id))
+        except Exception:
+            log.exception("inbox: can't read run %s; skipped", thread_id)
+            continue
+        values = snap.values or {}
+        task: Task | None = values.get("task")
+        approved_at = {
+            d.action_id: d.decided_at.isoformat()
+            for d in values.get("decisions") or []
+            if d.approved
+        }
+        for action in values.get("ready") or []:
+            if action.type not in paste_types or action.id not in approved_at:
+                continue
+            is_posted = action.id in posted
+            if is_posted and not include_posted:
+                continue
+            items.append(
+                ReadyItem(
+                    thread_id=thread_id,
+                    action_id=action.id,
+                    goal=task.goal if task is not None else "",
+                    type=action.type,
+                    approved_at=approved_at[action.id],
+                    preview=action.preview,
+                    blocks=split_blocks(action.preview),
+                    posted=is_posted,
+                )
+            )
+    return sorted(items, key=lambda i: i.approved_at, reverse=True)
+
+
+@dataclass(frozen=True)
+class RunStatus:
+    """A run that isn't waiting for a human: revising here, cut off, or busy elsewhere."""
+
+    thread_id: str
+    agent: str
+    goal: str
+    state: RunState
 
 
 @dataclass(frozen=True)
@@ -109,6 +226,7 @@ class Outcome:
     thread_id: str
     approved: bool
     still_paused: bool  # the run paused again, on its next action
+    revising: bool = False  # a rejection with feedback: the revision runs in the background
 
 
 def _cfg(thread_id: str) -> Any:
@@ -134,6 +252,11 @@ class Inbox:
         *,
         prices: Mapping[str, ModelPrice] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
+        revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
+        judge_log: JudgeLog | None = None,
+        max_revisions: int = DEFAULT_MAX_REVISIONS,
+        posted: JsonlPostedLog | None = None,
+        paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -142,17 +265,32 @@ class Inbox:
         self.prices = load_model_prices() if prices is None else prices
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
+        self.revision_timeout_s = revision_timeout_s
+        self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
+        self.posted = posted_log_from_env() if posted is None else posted
+        self.paste_types = paste_types
+        self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
+        self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
+        self._revisions: dict[str, Literal["queued", "running"]] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._stopped_here: set[str] = set()  # cut off in this process: stopped, any age
+        self._started = False
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_users: dict[str, int] = {}  # so a lock is dropped once nobody holds it
 
     async def _thread_ids(self) -> list[str]:
         seen: dict[str, None] = {}
         async for checkpoint in self.graph.checkpointer.alist(None):
-            seen.setdefault(checkpoint.config["configurable"]["thread_id"], None)
+            configurable = checkpoint.config["configurable"]
+            if configurable.get("checkpoint_ns", ""):
+                continue  # a subgraph's checkpoint (older runs): the thread's own is enough
+            seen.setdefault(configurable["thread_id"], None)
         return list(seen)
 
     async def get(self, thread_id: str) -> PendingItem | None:
         """The action `thread_id` is waiting on, or None if it isn't waiting."""
+        if thread_id in self._revisions:
+            return None  # revising: not waiting for a human
         snap = await self.graph.aget_state(_cfg(thread_id))
         if snap.next != ("gate",) or not snap.interrupts:
             return None
@@ -190,6 +328,8 @@ class Inbox:
             response_schema={},
             blocked_by_policy=self.policy.is_blocked(action),  # logs a WARNING if so
             eval=_eval_view(payload.get("eval")),
+            revision=task_revision(task) or 0,
+            max_revisions=self.max_revisions,
             costs=costs,
         )
 
@@ -223,12 +363,18 @@ class Inbox:
         the answer is invalid (wrong action, feedback too long, approving a "never"
         action). After Refused the run is still paused; answer again with a new call.
         """
-        lock = self._locks.setdefault(thread_id, asyncio.Lock())
-        self._lock_users[thread_id] = self._lock_users.get(thread_id, 0) + 1
-        try:
+        async with self._thread_lock(thread_id) as lock:
             return await self._decide_locked(
                 lock, thread_id, interrupt_id, action_id, approved, feedback
             )
+
+    @asynccontextmanager
+    async def _thread_lock(self, thread_id: str) -> AsyncIterator[asyncio.Lock]:
+        """The thread's lock (not yet held), dropped once nobody holds or waits for it."""
+        lock = self._locks.setdefault(thread_id, asyncio.Lock())
+        self._lock_users[thread_id] = self._lock_users.get(thread_id, 0) + 1
+        try:
+            yield lock
         finally:
             self._lock_users[thread_id] -= 1
             if not self._lock_users[thread_id]:
@@ -253,19 +399,173 @@ class Inbox:
             except ValidationError as exc:
                 raise Refused(_reason(exc)) from exc
             resume: Command[Any] = Command(resume={interrupt_id: decision.model_dump(mode="json")})
+            cfg = {**_cfg(thread_id), "callbacks": self.callbacks}
             try:
-                out = await self.graph.ainvoke(
-                    resume, {**_cfg(thread_id), "callbacks": self.callbacks}
-                )
+                # Commit the gate step, and only it, before answering: the decision is
+                # saved even if what comes next (a revision) waits, fails or is cut off.
+                await self.graph.ainvoke(resume, cfg, interrupt_after=["gate"])
             except ValidationError as exc:  # the gate's answer_schema refused it
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
                 raise Refused(str(exc)) from exc
-        log.info(
-            "inbox: run %s action %s %s",
-            thread_id,
-            action_id,
-            "approved" if approved else "rejected",
+            self._log_decision(item, approved=approved)  # saved: now it's a decision
+            log.info(
+                "inbox: run %s action %s %s",
+                thread_id,
+                action_id,
+                "approved" if approved else "rejected",
+            )
+            snap = await self.graph.aget_state(_cfg(thread_id))
+            if snap.next == ("revise",):
+                # A revision runs the agent for minutes: in the background (ADR-0019).
+                self._schedule(thread_id, None)
+                return Outcome(
+                    thread_id=thread_id, approved=approved, still_paused=False, revising=True
+                )
+            if snap.next == ("gate",):
+                # The round's next action: the gate pauses on it at once.
+                out = await self.graph.ainvoke(None, cfg)
+                still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
+                return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+        return Outcome(thread_id=thread_id, approved=approved, still_paused=False)
+
+    def _log_decision(self, item: PendingItem, *, approved: bool) -> None:
+        """Judge-agreement log: ids, eval scores and the decision; never text (ADR-0019)."""
+        scores = None if item.eval is None else {c.name: c.score for c in item.eval.checks}
+        try:
+            self.judge_log.record_decision(item.action_id, scores, approved)
+        except OSError:
+            # the decision stands; a lost log line must not undo or hide it
+            log.exception("inbox: couldn't write the judge log for action %s", item.action_id)
+
+    # ---- ready to paste (C8, ADR-0020) ------------------------------------------------
+
+    async def list_ready(self, *, include_posted: bool = False) -> list[ReadyItem]:
+        """Approved drafts to paste, newest first; posted ones only if asked."""
+        return await list_ready(
+            self.graph,
+            await self._thread_ids(),
+            posted=self.posted.posted(),
+            paste_types=self.paste_types,
+            include_posted=include_posted,
         )
-        still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
-        return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
+
+    async def mark_posted(self, action_id: str) -> None:
+        """Record that Hassan posted it, and hide it. Never resumes or writes to a run:
+        there is no executor for a draft (ADR-0019); this is only a note (ADR-0020)."""
+        ready = await self.list_ready(include_posted=True)
+        if action_id not in {r.action_id for r in ready}:
+            raise NotReady(f"no approved draft {action_id}")
+        self.posted.mark(action_id)
+        log.info("inbox: draft %s marked as posted", action_id)
+
+    # ---- background revisions (C8, ADR-0019) ----------------------------------------
+
+    def _schedule(self, thread_id: str, value: Command[Any] | None) -> None:
+        self._stopped_here.discard(thread_id)
+        self._revisions[thread_id] = "queued"
+        task = asyncio.create_task(self._revise(thread_id, value), name=f"revise:{thread_id}")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _revise(self, thread_id: str, value: Command[Any] | None) -> None:
+        try:
+            async with self._revision_slot:
+                self._revisions[thread_id] = "running"
+                await asyncio.wait_for(
+                    self.graph.ainvoke(value, {**_cfg(thread_id), "callbacks": self.callbacks}),
+                    timeout=self.revision_timeout_s,
+                )
+                log.info("inbox: run %s revised", thread_id)
+                return
+        except TimeoutError:
+            log.error(
+                "inbox: revision of run %s timed out after %ss; stopped (retry from the inbox)",
+                thread_id,
+                self.revision_timeout_s,
+            )
+        except asyncio.CancelledError:
+            log.warning("inbox: revision of run %s cancelled; stopped", thread_id)
+            raise
+        except Exception:
+            log.exception("inbox: revision of run %s failed; stopped", thread_id)
+        finally:
+            self._revisions.pop(thread_id, None)
+        self._stopped_here.add(thread_id)  # reached only if it didn't finish
+
+    async def _status(self, thread_id: str) -> RunStatus | None:
+        snap = await self.graph.aget_state(_cfg(thread_id))
+        values = snap.values or {}
+        task: Task | None = values.get("task")
+        if task is None:
+            return None
+        if thread_id in self._revisions:
+            return RunStatus(thread_id, task.agent, task.goal, self._revisions[thread_id])
+        if not snap.next or (snap.next == ("gate",) and snap.interrupts):
+            return None  # finished, or waiting for a human
+        if (
+            thread_id in self._stopped_here
+            or snap.next
+            in (("gate",), ("revise",))  # after a gate step: only the inbox stops there
+            or task.parent_id is not None  # a revision: only the inbox runs those
+        ):
+            return RunStatus(thread_id, task.agent, task.goal, "stopped")
+        # A first pass between nodes may be a `proofline propose` run in another process.
+        # It runs under the same timeout, so twice that is a safe margin before retrying.
+        age = _age_s(snap.created_at)
+        stale = age is None or age > 2 * self.revision_timeout_s
+        state: RunState = "stopped" if stale else "elsewhere"
+        return RunStatus(thread_id, task.agent, task.goal, state)
+
+    async def in_progress(self) -> list[RunStatus]:
+        """Runs that aren't waiting for a human and aren't finished."""
+        out: list[RunStatus] = []
+        for thread_id in await self._thread_ids():
+            try:
+                status = await self._status(thread_id)
+            except Exception:
+                log.exception("inbox: can't read run %s; skipped", thread_id)
+                continue
+            if status is not None:
+                out.append(status)
+        return out
+
+    async def retry(self, thread_id: str) -> None:
+        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped."""
+        async with self._thread_lock(thread_id) as lock, lock:
+            status = await self._status(thread_id)
+            if status is None or status.state != "stopped":
+                raise AlreadyDecided(f"run {thread_id} is not stopped")
+            self._schedule(thread_id, None)
+        log.info("inbox: retrying run %s", thread_id)
+
+    async def start(self) -> None:
+        """Once per process: continue every run a restart (or a timeout) cut off."""
+        if self._started:
+            return
+        self._started = True
+        for status in await self.in_progress():
+            if status.state == "stopped":
+                log.info("inbox: continuing stopped run %s", status.thread_id)
+                self._schedule(status.thread_id, None)
+
+    async def wait_idle(self) -> None:
+        """Wait until no revision is queued or running (tests, shutdown)."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+    async def aclose(self) -> None:
+        """Cancel running revisions: their runs stay stopped and continue on next start."""
+        for task in list(self._tasks):
+            task.cancel()
+        await self.wait_idle()
+
+
+def _age_s(created_at: str | None) -> float | None:
+    if not created_at:
+        return None
+    try:
+        then = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    return (datetime.now(UTC) - then).total_seconds()

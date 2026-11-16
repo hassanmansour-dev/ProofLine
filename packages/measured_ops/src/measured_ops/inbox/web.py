@@ -1,6 +1,8 @@
 """The inbox web app (C4, ADR-0017): FastAPI, server-rendered, phone first, no JavaScript.
 
     GET|HEAD /login, POST /login, POST /logout
+    POST /r/{thread_id}/retry    continue a stopped revision (C8, ADR-0019)
+    GET  /ready                  approved drafts to paste; POST /ready/{id}/posted (ADR-0020)
     GET  /                       actions waiting at the gate
     GET  /a/{thread_id}          one action: preview, approve / reject with feedback
     POST /a/{thread_id}/decision resume the run with the answer
@@ -36,16 +38,19 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, PackageLoader, select_autoescape
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from measured_evals import ModelPrice
 from measured_ops.agent import Agent
 from measured_ops.checkpoint import open_checkpointer
 from measured_ops.inbox.auth import LoginThrottle, verify_passphrase
-from measured_ops.inbox.service import AlreadyDecided, Inbox, PendingItem, Refused
+from measured_ops.inbox.service import AlreadyDecided, Inbox, NotReady, PendingItem, Refused
 from measured_ops.inbox.settings import InboxSettings, single_process_lock
+from measured_ops.judge_log import JudgeLog
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.supervisor import build_supervisor
 
@@ -54,7 +59,7 @@ log = logging.getLogger("measured_ops.inbox")
 SESSION_COOKIE = "__Host-mo_inbox"  # __Host-: Secure, Path=/, no Domain, enforced by browsers
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'self'; form-action 'self'; "
+        "default-src 'none'; style-src 'self'; script-src 'self'; form-action 'self'; "
         "frame-ancestors 'none'; base-uri 'none'"
     ),
     "X-Frame-Options": "DENY",
@@ -81,6 +86,7 @@ def create_inbox_app(
     *,
     prices: Mapping[str, ModelPrice] | None = None,
     eval_context: Mapping[str, object] | None = None,
+    judge_log: JudgeLog | None = None,
     clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Build the inbox app. Refuses settings without usable secrets (no defaults).
@@ -97,13 +103,20 @@ def create_inbox_app(
     # get checked before any failure counts. One user, so serialising costs nothing.
     signin_lock = asyncio.Lock()
     live_sessions: dict[str, float] = {}  # session id -> sign-in time; revoked on sign-out
+    # Loaded once, now, and never re-read: a running inbox must not pair its code with
+    # templates changed on disk later (a 500 on Hassan's phone after an upgrade).
     templates = Environment(
         loader=PackageLoader("measured_ops.inbox", "templates"),
         autoescape=select_autoescape(["html"]),
+        auto_reload=False,
+        cache_size=-1,
     )
     templates.filters["urlpart"] = lambda value: quote(str(value), safe="")
     templates.filters["dollars"] = lambda v: "unknown" if v is None else f"${v:,.4f}"
+    for name in templates.list_templates(extensions=["html"]):
+        templates.get_template(name)
     css = files("measured_ops.inbox").joinpath("templates", "inbox.css").read_text("utf-8")
+    js = files("measured_ops.inbox").joinpath("templates", "inbox.js").read_text("utf-8")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -112,9 +125,19 @@ def create_inbox_app(
                 graph = build_supervisor(agents, policy, eval_context=eval_context).compile(
                     checkpointer=saver
                 )
-                app.state.inbox = Inbox(graph, policy, prices=prices)
+                app.state.inbox = Inbox(
+                    graph,
+                    policy,
+                    prices=prices,
+                    revision_timeout_s=settings.revision_timeout_s,
+                    judge_log=judge_log,
+                )
                 log.info("inbox: serving runs from %s", settings.checkpointer_url.split(":")[0])
-                yield
+                await app.state.inbox.start()  # continue revisions a restart cut off
+                try:
+                    yield
+                finally:
+                    await app.state.inbox.aclose()  # cut-off revisions continue on next start
 
     app = FastAPI(
         title="Measured Ops inbox",
@@ -123,6 +146,41 @@ def create_inbox_app(
         redoc_url=None,
         openapi_url=None,
     )
+    app.state.templates = templates
+
+    # ---- errors: always an HTML page, never a JSON body a phone downloads -------------
+
+    def error_page(status: int, heading: str, text: str) -> HTMLResponse:
+        html = templates.get_template("error.html").render(
+            heading=heading, message=text, signed_in=False
+        )
+        return HTMLResponse(html, status_code=status, headers=SECURITY_HEADERS)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
+        headings = {404: "Not found", 405: "Not allowed", 401: "Sign in", 403: "Not allowed"}
+        heading = headings.get(exc.status_code, "Something's not right")
+        text = (
+            "That page doesn't exist."
+            if exc.status_code == 404
+            else "That request isn't allowed here."
+        )
+        return error_page(exc.status_code, heading, text)
+
+    @app.exception_handler(RequestValidationError)
+    async def bad_request(request: Request, exc: RequestValidationError) -> HTMLResponse:
+        return error_page(400, "Bad request", "The form wasn't complete. Reload and try again.")
+
+    @app.exception_handler(Exception)
+    async def server_error(request: Request, exc: Exception) -> HTMLResponse:
+        log.exception("inbox: error on %s %s", request.method, request.url.path, exc_info=exc)
+        return error_page(
+            500,
+            "Something went wrong",
+            "The inbox logged the error. If you were deciding, reload the list to see "
+            "whether it went through before trying again.",
+        )
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -205,6 +263,11 @@ def create_inbox_app(
     async def stylesheet() -> Response:
         return Response(css, media_type="text/css")
 
+    @app.get("/static/inbox.js")
+    async def script() -> Response:
+        # the inbox's only script, first-party (ADR-0020); pages work without it
+        return Response(js, media_type="text/javascript")
+
     # ---- sign-in ------------------------------------------------------------------------
 
     # HEAD too: `curl -I .../login` is the runbook's "is it up?" check (docs/INBOX.md).
@@ -255,8 +318,9 @@ def create_inbox_app(
         if not signed_in(request):
             return to_login()
         items = await inbox(request).list_pending()
+        running = await inbox(request).in_progress()
         flash = request.session.pop("flash", None)
-        return render(request, "list.html", items=items, flash=flash)
+        return render(request, "list.html", items=items, running=running, flash=flash)
 
     # `:path` so a thread id containing "/" still routes (links quote it fully).
     @app.get("/a/{thread_id:path}", response_class=HTMLResponse)
@@ -280,14 +344,27 @@ def create_inbox_app(
             v if isinstance(v, str) else "" for v in fields.values()
         )
         try:
-            if choice not in ("approve", "reject"):
-                raise Refused("choose Approve or Reject")
+            # Explicit (ADR-0020): Revise needs text and a revision left; Reject and stop
+            # drops any text, so it can never queue a revision.
+            if choice == "approve":
+                approved, text = True, feedback
+            elif choice == "revise":
+                if not feedback.strip():
+                    raise Refused("write what to change, or use Reject and stop")
+                current = await inbox(request).get(thread_id)
+                if current is not None and current.revision >= current.max_revisions:
+                    raise Refused("no revisions left: approve it, or reject and stop")
+                approved, text = False, feedback
+            elif choice == "reject":
+                approved, text = False, ""
+            else:
+                raise Refused("choose Approve, Revise or Reject and stop")
             outcome = await inbox(request).decide(
                 thread_id,
                 interrupt_id=interrupt_id,
                 action_id=action_id,
-                approved=choice == "approve",
-                feedback=feedback,
+                approved=approved,
+                feedback=text,
             )
         except AlreadyDecided:
             return message(
@@ -306,8 +383,50 @@ def create_inbox_app(
                 error=str(exc),
             )
         verb = "Approved" if outcome.approved else "Rejected"
-        more = " The run has another action waiting." if outcome.still_paused else ""
+        if not outcome.approved and choice == "reject":
+            verb = "Rejected and stopped"
+        if outcome.revising:
+            more = " Revising: the new draft comes back here when it's ready."
+        else:
+            more = " The run has another action waiting." if outcome.still_paused else ""
         request.session["flash"] = f"{verb}.{more}"
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/ready", response_class=HTMLResponse)
+    async def ready(request: Request) -> Response:
+        if not signed_in(request):
+            return to_login()
+        items = await inbox(request).list_ready()
+        flash = request.session.pop("flash", None)
+        return render(request, "ready.html", items=items, flash=flash)
+
+    @app.post("/ready/{action_id}/posted")
+    async def mark_posted(request: Request, action_id: str) -> Response:
+        # Only a note that Hassan posted it (ADR-0020): no run is resumed or touched.
+        if not signed_in(request):
+            return to_login()
+        form = await request.form(max_files=0, max_fields=2)
+        if not csrf_ok(request, form.get("csrf")):
+            return forbidden(request)
+        try:
+            await inbox(request).mark_posted(action_id)
+        except NotReady:
+            return message(request, 404, "Not found", "That draft isn't ready to paste.")
+        request.session["flash"] = "Marked as posted."
+        return RedirectResponse("/ready", status_code=303)
+
+    @app.post("/r/{thread_id:path}/retry")
+    async def retry(request: Request, thread_id: str) -> Response:
+        if not signed_in(request):
+            return to_login()
+        form = await request.form(max_files=0, max_fields=2)
+        if not csrf_ok(request, form.get("csrf")):
+            return forbidden(request)
+        try:
+            await inbox(request).retry(thread_id)
+        except AlreadyDecided:
+            return message(request, 409, "Not stopped", "This run isn't stopped. Nothing changed.")
+        request.session["flash"] = "Retrying the revision."
         return RedirectResponse("/", status_code=303)
 
     return app

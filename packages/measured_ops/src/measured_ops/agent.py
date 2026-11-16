@@ -49,8 +49,10 @@ class Agent(Protocol):
     def build(self) -> AgentGraph:
         """Compile the agent's subgraph. Called once by the supervisor at startup.
 
-        Compile without a checkpointer: run inside the supervisor, the subgraph
-        uses the parent's.
+        Compile without a checkpointer. The supervisor runs every agent with
+        `checkpointer=False` (an agent run that's cut off restarts from the start), and
+        a graph the agent runs inside its own nodes should be compiled with
+        `checkpointer=False` too.
         """
         ...
 

@@ -43,7 +43,7 @@ def _final_state(url: str, thread_id: str) -> Any:
     return asyncio.run(read())
 
 
-@pytest.mark.parametrize(("decision", "feedback"), [("approve", ""), ("reject", "Shorter.")])
+@pytest.mark.parametrize(("decision", "feedback"), [("approve", ""), ("reject", "")])
 def test_decide_in_the_inbox_resumes_the_paused_thread(
     checkpointer_url: str,
     tmp_path: Path,

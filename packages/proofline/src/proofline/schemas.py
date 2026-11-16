@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ModelRole = Literal["planner", "researcher", "writer", "critic"]
 
 # One output format (ADR-0012): a short script for a LinkedIn post or a 1-minute video.
-MAX_WORDS = 200
+MAX_WORDS = 140  # about 56 s at WORDS_PER_MINUTE: a 1-minute clip (C8)
 WORDS_PER_MINUTE = 150
 
 SOURCE_ID_RE = re.compile(r"^S\d+$")
@@ -258,7 +258,8 @@ class FinalScript(_Model):
     estimated_seconds: int
     revision_count: int
     final_score: float | None = Field(
-        default=None, description="Critic's overall score; None when no critic ran (linear flow)."
+        default=None,
+        description="Critic's overall score on the final draft; None when no critic ran.",
     )
     source_urls: list[str]
     prompt_versions: dict[str, str]

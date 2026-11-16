@@ -5,6 +5,7 @@ Kept out of the nodes so prompts and output formatting can be tested without a g
 
 from __future__ import annotations
 
+import re
 from xml.sax.saxutils import escape, quoteattr
 
 from proofline.schemas import Critique, Draft, Outline, ResearchNotes, Source
@@ -81,18 +82,45 @@ def critique_block(critique: Critique) -> str:
     return "\n".join(lines)
 
 
+_CITATION_MARKS = re.compile(r"\s*\[S\d+\]")
+
+
+def revision_text(preview: str) -> str:
+    """A rejected preview as the writer revises it: no `## Sources` sections (web titles
+    and URLs), no `[S1]` marks (ids from an earlier research pass)."""
+    kept: list[str] = []
+    in_sources = False
+    for line in preview.splitlines():
+        if line.startswith("## "):
+            in_sources = line.strip().lower() == "## sources"
+        if not in_sources:
+            kept.append(_CITATION_MARKS.sub("", line))
+    return "\n".join(kept)
+
+
 def revision_context(
     draft: Draft | None,
     critique: Critique | None,
     feedback: str | None,
     rejected_by_human: bool,
+    previous_preview: str | None = None,
 ) -> str:
-    """The writer's revision block. Empty string on the first draft."""
-    if draft is None:
+    """The writer's revision block. Empty string on the first draft.
+
+    With no draft in state, a revision Task's `previous_preview` (the rejected action's
+    preview) stands in for it (ADR-0019), minus its Sources sections and citation marks
+    (`revision_text`): source titles are web text, and the old ids point at an earlier
+    research pass. What's left is escaped.
+    """
+    if draft is not None:
+        previous = draft_block(draft)
+    elif previous_preview:
+        previous = escape(revision_text(previous_preview))
+    else:
         return ""
     blocks = [
         "This is a revision. Your previous draft:",
-        f"<previous_draft>\n{draft_block(draft)}\n</previous_draft>",
+        f"<previous_draft>\n{previous}\n</previous_draft>",
     ]
     if rejected_by_human and feedback:
         blocks.append(
@@ -114,3 +142,40 @@ def script_markdown(draft: Draft, notes: ResearchNotes) -> str:
     if sources:
         out += ["", "## Sources"] + [f"- [{s.id}] [{s.title}]({s.url})" for s in sources]
     return "\n".join(out).rstrip() + "\n"
+
+
+# ── approve_draft preview (C8, ADR-0019) ──────────────────────────────────────
+# One action per topic; its preview holds three sections, all rendered here from what
+# the pipeline produced. No LLM call: the post and the clip come from the same draft.
+
+
+def clip_script(draft: Draft) -> str:
+    """The 1-minute clip: hook, body, call to action as spoken, citation marks removed."""
+    parts = [draft.hook, draft.body.strip(), draft.call_to_action]
+    return "\n\n".join(_CITATION_MARKS.sub("", p).strip() for p in parts)
+
+
+def lesson_outline(outline: Outline) -> str:
+    """The planner's outline as a lesson plan: angle, sections in order, key questions."""
+    out = [outline.angle, ""]
+    out += [f"{i}. **{s.title}**: {s.goal}" for i, s in enumerate(outline.sections, start=1)]
+    out += ["", "Questions it answers:"] + [f"- {q}" for q in outline.key_questions]
+    return "\n".join(out)
+
+
+def approve_draft_preview(draft: Draft, notes: ResearchNotes, outline: Outline) -> str:
+    """What Hassan approves on the phone: the post, the clip script, the lesson outline."""
+    sections = [
+        "## LinkedIn post",
+        "",
+        script_markdown(draft, notes).strip(),
+        "",
+        f"## Clip script (~{draft.estimated_seconds}s)",
+        "",
+        clip_script(draft),
+        "",
+        "## Lesson outline",
+        "",
+        lesson_outline(outline),
+    ]
+    return "\n".join(sections).rstrip() + "\n"

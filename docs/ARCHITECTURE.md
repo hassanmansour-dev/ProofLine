@@ -2,7 +2,8 @@
 
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
-built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018). Sections 3–11
+built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018); **content agent and
+same-thread revisions built** (C8, ADR-0019). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
 interface, the approval policy, the supervisor, its eval node, its gate and the inbox. Planned parts
@@ -12,7 +13,7 @@ need to be torn up when they land.
 ## 1. What it does
 
 Input: a topic and an audience. Output: one short technical script (title, hook,
-body, call to action; at most 200 words by default) for a LinkedIn post and a
+body, call to action; at most 140 words by default, about 56 s at 150 wpm) for a LinkedIn post and a
 1-minute video, with inline citations, saved as Markdown + JSON.
 
 A human is the final gate (the approval gate in C2, the inbox in C4). The machine's job is to get a draft good enough
@@ -22,8 +23,8 @@ that review is a 2-minute read, not a rewrite.
 
 ```
 packages/
-  proofline/        the content pipeline (LangGraph graph, nodes, CLI); becomes the
-                    content agent in C8
+  proofline/        the content pipeline (LangGraph graph, nodes, CLI) and, since C8,
+                    the content agent (`proofline.agent.ContentAgent`)
   measured_ops/     Measured Ops: contracts, agent interface, approval policy (C1);
                     supervisor + gate + checkpointer (C2); inbox (C4); eval node,
                     usage collection, price table (C7)
@@ -32,7 +33,7 @@ packages/
 ```
 
 Dependencies point one way: **proofline → measured_ops → measured_evals**, never
-back (ADR-0014; `proofline` takes the `measured_ops` dependency in C8). The
+back (ADR-0014; `proofline` depends on `measured_ops` since C8). The
 supervisor gets agents injected, so `measured_ops` never imports `proofline`
 (`packages/measured_ops/tests/test_ops_boundary.py`). `measured_evals` is published
 as open source at launch and reused by a separate web app (Measured Lab), so it
@@ -42,20 +43,13 @@ alone and runs its tests (ADR-0012).
 
 ## 3. Graph
 
-Built now:
+Built (critic loop wired in C8):
 
 ```mermaid
 flowchart LR
-    START([START]) --> planner --> researcher --> writer --> finalizer --> END([END])
-```
-
-⟶ The critic loop (C8, content agent) adds:
-
-```mermaid
-flowchart LR
-    writer --> critic
+    START([START]) --> planner --> researcher --> writer --> critic
     critic -- "score < threshold AND revisions < max" --> writer
-    critic -- "score ≥ threshold OR revisions exhausted" --> finalizer
+    critic -- "score ≥ threshold OR revisions exhausted" --> finalizer --> END([END])
 ```
 
 There is no human review node in this graph: the supervisor's approval gate (C2)
@@ -91,6 +85,7 @@ sets every default.
 | `critique` | `Critique \| None` | critic (C8) | `None` |
 | `score` | `float \| None` | critic (C8) | `None`; = `Critique.overall`, computed in Python |
 | `feedback` | `str \| None` | input (optional) | `None`; a human's feedback, set when a rejected action comes back as a revision `Task` (ADR-0014) |
+| `previous_preview` | `str \| None` | input (optional) | `None`; the rejected action's preview, from a revision `Task`: the writer revises from it when there's no `draft` yet (ADR-0019) |
 | `final_script` | `FinalScript` | finalizer | rendered Markdown + metadata |
 | `history` | `Annotated[list[RevisionRecord], operator.add]` | writer, critic | `[]`, append-only |
 
@@ -126,7 +121,7 @@ unparseable ones dropped and logged; titles carry no citations. Over `max_words`
 one more call (revision context kept) asking for a cut; the shorter draft is kept. Increments `revision_count` on revisions;
 appends a `RevisionRecord(kind="draft")`.
 
-**critic** (built; wired in C8) — scores against `docs/RUBRIC.md` (8 criteria,
+**critic** (wired in C8) — scores against `docs/RUBRIC.md` (8 criteria,
 integer 1–10, each with quoted evidence and a concrete fix). Writes `critique` and
 `score`. `Critique.overall` is a weighted mean computed in Python with a **hard
 gate**: `technical_accuracy < 6` caps it at 6. Validation requires each criterion
@@ -164,11 +159,16 @@ The supervisor uses its own factory, `measured_ops.checkpoint.open_checkpointer(
 (section 13). The content pipeline's: `checkpointing.open_checkpointer(url)`: `memory://` → `InMemorySaver`,
 `sqlite:///…` → `AsyncSqliteSaver`, `postgresql://…` → `AsyncPostgresSaver`. All
 use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state model
-(ADR-0006). `thread_id` = run id (UUID4). The linear flow runs without a checkpointer.
+(ADR-0006). `thread_id` = run id (UUID4). The CLI runs the pipeline without a checkpointer.
 
 ## 9. Interfaces
 
 **CLI** (`cli.py`, Typer):
+- `proofline propose --topic … --audience …` (C8) runs the supervisor with the content
+  agent against the inbox's database (`MEASURED_OPS_INBOX_CHECKPOINTER_URL`), masked
+  tracing on, and prints the run's id once the draft waits at the gate; a failed draft
+  exits 1 with the agent's error. `proofline inbox` serves the inbox with the content
+  agent (`measured_ops.inbox.server.serve`).
 - `proofline run --topic … --audience … [-v]` runs the graph and prints the Markdown
   script (stdout); file paths go to stderr.
 - `proofline mermaid` prints the graph.
@@ -222,8 +222,9 @@ inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
   whose client redacts emails, phone numbers, SINs and card numbers
   (`measured_evals.checks.redact_pii`) in every input, output and error; it replaces
   LangChain's env tracer. Every process that starts or resumes a supervisor run passes
-  it as `callbacks` (the inbox and `seed` do). Not covered: the standalone `proofline
-  run` CLI until C8.
+  it as `callbacks`: the inbox (resumes and revisions), `seed`, `proofline run` and
+  `proofline propose` do (C8). The content agent's nested pipeline passes no
+  `callbacks`, so it inherits the supervisor's masked tracer.
 - ⟶ GROW-14/15 (`measured_evals`): judge metrics, prompt-injection suite, cost
   budgets; API auth and rate limiting in the app.
 
@@ -268,7 +269,8 @@ propose actions; they never execute anything that leaves the system.
 **Approval policy** (`policy.py`). A TOML table, `version = 1`, `[actions]` rows of
 `"auto"`, `"approval"` or `"never"`. `load_policy()` reads the public demo table
 bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, plus
-`bulk_export_personal_data` and `act_outside_own_systems` as `"never"`);
+`bulk_export_personal_data` and `act_outside_own_systems` as `"never"`, and
+`approve_draft` as `"approval"` since C8);
 `load_policy(path)` reads the private one. `decide(action)`:
 
 1. row is `"never"` → **never**: blocked, logged at WARNING (id, type, task; never the
@@ -321,11 +323,16 @@ outside LangChain aren't seen. Prices match the exact model id the response repo
 returns the uncompiled `StateGraph`; compile it with a checkpointer.
 
 ```
-START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pending (pure): "gate" while
-                                        │   ▲    │    pending_actions is non-empty, else END
-                                        │   └────┤
+START → call_agent → evaluate → triage ─┬→ gate ─┬→ gate   (more pending)
+           ▲                            │        ├→ revise ─┐   (rejected with feedback, revision < max)
+           └────────────────────────────┼────────┼──────────┘
                                         └────────┴→ END
 ```
+`route_pending` (pure, after triage): "gate" while `pending_actions` is non-empty, else
+END. `route_after_gate` (pure, C8): more pending → gate; else this round has a
+rejection with feedback and the task's `revision` (`Task.inputs["revision"]`, 0 when
+absent) is below `max_revisions` (default 3) → revise; else END. An invalid revision
+number fails closed (END, logged).
 
 - `build_supervisor` builds and checks every agent's graph at startup; duplicate
   names fail. `call_agent` runs the task through `run_agent` inside `collect_usage`,
@@ -351,8 +358,14 @@ START → call_agent → evaluate → triage ─┬→ gate ─┐    route_pend
   for a new `Command(resume=...)`. The refused value stays as the pending resume
   until then, so never retry with a bare `ainvoke(None)`. (Raising after
   `interrupt()` returns would bind the bad answer and replay it on every resume.) An approved action goes
-  to `ready`; a rejection is recorded and the run ends.
-- Nothing executes `ready` yet (⟶ C5). Rejection feedback → revision `Task` (⟶ C8).
+  to `ready`; a rejection is recorded.
+- `revise` (C8, ADR-0019) builds the next `Task` for the same agent: `parent_id` = the
+  task it revises, the round's feedback (joined, capped at 4,000 characters), and
+  `inputs` + `previous_preview` (the rejected previews, joined with `---`) +
+  `revision` (+1). It writes `task` and the graph returns to `call_agent`; no interrupt
+  and no I/O, so it runs once per pass, and the gate is unchanged. A rejection without
+  feedback, or past the cap, ends the run.
+- Nothing executes `ready` yet (⟶ C5); `approve_draft` never will (ADR-0019).
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool
@@ -381,7 +394,7 @@ adds its own case.
   `Command(resume={interrupt_id: decision})`, never `ainvoke(None)`. A refused answer
   (`Refused`) leaves the run paused. A per-thread lock serialises simultaneous taps.
 - `web.create_inbox_app(settings, agents, policy, prices=..., eval_context=...)`: FastAPI, Jinja2 autoescaped pages,
-  no JavaScript. Sign-in: one passphrase checked against a scrypt hash, one attempt at a
+  one first-party script since C8 (ADR-0020). Sign-in: one passphrase checked against a scrypt hash, one attempt at a
   time, 5 failures lock it for 15 minutes; session cookie `__Host-mo_inbox`
   (`HttpOnly`/`Secure`/`SameSite=Strict`) whose server-side session id ends 12 hours after
   sign-in and is revoked on sign-out; size-limited forms; CSRF token on every POST;
@@ -389,12 +402,51 @@ adds its own case.
   each check (passed or failed, with its reason) and the run's cost; the list marks
   "Check failed" and "Not evaluated". Settings from
   `MEASURED_OPS_INBOX_*` env vars, no secret defaults: it refuses to start without them.
+- Background revisions (C8, ADR-0019): `decide` commits the gate step first
+  (`interrupt_after=["gate"]`: saved, and refused answers still fail at once), logs the
+  decision, then continues: next `revise` → a background task (`Outcome.revising`), next
+  `gate` → synchronously (it pauses at once); a semaphore runs one at a time, each under
+  `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` (default 600). `in_progress()` lists runs
+  not waiting: running, queued, stopped (cut off here; after a gate step; between nodes
+  on a revision task; or a first pass older than twice the timeout) and elsewhere (a fresh first pass: maybe
+  `proofline propose` in another process). Agent runs never checkpoint
+  (`checkpointer=False`), so a cut-off run restarts its agent from the start. `retry()` continues a
+  stopped run with `ainvoke(None)` (safe: no interrupt pending); the lifespan calls
+  `start()` (continue each stopped run once) and `aclose()` (cancel; they continue
+  next start). `POST /r/{thread_id}/retry` (CSRF) is the Retry button. C10 moves this
+  to a worker with budget caps.
+- Judge log (C8, ADR-0019): after a decision is accepted, the inbox appends
+  `{"kind": "decision", "action_id", "eval", "approved"}` to `measured_ops.judge_log`
+  (`MEASURED_OPS_JUDGE_LOG_PATH`, default `.data/judge_log.jsonl`); the content agent
+  appends `{"kind": "critic", "action_id", "critic"}` when it proposes. Ids, scores and a
+  bool only: the port has no parameter for text. GROW-13 joins them on `action_id`.
+- Ready to paste (C8, ADR-0020): `GET /ready` lists approved `approve_draft` actions
+  (`list_ready`: from each thread's `ready` and approving decisions, newest first), each
+  preview split on its `## ` headings into read-only blocks with a Copy button.
+  `POST /ready/{action_id}/posted` (CSRF) appends `{"action_id", "posted_at"}` to
+  `measured_ops.posted` (`MEASURED_OPS_POSTED_PATH`, default `.data/posted.jsonl`) and
+  hides it; it never resumes or writes to a run. `proofline ready [--out]` prints the
+  same list. The decision form is explicit: Approve, Revise with this feedback (needs
+  text and a revision left; shows "Revision 2 of 3"), Reject and stop (drops any text).
+  The inbox's one script, `/static/inbox.js` (CSP `script-src 'self'`), copies blocks
+  and disables Revise while the box is empty; pages work without it.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
-  (`docs/INBOX.md`). Edit is deferred to C8.
+  (`docs/INBOX.md`). Edit is deferred to C9.
 - e2e (`tests/test_inbox_e2e.py`): pause in another process → sign in → approve or
   reject over HTTP → the thread finishes, on SQLite and Postgres.
 
+
+**Content agent** (`proofline/agent.py`, C8, ADR-0019). `ContentAgent(deps)`, name
+`content`: a one-node agent subgraph that reads `Task.inputs` (`topic`, `audience`;
+bad inputs give a failed `AgentResult` with the reason), runs the pipeline graph
+(planner → researcher → writer ⇄ critic → finalizer) nested in the supervisor's thread
+(no `configurable`, no `callbacks`: it inherits both), and proposes one
+`approve_draft` action, target `manual paste: linkedin`, whose preview is
+`render.approve_draft_preview`: the LinkedIn post, the clip script (citation marks
+removed, estimated length) and the lesson outline from the planner's outline. Approving
+it only moves it to `ready`: no executor is ever registered for `approve_draft`. The
+critic's score stays inside the agent (in the summary), never `eval_scores`.
 
 ## 14. Docs
 

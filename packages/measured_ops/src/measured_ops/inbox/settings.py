@@ -5,6 +5,7 @@ local env file, never in this repo."""
 from __future__ import annotations
 
 import fcntl
+import math
 import os
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -29,6 +30,7 @@ class InboxSettings:
     lock_path: Path = Path(".data/inbox.lock")
     port: int = 8765
     session_hours: int = 12
+    revision_timeout_s: float = 600.0  # one background revision (ADR-0019)
 
     def check(self) -> None:
         """Raise InboxConfigError unless the secrets are present and usable."""
@@ -54,6 +56,11 @@ class InboxSettings:
                 f"{PREFIX}SESSION_SECRET must be at least {MIN_SECRET_CHARS} characters "
                 '(python -c "import secrets; print(secrets.token_urlsafe(48))")'
             )
+        if not math.isfinite(self.revision_timeout_s) or self.revision_timeout_s <= 0:
+            raise InboxConfigError(
+                f"{PREFIX}REVISION_TIMEOUT_S must be a positive number of seconds, "
+                f"got {self.revision_timeout_s}"
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> InboxSettings:
@@ -65,6 +72,9 @@ class InboxSettings:
             checkpointer_url=env.get(f"{PREFIX}CHECKPOINTER_URL", defaults.checkpointer_url),
             lock_path=Path(env.get(f"{PREFIX}LOCK_PATH", str(defaults.lock_path))),
             port=int(env.get(f"{PREFIX}PORT", str(defaults.port))),
+            revision_timeout_s=float(
+                env.get(f"{PREFIX}REVISION_TIMEOUT_S") or defaults.revision_timeout_s
+            ),
         )
         settings.check()
         return settings
@@ -87,3 +97,28 @@ def single_process_lock(path: Path) -> Iterator[None]:
                 "the inbox runs as a single process"
             ) from exc
         yield
+
+
+def revision_timeout_from_env() -> float:
+    """The revision timeout without the inbox's secrets: `proofline propose` uses it too,
+    so a run in another process is cut off before the inbox would retry it."""
+    raw = os.environ.get(f"{PREFIX}REVISION_TIMEOUT_S")
+    return (
+        float(raw)
+        if raw
+        else InboxSettings(passphrase_hash="", session_secret="").revision_timeout_s
+    )
+
+
+def env_path(name: str) -> Path | None:
+    raw = os.environ.get(name)
+    return Path(raw) if raw else None
+
+
+def checkpointer_url() -> str:
+    """The configured checkpointer URL; creates the SQLite file's directory if needed."""
+    default = InboxSettings(passphrase_hash="", session_secret="").checkpointer_url
+    url = os.environ.get(f"{PREFIX}CHECKPOINTER_URL", default)
+    if url.startswith("sqlite:///"):
+        Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
+    return url
