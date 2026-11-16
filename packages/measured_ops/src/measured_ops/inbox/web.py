@@ -2,6 +2,7 @@
 
     GET|HEAD /login, POST /login, POST /logout
     POST /r/{thread_id}/retry    continue a stopped revision (C8, ADR-0019)
+    GET  /ready                  approved drafts to paste; POST /ready/{id}/posted (ADR-0020)
     GET  /                       actions waiting at the gate
     GET  /a/{thread_id}          one action: preview, approve / reject with feedback
     POST /a/{thread_id}/decision resume the run with the answer
@@ -45,7 +46,7 @@ from measured_evals import ModelPrice
 from measured_ops.agent import Agent
 from measured_ops.checkpoint import open_checkpointer
 from measured_ops.inbox.auth import LoginThrottle, verify_passphrase
-from measured_ops.inbox.service import AlreadyDecided, Inbox, PendingItem, Refused
+from measured_ops.inbox.service import AlreadyDecided, Inbox, NotReady, PendingItem, Refused
 from measured_ops.inbox.settings import InboxSettings, single_process_lock
 from measured_ops.judge_log import JudgeLog
 from measured_ops.policy import ApprovalPolicy
@@ -347,6 +348,29 @@ def create_inbox_app(
             more = " The run has another action waiting." if outcome.still_paused else ""
         request.session["flash"] = f"{verb}.{more}"
         return RedirectResponse("/", status_code=303)
+
+    @app.get("/ready", response_class=HTMLResponse)
+    async def ready(request: Request) -> Response:
+        if not signed_in(request):
+            return to_login()
+        items = await inbox(request).list_ready()
+        flash = request.session.pop("flash", None)
+        return render(request, "ready.html", items=items, flash=flash)
+
+    @app.post("/ready/{action_id}/posted")
+    async def mark_posted(request: Request, action_id: str) -> Response:
+        # Only a note that Hassan posted it (ADR-0020): no run is resumed or touched.
+        if not signed_in(request):
+            return to_login()
+        form = await request.form(max_files=0, max_fields=2)
+        if not csrf_ok(request, form.get("csrf")):
+            return forbidden(request)
+        try:
+            await inbox(request).mark_posted(action_id)
+        except NotReady:
+            return message(request, 404, "Not found", "That draft isn't ready to paste.")
+        request.session["flash"] = "Marked as posted."
+        return RedirectResponse("/ready", status_code=303)
 
     @app.post("/r/{thread_id:path}/retry")
     async def retry(request: Request, thread_id: str) -> Response:

@@ -31,6 +31,7 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_PRICES_PATH` | no | the bundled demo price table |
 | `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
 | `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
+| `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
@@ -121,6 +122,11 @@ Never run `tailscale funnel` for this port.
   ("Revising…"), the agent writes a new draft in the background, and it comes back to
   the list when it's ready, at most 3 times per run. One revision runs at a time; the
   others wait as "Revision queued". Edit comes with C9.
+- **Ready to paste** (link at the top) lists approved drafts, newest first: the
+  LinkedIn post, the clip script and the lesson outline, each in its own box with a
+  **Copy** button (if the browser won't copy, it selects the text for you). **Mark as
+  posted** only records that you posted it and hides it; nothing is ever published from
+  here. `proofline ready` prints the same list in the terminal.
 - "In progress" lists runs not waiting for you. "Revision stopped" means a revision
   hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
   continues stopped runs once when it starts. "In progress elsewhere" is a run another

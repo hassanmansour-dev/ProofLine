@@ -112,7 +112,7 @@ def wait_for_item(c: TestClient, thread: str = "t1", seconds: float = 5.0) -> st
     raise AssertionError(f"run {thread} didn't come back to the inbox in {seconds}s")
 
 
-def decide(c: TestClient, html: str, decision: str, **extra: str) -> Any:
+def decide(c: TestClient, html: str, decision: str, *, thread: str = "t1", **extra: str) -> Any:
     data = {
         "csrf": field(html, "csrf"),
         "interrupt_id": field(html, "interrupt_id"),
@@ -121,7 +121,7 @@ def decide(c: TestClient, html: str, decision: str, **extra: str) -> Any:
         "feedback": "",
     }
     data.update(extra)
-    return c.post("/a/t1/decision", data=data)
+    return c.post(f"/a/{thread}/decision", data=data)
 
 
 # ---- startup ----------------------------------------------------------------------------
@@ -671,3 +671,104 @@ def _thread_state(url: str, thread_id: str) -> Any:
             return await graph.aget_state({"configurable": {"thread_id": thread_id}})
 
     return asyncio.run(read())
+
+
+# ---- ready to paste (C8, ADR-0020) ---------------------------------------------------------
+
+
+def seed_draft(
+    url: str, goal: str = "Say why every AI loop needs an exit.", thread: str = "d1"
+) -> None:
+    async def run() -> None:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent("approve_draft")], load_policy()).compile(
+                checkpointer=saver
+            )
+            cfg: Any = {"configurable": {"thread_id": thread}, "recursion_limit": 40}
+            await graph.ainvoke(initial_ops_state(Task(agent="echo", goal=goal)), cfg)
+
+    asyncio.run(run())
+
+
+def _approve_draft(c: TestClient, thread: str = "d1") -> None:
+    assert decide(c, open_item(c, thread), "approve", thread=thread).status_code == 303
+
+
+def test_ready_needs_sign_in(client: TestClient) -> None:
+    assert client.get("/ready").status_code in (303, 307)
+
+
+def test_an_approved_draft_is_ready_to_paste_with_copy_buttons(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_draft(settings.checkpointer_url, goal="Exits <b>matter</b>")
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        html = c.get("/ready").text
+
+    assert "Ready to paste" in html
+    assert "Draft post: Exits &lt;b&gt;matter&lt;/b&gt;" in html  # escaped, in a text box
+    assert "<b>matter</b>" not in html
+    assert 'data-copy="block-0-0"' in html
+    assert '<textarea id="block-0-0" readonly' in html
+    assert ">Mark as posted<" in html
+
+
+def test_ready_lists_newest_first(settings: InboxSettings, clock: Clock) -> None:
+    seed_draft(settings.checkpointer_url, goal="Older goal.", thread="d1")
+    seed_draft(settings.checkpointer_url, goal="Newer goal.", thread="d2")
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c, "d1")
+        _approve_draft(c, "d2")
+        html = c.get("/ready").text
+
+    assert html.index("Newer goal.") < html.index("Older goal.")
+
+
+def test_mark_as_posted_hides_it_and_never_resumes_a_run(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed_draft(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        page = c.get("/ready").text
+        action_id = re.search(r'action="/ready/([^/"]+)/posted"', page).group(1)  # type: ignore[union-attr]
+        before = _thread_state(settings.checkpointer_url, "d1")
+
+        response = c.post(f"/ready/{action_id}/posted", data={"csrf": field(page, "csrf")})
+
+        assert response.status_code == 303
+        assert "Nothing is ready to paste" in c.get("/ready").text
+    after = _thread_state(settings.checkpointer_url, "d1")
+    assert (
+        after.config["configurable"]["checkpoint_id"]
+        == before.config["configurable"]["checkpoint_id"]
+    )
+    assert after.next == ()
+
+
+def test_mark_as_posted_needs_csrf(settings: InboxSettings, clock: Clock) -> None:
+    seed_draft(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        _approve_draft(c)
+        page = c.get("/ready").text
+        action_id = re.search(r'action="/ready/([^/"]+)/posted"', page).group(1)  # type: ignore[union-attr]
+
+        assert c.post(f"/ready/{action_id}/posted", data={"csrf": "wrong"}).status_code == 403
+        assert action_id in c.get("/ready").text
+
+
+def test_marking_an_unknown_draft_is_a_404(client: TestClient) -> None:
+    login(client)
+    page = client.get("/")
+    response = client.post("/ready/nope/posted", data={"csrf": field(page.text, "csrf")})
+    assert response.status_code == 404
+
+
+def test_the_header_links_to_ready_to_paste(client: TestClient) -> None:
+    login(client)
+    assert 'href="/ready"' in client.get("/").text

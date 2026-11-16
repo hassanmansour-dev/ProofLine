@@ -49,6 +49,7 @@ from measured_evals import ModelPrice, total_by_agent
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
+from measured_ops.posted import JsonlPostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
 from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
 from measured_ops.tracing import masked_tracing_callbacks
@@ -58,6 +59,10 @@ log = logging.getLogger("measured_ops.inbox")
 RECURSION_LIMIT = 40
 DEFAULT_REVISION_TIMEOUT_S = 600.0
 RunState = Literal["queued", "running", "stopped", "elsewhere"]
+
+
+class NotReady(LookupError):
+    """No approved, paste-ready draft has this action id (ADR-0020)."""
 
 
 class AlreadyDecided(LookupError):
@@ -127,6 +132,80 @@ class PendingItem:
     costs: tuple[CostView, ...] | None = ()
 
 
+DEFAULT_PASTE_TYPES = frozenset({"approve_draft"})
+
+
+@dataclass(frozen=True)
+class ReadyItem:
+    """An approved draft to paste (ADR-0020), its preview split into blocks."""
+
+    thread_id: str
+    action_id: str
+    goal: str
+    type: str
+    approved_at: str  # ISO timestamp of the approval
+    preview: str
+    blocks: tuple[tuple[str, str], ...]  # (heading, text), in preview order
+    posted: bool = False
+
+
+def split_blocks(preview: str) -> tuple[tuple[str, str], ...]:
+    """The preview's `## ` sections as (heading, text); one "Draft" block if none."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in preview.splitlines():
+        if line.startswith("## "):
+            blocks.append((line[3:].strip(), []))
+        elif blocks:
+            blocks[-1][1].append(line)
+    if not blocks:
+        return (("Draft", preview.strip()),)
+    return tuple((title, "\n".join(body).strip()) for title, body in blocks)
+
+
+async def list_ready(
+    graph: Any,
+    thread_ids: list[str],
+    *,
+    posted: set[str],
+    paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
+    include_posted: bool = False,
+) -> list[ReadyItem]:
+    """Approved drafts of `paste_types` across `thread_ids`, newest approval first."""
+    items: list[ReadyItem] = []
+    for thread_id in thread_ids:
+        try:
+            snap = await graph.aget_state(_cfg(thread_id))
+        except Exception:
+            log.exception("inbox: can't read run %s; skipped", thread_id)
+            continue
+        values = snap.values or {}
+        task: Task | None = values.get("task")
+        approved_at = {
+            d.action_id: d.decided_at.isoformat()
+            for d in values.get("decisions") or []
+            if d.approved
+        }
+        for action in values.get("ready") or []:
+            if action.type not in paste_types or action.id not in approved_at:
+                continue
+            is_posted = action.id in posted
+            if is_posted and not include_posted:
+                continue
+            items.append(
+                ReadyItem(
+                    thread_id=thread_id,
+                    action_id=action.id,
+                    goal=task.goal if task is not None else "",
+                    type=action.type,
+                    approved_at=approved_at[action.id],
+                    preview=action.preview,
+                    blocks=split_blocks(action.preview),
+                    posted=is_posted,
+                )
+            )
+    return sorted(items, key=lambda i: i.approved_at, reverse=True)
+
+
 @dataclass(frozen=True)
 class RunStatus:
     """A run that isn't waiting for a human: revising here, cut off, or busy elsewhere."""
@@ -171,6 +250,8 @@ class Inbox:
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
         judge_log: JudgeLog | None = None,
         max_revisions: int = DEFAULT_MAX_REVISIONS,
+        posted: JsonlPostedLog | None = None,
+        paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -181,6 +262,8 @@ class Inbox:
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self.revision_timeout_s = revision_timeout_s
         self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
+        self.posted = posted_log_from_env() if posted is None else posted
+        self.paste_types = paste_types
         self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
         self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
         self._revisions: dict[str, Literal["queued", "running"]] = {}
@@ -349,6 +432,27 @@ class Inbox:
         except OSError:
             # the decision stands; a lost log line must not undo or hide it
             log.exception("inbox: couldn't write the judge log for action %s", item.action_id)
+
+    # ---- ready to paste (C8, ADR-0020) ------------------------------------------------
+
+    async def list_ready(self, *, include_posted: bool = False) -> list[ReadyItem]:
+        """Approved drafts to paste, newest first; posted ones only if asked."""
+        return await list_ready(
+            self.graph,
+            await self._thread_ids(),
+            posted=self.posted.posted(),
+            paste_types=self.paste_types,
+            include_posted=include_posted,
+        )
+
+    async def mark_posted(self, action_id: str) -> None:
+        """Record that Hassan posted it, and hide it. Never resumes or writes to a run:
+        there is no executor for a draft (ADR-0019); this is only a note (ADR-0020)."""
+        ready = await self.list_ready(include_posted=True)
+        if action_id not in {r.action_id for r in ready}:
+            raise NotReady(f"no approved draft {action_id}")
+        self.posted.mark(action_id)
+        log.info("inbox: draft %s marked as posted", action_id)
 
     # ---- background revisions (C8, ADR-0019) ----------------------------------------
 

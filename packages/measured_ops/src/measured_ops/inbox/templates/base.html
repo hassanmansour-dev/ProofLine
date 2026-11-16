@@ -12,6 +12,7 @@
 <header class="bar">
   <a href="/" class="brand">Measured Ops · Inbox</a>
   {% if signed_in %}
+  <a href="/ready" class="nav">Ready to paste</a>
   <form method="post" action="/logout">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="link">Sign out</button>
