@@ -1,6 +1,6 @@
 # ADR-0020: Ready to paste, posted marks, explicit reject, and the inbox's first script
 
-- Status: proposed (2026-11-16, C8, in PR #13 at Hassan's request; amends ADR-0017's
+- Status: accepted (2026-11-16, Hassan's review of PR #13; amends ADR-0017's
   "no JavaScript")
 - Date: 2026-11-16
 - Phase/Step: Phase 1 / C8 (GROW-87)
@@ -64,4 +64,4 @@ selectable text, and the server enforces the feedback rule.
   marks live beside the checkpointer, not in it (a moved database loses them, harmlessly:
   drafts reappear as not posted).
 - Revisit when: C5 builds executors (still none for `approve_draft`), C9 adds edit, or
-  posted marks need to travel with the database (move them to a table).
+  runs are hosted: in C10 the judge log and posted marks move into Postgres (PLAN C10).

@@ -189,6 +189,10 @@ Data flow rules:
 
 Configured in `.claude/settings.json`, scripts in `.claude/hooks/`:
 - Bash guard blocks force-push, `rm -rf`, reading `.env`, and direct `pip install`.
+- Bash guard blocks deleting, moving or truncating anything under `.data/` or `outputs/`
+  (rm, unlink, truncate, `>` redirects, inline Python, `git clean -x`): that's runtime
+  data and may be Hassan's. A root `conftest.py` fails the test run if the real
+  judge log or posted marks change.
 - Edits to `.env*`, `uv.lock`, and `*.db` are blocked (use `uv` for the lock).
 - Every edited `.py` file is auto-formatted and linted; remaining lint errors are
   reported back to you — fix them before moving on.

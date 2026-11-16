@@ -255,6 +255,8 @@ Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
   from C0, because the free tier is full. Check that `projects create` reads the DB
   password from the environment and that `-o json` (not `--output-format json`)
   gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier)
+- [ ] Judge log and posted marks move into Postgres when runs are hosted (now local
+  JSONL files under `.data/`, ADR-0019, ADR-0020; Hassan, 2026-11-16)
 
 **Done when:** it runs unattended for 3 days with digests arriving.
 
