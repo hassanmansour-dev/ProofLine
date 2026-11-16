@@ -206,7 +206,7 @@ if they differ; allowlisted addresses passed per call from private config.
   per call; PII masked in LangSmith traces; blocked-action log without the target
 - [x] Green in CI on the PR (#12: Postgres e2e ran, 483 passed, 0 skipped, after the review fixes)
 
-### C8 · Content agent v0 (GROW-87) ◀ CURRENT
+### C8 · Content agent v0 (GROW-87) ✅ (PR #13)
 
 Waits on: C6 and C7. **First useful slice: get it live as early as possible.**
 Started before C5/C6 with Hassan's OK (2026-11-14): topics go in by hand with
@@ -231,18 +231,27 @@ critic scores, eval scores and the decision only. Default word limit 140 (about 
 - [x] Ready to paste in the inbox (Copy per block, Mark as posted only records) and
   `proofline ready`; explicit Revise / Reject and stop with "Revision n of 3" (ADR-0020)
 - [x] Green in CI on the PR (#13: Postgres e2e ran, 600 passed, 0 skipped, with Ready to paste)
-- [ ] First real draft in the inbox (Hassan: `proofline propose` with real keys, then
-  `proofline inbox` on the phone)
+- [x] First real draft in the inbox (Hassan: `proofline propose` with real keys, then
+  `proofline inbox` on the phone; live test passed, 2026-11-16)
 
 **Done when:** e2e passes and the first real draft appears in the inbox.
 
 Unlocks: README v1 + build post #1 (GROW-8, can start after C2), the workshop deck
 with real traces (GROW-34), and the case study's traces (GROW-16).
 
+### C5 · MCP tools: Jira + personal calendar, read/write split (GROW-84) ◀ CURRENT
+
+Waits on: C3 ✅. Reads run freely; every write goes through the approval policy
+(calendar blocks need approval, per C3; ticket triage is auto); `approve_draft` never
+gets an executor (ADR-0019); the executor handles a revision re-proposing an action
+that was already approved. Real credentials only in the environment or
+measured-ops-private; tests use fakes. Plan and checklist: to come with Hassan's review.
+
 ### C9 · A week of real use (GROW-88)
 
-Waits on: C8. Approve or edit 5+ drafts on the phone; log what's wrong as comments.
-Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
+Waits on: C8 ✅. **Runs in parallel with C5** (Hassan, 2026-11-16): Hassan uses the
+content agent daily. Approve or edit 5+ drafts on the phone; log what's wrong as
+comments. Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 
 - [ ] Inbox edit: approve an edited preview, re-checked by the eval node first (moved
   from C8; needs an ADR, see the note under "Already built")
