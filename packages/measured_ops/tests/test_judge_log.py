@@ -100,3 +100,14 @@ def test_the_default_path_is_gitignored() -> None:
         ["git", "check-ignore", "-q", ".data/judge_log.jsonl"], cwd=root, check=False
     )
     assert result.returncode == 0
+
+
+def test_the_repo_guard_refuses_writes_to_the_real_files() -> None:
+    # conftest.py at the repo root: tests can't write real runtime data, even by mistake.
+    from measured_ops.posted import JsonlPostedLog
+
+    root = Path(__file__).resolve().parents[3]
+    with pytest.raises(AssertionError, match="real runtime data"):
+        JsonlJudgeLog(root / ".data" / "judge_log.jsonl").record_decision("x", None, approved=True)
+    with pytest.raises(AssertionError, match="real runtime data"):
+        JsonlPostedLog(root / ".data" / "posted.jsonl").mark("x")

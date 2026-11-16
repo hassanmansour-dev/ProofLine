@@ -60,6 +60,17 @@ _PY_DESTRUCTIVE = re.compile(
 )
 
 
+_PY_INLINE = re.compile(r"\bpython3?\b[^\n]*?\s-c\s+(['\"])(.*?)\1", re.DOTALL)
+_PY_HEREDOC = re.compile(r"\bpython3?\b[^\n]*?<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1\b", re.DOTALL)
+
+
+def _python_snippets(command: str) -> list[str]:
+    """The code of inline Python: `-c '...'` arguments and heredoc bodies."""
+    return [m.group(2) for m in _PY_INLINE.finditer(command)] + [
+        m.group(2) for m in _PY_HEREDOC.finditer(command)
+    ]
+
+
 def _words(segment: str) -> list[str]:
     return [w for w in re.split(r"\s+", segment.strip()) if w]
 
@@ -68,9 +79,11 @@ def touches_runtime_data(command: str) -> bool:
     """True if `command` would delete, move or truncate anything under .data/ or outputs/."""
     if not re.search(_DATA, command):
         return False
-    # inline Python (-c or heredoc) that deletes or overwrites
-    if re.search(r"\bpython3?\b", command) and _PY_DESTRUCTIVE.search(command):
-        return True
+    # inline Python (-c or heredoc) that deletes or overwrites runtime data: the path
+    # and the call must both be in the Python code itself
+    for code in _python_snippets(command):
+        if re.search(_DATA, code) and _PY_DESTRUCTIVE.search(code):
+            return True
     # `>` or `>|` (not `>>`) onto runtime data truncates it; checked before splitting
     # on `|`, which would cut `>|` in two
     if re.search(r"(?<!>)>\|?\s*[\"']?(?:\S*/)?(?:\.data|outputs)/", command):

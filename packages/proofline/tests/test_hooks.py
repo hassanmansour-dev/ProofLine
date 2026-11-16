@@ -121,6 +121,9 @@ def test_guard_bash_never_deletes_or_truncates_runtime_data(command: str) -> Non
         "sqlite3 .data/ops_checkpoints.db 'select count(*) from checkpoints'",
         "grep -n outputs docs/PLAN.md",
         'git commit -m "docs: the guard denies git clean -x/-X on .data/"',
+        # Python that writes a source file, next to a separate read of .data/
+        "python3 - <<'EOF'\nfrom pathlib import Path\nPath('x.py').write_text('')\nEOF\n"
+        "stat -c '%s' .data/judge_log.jsonl",
     ],
 )
 def test_guard_bash_allows_reading_runtime_data(command: str) -> None:
