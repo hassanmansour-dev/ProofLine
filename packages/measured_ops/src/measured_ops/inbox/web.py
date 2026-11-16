@@ -56,7 +56,7 @@ log = logging.getLogger("measured_ops.inbox")
 SESSION_COOKIE = "__Host-mo_inbox"  # __Host-: Secure, Path=/, no Domain, enforced by browsers
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'self'; form-action 'self'; "
+        "default-src 'none'; style-src 'self'; script-src 'self'; form-action 'self'; "
         "frame-ancestors 'none'; base-uri 'none'"
     ),
     "X-Frame-Options": "DENY",
@@ -107,6 +107,7 @@ def create_inbox_app(
     templates.filters["urlpart"] = lambda value: quote(str(value), safe="")
     templates.filters["dollars"] = lambda v: "unknown" if v is None else f"${v:,.4f}"
     css = files("measured_ops.inbox").joinpath("templates", "inbox.css").read_text("utf-8")
+    js = files("measured_ops.inbox").joinpath("templates", "inbox.js").read_text("utf-8")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -218,6 +219,11 @@ def create_inbox_app(
     async def stylesheet() -> Response:
         return Response(css, media_type="text/css")
 
+    @app.get("/static/inbox.js")
+    async def script() -> Response:
+        # the inbox's only script, first-party (ADR-0020); pages work without it
+        return Response(js, media_type="text/javascript")
+
     # ---- sign-in ------------------------------------------------------------------------
 
     # HEAD too: `curl -I .../login` is the runbook's "is it up?" check (docs/INBOX.md).
@@ -294,14 +300,27 @@ def create_inbox_app(
             v if isinstance(v, str) else "" for v in fields.values()
         )
         try:
-            if choice not in ("approve", "reject"):
-                raise Refused("choose Approve or Reject")
+            # Explicit (ADR-0020): Revise needs text and a revision left; Reject and stop
+            # drops any text, so it can never queue a revision.
+            if choice == "approve":
+                approved, text = True, feedback
+            elif choice == "revise":
+                if not feedback.strip():
+                    raise Refused("write what to change, or use Reject and stop")
+                current = await inbox(request).get(thread_id)
+                if current is not None and current.revision >= current.max_revisions:
+                    raise Refused("no revisions left: approve it, or reject and stop")
+                approved, text = False, feedback
+            elif choice == "reject":
+                approved, text = False, ""
+            else:
+                raise Refused("choose Approve, Revise or Reject and stop")
             outcome = await inbox(request).decide(
                 thread_id,
                 interrupt_id=interrupt_id,
                 action_id=action_id,
-                approved=choice == "approve",
-                feedback=feedback,
+                approved=approved,
+                feedback=text,
             )
         except AlreadyDecided:
             return message(
@@ -320,6 +339,8 @@ def create_inbox_app(
                 error=str(exc),
             )
         verb = "Approved" if outcome.approved else "Rejected"
+        if not outcome.approved and choice == "reject":
+            verb = "Rejected and stopped"
         if outcome.revising:
             more = " Revising: the new draft comes back here when it's ready."
         else:

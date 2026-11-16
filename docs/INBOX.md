@@ -115,8 +115,9 @@ Never run `tailscale funnel` for this port.
 - With LangSmith tracing on, the inbox sends traces with emails, phone numbers, SINs
   and card numbers redacted. The page itself shows the preview as written.
 - **Approve** clears it to `ready` (nothing executes before C5; an `approve_draft` never
-  executes: you paste the post yourself). **Reject** without feedback ends the run.
-  **Reject with feedback** revises it (C8, ADR-0019): the page answers at once
+  executes: you paste the post yourself). **Reject and stop** ends the run and ignores
+  any text in the box. **Revise with this feedback** (needs text, and a revision left)
+  revises it (C8, ADR-0019, ADR-0020); the page shows "First draft" or "Revision 2 of 3": the page answers at once
   ("Revising…"), the agent writes a new draft in the background, and it comes back to
   the list when it's ready, at most 3 times per run. One revision runs at a time; the
   others wait as "Revision queued". Edit comes with C9.

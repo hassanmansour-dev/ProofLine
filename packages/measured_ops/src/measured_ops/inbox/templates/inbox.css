@@ -80,3 +80,7 @@ button {
 code { font-size: 0.95em; }
 .run-stopped { border-color: var(--warn-fg); }
 .run form { margin-top: 8px; }
+.actions-three { grid-template-columns: 1fr; }
+@media (min-width: 520px) { .actions-three { grid-template-columns: 1fr 1fr 1fr; } }
+button.secondary { background: var(--card); color: var(--accent); border: 1px solid var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }

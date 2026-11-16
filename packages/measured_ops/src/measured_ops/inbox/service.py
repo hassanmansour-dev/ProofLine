@@ -50,6 +50,7 @@ from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.prices import load_model_prices
+from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
 from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
@@ -120,6 +121,8 @@ class PendingItem:
     response_schema: dict[str, Any]
     blocked_by_policy: bool
     eval: EvalView | None = None  # None: paused before the eval node existed (pre-C7)
+    revision: int = 0  # the task's revision number (ADR-0019): 0 = first draft
+    max_revisions: int = DEFAULT_MAX_REVISIONS
     # None: the run predates usage tracking (pre-C7), which is not the same as free
     costs: tuple[CostView, ...] | None = ()
 
@@ -167,6 +170,7 @@ class Inbox:
         callbacks: list[BaseCallbackHandler] | None = None,
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
         judge_log: JudgeLog | None = None,
+        max_revisions: int = DEFAULT_MAX_REVISIONS,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -176,6 +180,7 @@ class Inbox:
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self.revision_timeout_s = revision_timeout_s
+        self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
         self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
         self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
         self._revisions: dict[str, Literal["queued", "running"]] = {}
@@ -235,6 +240,8 @@ class Inbox:
             response_schema={},
             blocked_by_policy=self.policy.is_blocked(action),  # logs a WARNING if so
             eval=_eval_view(payload.get("eval")),
+            revision=task_revision(task) or 0,
+            max_revisions=self.max_revisions,
             costs=costs,
         )
 

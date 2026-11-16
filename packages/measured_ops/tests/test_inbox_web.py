@@ -326,7 +326,7 @@ def test_reject_with_feedback_brings_back_a_revised_item(client: TestClient) -> 
     login(client)
     html = open_item(client)
 
-    response = decide(client, html, "reject", feedback="Shorter, please.")
+    response = decide(client, html, "revise", feedback="Shorter, please.")
 
     assert response.status_code == 303
     again = wait_for_item(client)
@@ -473,10 +473,10 @@ def test_reject_with_feedback_says_it_is_revising(client: TestClient) -> None:
     login(client)
     html = open_item(client)
 
-    decide(client, html, "reject", feedback="Shorter, please.")
+    decide(client, html, "revise", feedback="Shorter, please.")
     listing = client.get("/").text
 
-    assert "Rejected. Revising" in listing
+    assert "Revising" in listing
     wait_for_item(client)
 
 
@@ -579,3 +579,95 @@ def test_a_bad_revision_timeout_is_refused(bad: str) -> None:
     }
     with pytest.raises(InboxConfigError, match="REVISION_TIMEOUT_S"):
         InboxSettings.from_env(env)
+
+
+# ---- explicit reject: revise or stop (C8, ADR-0020) ---------------------------------------
+
+
+def test_the_form_has_approve_revise_and_reject_and_stop(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    assert 'value="approve"' in html
+    assert ">Revise with this feedback<" in html
+    assert 'data-needs-feedback="feedback"' in html  # inbox.js disables it while empty
+    assert ">Reject and stop<" in html
+    assert '<script src="/static/inbox.js" defer></script>' in html
+    assert "First draft · up to 3 revisions" in html
+
+
+def test_revise_with_an_empty_box_is_refused_and_the_run_waits(client: TestClient) -> None:
+    login(client)
+    html = open_item(client)
+
+    response = decide(client, html, "revise", feedback="   ")
+
+    assert response.status_code == 400
+    assert "write what to change" in response.text
+    assert field(open_item(client), "action_id") == field(html, "action_id")
+
+
+def test_reject_and_stop_ignores_the_text_and_never_revises(
+    settings: InboxSettings, clock: Clock
+) -> None:
+    seed(settings.checkpointer_url)
+    with _client(settings, clock) as c:
+        login(c)
+        html = open_item(c)
+
+        response = decide(c, html, "reject", feedback="This text must not revise anything.")
+
+        assert response.status_code == 303
+        assert "Nothing is waiting" in c.get("/").text
+        assert "In progress" not in c.get("/").text  # no revision queued or running
+    state = _thread_state(settings.checkpointer_url, "t1")
+    [decision] = state.values["decisions"]
+    assert (decision.approved, decision.feedback) == (False, None)
+    assert state.next == ()
+    assert state.values["task"].inputs.get("revision", 0) == 0
+
+
+def test_the_page_shows_the_revision_number(client: TestClient) -> None:
+    login(client)
+    decide(client, open_item(client), "revise", feedback="Shorter.")
+
+    again = wait_for_item(client)
+
+    assert "Revision 1 of 3" in again
+
+
+def test_with_no_revisions_left_revise_is_refused(client: TestClient) -> None:
+    login(client)
+    for _ in range(3):
+        decide(
+            client,
+            open_item(client) if _ == 0 else wait_for_item(client),
+            "revise",
+            feedback="Again.",
+        )
+    html = wait_for_item(client)
+    assert "Revision 3 of 3" in html
+    assert "No revisions left" in html
+
+    response = decide(client, html, "revise", feedback="Once more.")
+
+    assert response.status_code == 400
+    assert "no revisions left" in response.text
+
+
+def test_inbox_js_is_served_and_the_csp_allows_only_self_scripts(client: TestClient) -> None:
+    js = client.get("/static/inbox.js")
+    assert js.status_code == 200
+    assert js.headers["content-type"].startswith("text/javascript")
+    csp = client.get("/login").headers["content-security-policy"]
+    assert "script-src 'self'" in csp
+    assert "unsafe-inline" not in csp
+
+
+def _thread_state(url: str, thread_id: str) -> Any:
+    async def read() -> Any:
+        async with open_checkpointer(url) as saver:
+            graph = build_supervisor([EchoAgent()], load_policy()).compile(checkpointer=saver)
+            return await graph.aget_state({"configurable": {"thread_id": thread_id}})
+
+    return asyncio.run(read())
