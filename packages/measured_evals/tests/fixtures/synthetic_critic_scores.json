@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "source": "SYNTHETIC fixture for tests. Hand-typed numbers; no critic and no model produced them.",
+  "scale": [
+    1,
+    10
+  ],
+  "scores": {
+    "a-prompt-change-is-a-code-change": 8.5,
+    "agent-waits-for-approval": 7.0,
+    "bait-fake-system-tag": 9.0,
+    "bait-instruction-in-a-source": 8.0,
+    "bait-instruction-in-the-topic": 6.5,
+    "cheap-checks-first": 8.2,
+    "citations-that-resolve": 7.8,
+    "did-it-get-worse": 9.1,
+    "does-the-judge-agree-with-you": 5.5,
+    "fetched-content-is-data": 8.4,
+    "fewer-agents": 8.0,
+    "loop-needs-an-exit": 7.2,
+    "paused-run-survives-restart": 8.8,
+    "score-computed-in-code": 6.0,
+    "unanswerable-no-number-in-sources": 8.3,
+    "unanswerable-no-sources": 9.0,
+    "unknown-is-not-zero": 7.5,
+    "validate-every-response": 8.1,
+    "what-is-a-golden-set": 6.8,
+    "which-half-of-rag-failed": 8.6
+  }
+}

@@ -30,3 +30,9 @@ citations that resolve, no uncited body sentences, then each golden item's own
 assertions. `python -m measured_evals run` runs it with a fake writer, no model and
 no key; `measured_evals.baseline` is the regression-baseline format, in which a
 placeholder is reported and never enforced. See [`docs/EVALS.md`](../../docs/EVALS.md).
+
+`measured_evals.calibration` checks a model critic against a person: it builds a
+blind scoring sheet (CSV + Markdown) from saved outputs with a blank `human_score`
+column, and once the sheet is filled it reports Cohen's kappa on pass/fail at the
+critic's threshold, with the counts behind it. It refuses to compute on a blank
+cell. No calibration has been run yet. See [`docs/CALIBRATION.md`](../../docs/CALIBRATION.md).
