@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+#
+# Model-graded tier, second grader (GROW-14). Pinned: promptfoo@0.125.1.
+#
+# It grades SAVED outputs; it generates nothing. The `echo` provider returns the
+# prompt unchanged at zero cost, and the prompt is the saved output. The only model
+# called is the grader behind each `llm-rubric` assertion, so this needs
+# ANTHROPIC_API_KEY and costs one call per test.
+#
+# tests.generated.json is written by:
+#   python -m measured_evals.judge promptfoo-tests --outputs DIR --out tests.generated.json
+# It is git-ignored: it holds the outputs being graded.
+#
+# Run (from this directory), only with a key and only when you mean to spend:
+#   PROMPTFOO_GRADER=anthropic:messages:<model> \
+#   npx --yes promptfoo@0.125.1 eval -c promptfooconfig.yaml --no-cache
+description: "measured-evals: judge assertions of the golden set on saved outputs"
+
+prompts:
+  - "{{output}}"
+
+providers:
+  - echo
+
+defaultTest:
+  options:
+    # The grader. No default on purpose: choose it, and prefer a model that did not
+    # write the outputs.
+    provider: "{{ env.PROMPTFOO_GRADER }}"
+
+tests: file://tests.generated.json

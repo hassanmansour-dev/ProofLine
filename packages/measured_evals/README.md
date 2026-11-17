@@ -25,6 +25,14 @@ approved items (today: none). See [`docs/GOLDEN_SET.md`](../../docs/GOLDEN_SET.m
 apart from normal input) and prices it from a table you pass in; a model the table
 doesn't list costs `None`, never 0.
 
+`measured_evals.judge` is the model-graded tier: a judge model answers the golden
+set's `judge` assertions through DeepEval's GEval, with a promptfoo config as a
+second grader. It runs only with an API key, only on saved outputs that passed the
+deterministic tier, under a call budget, and its scores are `needs_eval`. DeepEval is
+not a dependency: it installs from `requirements-judge.txt` where this tier runs.
+**It has never been run against a model; no judge score exists.**
+See [`docs/MODEL_GRADED.md`](../../docs/MODEL_GRADED.md).
+
 `measured_evals.suites` is the deterministic eval tier: structure, word limit,
 citations that resolve, no uncited body sentences, then each golden item's own
 assertions. `python -m measured_evals run` runs it with a fake writer, no model and
