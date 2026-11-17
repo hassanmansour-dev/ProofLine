@@ -24,3 +24,9 @@ approved items (today: none). See [`docs/GOLDEN_SET.md`](../../docs/GOLDEN_SET.m
 `measured_evals.cost` counts token usage (`Usage`, with prompt-cache reads and writes
 apart from normal input) and prices it from a table you pass in; a model the table
 doesn't list costs `None`, never 0.
+
+`measured_evals.suites` is the deterministic eval tier: structure, word limit,
+citations that resolve, no uncited body sentences, then each golden item's own
+assertions. `python -m measured_evals run` runs it with a fake writer, no model and
+no key; `measured_evals.baseline` is the regression-baseline format, in which a
+placeholder is reported and never enforced. See [`docs/EVALS.md`](../../docs/EVALS.md).

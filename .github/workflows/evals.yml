@@ -1,0 +1,54 @@
+# Evals (GROW-14). Separate from ci.yml on purpose: ci.yml checks the code, this
+# checks the eval layer against the golden set.
+#
+# deterministic tier: every push and PR. A fake writer, no model, no API key, no
+# network beyond installing dependencies. It checks that the golden set, the suite
+# and the baseline format agree with each other. It measures no model.
+name: Evals
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic:
+    name: deterministic tier (fake writer, no key)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install (deps from uv.lock)
+        run: uv sync --locked
+
+      - name: Golden set loads and validates
+        run: >-
+          uv run python -c "from measured_evals.golden import load_golden_set;
+          g = load_golden_set(); print(g.name, g.status_counts())"
+
+      - name: Deterministic suite on the fake writer, compared with the baseline
+        # The committed baseline is a placeholder (status needs_eval), so the
+        # comparison is printed and not enforced until Hassan approves a real one.
+        run: >-
+          uv run python -m measured_evals run --writer fake
+          --baseline evals/baselines/content_v0.placeholder.json
+
+      - name: The checks can fail (a careless fake must not pass)
+        run: |
+          if uv run python -m measured_evals run --writer fake-careless > /tmp/careless.txt; then
+            echo "::error::the careless fake passed the deterministic tier"; exit 1
+          fi
+          tail -n 1 /tmp/careless.txt
