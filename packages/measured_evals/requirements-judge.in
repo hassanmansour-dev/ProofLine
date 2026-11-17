@@ -1,0 +1,6 @@
+# Model-graded tier only (docs/MODEL_GRADED.md). Not a dependency of measured-evals.
+# Regenerate the pinned file with:
+#   uv pip compile packages/measured_evals/requirements-judge.in \
+#     -o packages/measured_evals/requirements-judge.txt --python-version 3.12
+deepeval==4.3.4
+anthropic==2.10.0
