@@ -12,9 +12,11 @@ assertion kind or a citation of a source the item doesn't have is an error, neve
 a silent skip.
 
 **Review status.** Every item carries `status`: `needs_eval` (drafted, not yet
-reviewed by the owner), `approved` (needs `approved_by`) or `rejected`. Only
-approved items count as a golden set; `GoldenSet.approved` returns just those.
-Drafts are useful for wiring and for teaching, not for claiming quality.
+reviewed by the owner), `approved` (needs `approved_by`; `approved_on`, an ISO date,
+is optional) or `rejected`. Only approved items count as a golden set;
+`GoldenSet.approved` returns just those. Drafts are useful for wiring and for
+teaching, not for claiming quality. Approval is about the cases, not about any
+output: an approved set with no real run against it has measured nothing.
 
 Assertion kinds. `expected` lists what the output must do; `must_not` lists
 behaviours that must be absent.
@@ -42,6 +44,7 @@ import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from importlib import resources
 from pathlib import Path
 from typing import Literal, cast
@@ -75,6 +78,7 @@ ASSERTION_KINDS: tuple[str, ...] = tuple(_KINDS)
 
 _ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SOURCE_ID = re.compile(r"^S[1-9]\d{0,2}$")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TAG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -121,6 +125,7 @@ class GoldenItem:
     expected: tuple[Assertion, ...]
     must_not: tuple[Assertion, ...]
     approved_by: str | None = None
+    approved_on: str | None = None  # ISO date the owner approved it, when recorded
 
     @property
     def source_ids(self) -> tuple[str, ...]:
@@ -248,6 +253,7 @@ _ITEM_KEYS = {
     "kind",
     "status",
     "approved_by",
+    "approved_on",
     "topic",
     "audience",
     "difficulty",
@@ -274,6 +280,16 @@ def _item(raw: object, index: int) -> GoldenItem:
         raise _fail(where, "an approved item needs 'approved_by'")
     if status != "approved" and approved_by is not None:
         raise _fail(where, "'approved_by' is only for approved items")
+    approved_on = table.get("approved_on")
+    if approved_on is not None:
+        if status != "approved":
+            raise _fail(where, "'approved_on' is only for approved items")
+        if not isinstance(approved_on, str) or not _ISO_DATE.match(approved_on):
+            raise _fail(where, "'approved_on' must be a date like 2026-01-31")
+        try:
+            date.fromisoformat(approved_on)
+        except ValueError as exc:
+            raise _fail(where, "'approved_on' is not a real date") from exc
     tags = _strings(table.get("tags"), where, "tags")
     for tag in tags:
         if not _TAG.match(tag):
@@ -310,6 +326,7 @@ def _item(raw: object, index: int) -> GoldenItem:
         expected=expected,
         must_not=must_not,
         approved_by=approved_by.strip() if isinstance(approved_by, str) else None,
+        approved_on=approved_on,
     )
 
 
@@ -331,7 +348,7 @@ def parse_golden_set(data: Mapping[str, object]) -> GoldenSet:
 
 
 def load_golden_set(path: str | Path | None = None) -> GoldenSet:
-    """Load and validate a golden set. With no path, the bundled draft `content_v0`."""
+    """Load and validate a golden set. With no path, the bundled `content_v0`."""
     if path is None:
         text = (
             resources.files("measured_evals")

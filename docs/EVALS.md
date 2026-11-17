@@ -1,9 +1,14 @@
 # Evals: tiers, commands and the baseline
 
 Status: the **deterministic tier** runs in CI (`.github/workflows/evals.yml`). The
-golden set it runs on is a **draft** ([`GOLDEN_SET.md`](GOLDEN_SET.md)): no item is
-approved, the committed baseline is a placeholder, and no number here measures a
-model or the pipeline.
+golden set it runs on has **20 approved topics** ([`GOLDEN_SET.md`](GOLDEN_SET.md);
+Hassan Mansour, 2026-11-17). Approving the topics measured nothing: the committed
+baseline is still a placeholder from a fake writer, it is not enforced, and no
+number here measures a model or the pipeline.
+
+Related: the model-graded tier, built and never run against a model
+([`MODEL_GRADED.md`](MODEL_GRADED.md)), and checking the critic against a person
+([`CALIBRATION.md`](CALIBRATION.md)).
 
 ## Two tiers
 
@@ -37,10 +42,10 @@ quote the output.
 ## Run it
 
 ```bash
-uv run python -m measured_evals run                      # fake writer, bundled draft set
+uv run python -m measured_evals run                      # fake writer, bundled set
 uv run python -m measured_evals run --writer fake-careless   # a bad fake: must fail
 uv run python -m measured_evals run --outputs DIR        # your saved outputs, DIR/<item-id>.md
-uv run python -m measured_evals run --approved-only      # only items Hassan approved (today: none)
+uv run python -m measured_evals run --approved-only      # only approved items (today: all 20)
 uv run python -m measured_evals run --baseline evals/baselines/content_v0.placeholder.json
 ```
 
@@ -92,7 +97,7 @@ came from the fake writer. Its values are placeholders, tagged `needs_eval`
 
 ### Making it real (Hassan)
 
-1. Approve golden items (`GOLDEN_SET.md`).
+1. Approve golden items (`GOLDEN_SET.md`). Done for all 20 on 2026-11-17.
 2. Run the real pipeline on the approved items and save each output as `<item-id>.md`.
 3. `uv run python -m measured_evals run --approved-only --outputs DIR --write-draft-baseline evals/baselines/content_v0.json`
 4. Read the result. If you accept it, set `status` to `real` on the file and on each

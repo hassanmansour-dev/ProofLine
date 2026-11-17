@@ -25,7 +25,7 @@ to 1; 0.7 or more counts as met.
 | Key | No `ANTHROPIC_API_KEY`: prints `SKIPPED`, exits 0, reports no score | A skipped tier must never look like a passed one |
 | Real outputs only | `--outputs DIR` is required; there is no fake writer here | Judging a fixture pays a model to grade nothing |
 | Survivors only | An output that fails the deterministic tier is listed and not judged | It is already wrong; grading its tone is wasted spend |
-| Approved items by default | Draft items need `--include-needs-eval`, and the result says it is not a quality claim | Today every item is a draft, so the default run judges nothing |
+| Approved items by default | Draft items need `--include-needs-eval`, and the result says it is not a quality claim | All 20 items are approved (2026-11-17), so the default run grades all 35 assertions when a key is present |
 | Call budget | One call per assertion; over `--max-calls` (default 60) it stops before the first call | The cost is known before any money moves |
 | Explicit judge model | `--model` or `MEASURED_EVALS_JUDGE_MODEL`; no default | A judge that also wrote the text tends to like it; choosing is deliberate |
 | Scores are `needs_eval` | Printed and saved, never enforced | A judge varies between runs and has not been calibrated against a person yet |
@@ -133,7 +133,7 @@ the repository owner to add:
 
 ## Making a judge score real (owner)
 
-1. Approve golden items ([`GOLDEN_SET.md`](GOLDEN_SET.md)).
+1. Approve golden items ([`GOLDEN_SET.md`](GOLDEN_SET.md)). Done for all 20.
 2. Run the real pipeline on them and save each output as `<item-id>.md`.
 3. Calibrate the judge against your own scores on those outputs.
 4. Run this tier, read the saved reasons, and only then record `judge_mean` in a

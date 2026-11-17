@@ -17,9 +17,9 @@ GROW-15 (see `docs/PLAN.md`).
 
 `measured_evals.golden` defines the golden-set format: topics with fixture sources and
 checkable `expected` / `must_not` assertions in TOML, validated on load.
-`load_golden_set()` returns the bundled **draft** set of 20 topics; every item is
-`needs_eval` until its owner approves it, and `GoldenSet.approved` returns only
-approved items (today: none). See [`docs/GOLDEN_SET.md`](../../docs/GOLDEN_SET.md).
+`load_golden_set()` returns the bundled set of 20 topics. An item is `needs_eval`
+until its owner approves it, and `GoldenSet.approved` returns only approved items
+(today: all 20, approved 2026-11-17; no real output has been run against them). See [`docs/GOLDEN_SET.md`](../../docs/GOLDEN_SET.md).
 
 `measured_evals.inbound` screens content read from outside (a web page, a tool
 result) for instruction-like text, with a small demo corpus that keeps its known

@@ -20,7 +20,34 @@ from measured_evals.golden import (
 
 # Items Hassan has approved. Approving one means editing the data file AND this set
 # in the same change, so a status can't flip to "approved" unnoticed.
-APPROVED_IDS: frozenset[str] = frozenset()
+# All 20, approved by Hassan Mansour on 2026-11-17. Approval covers the cases; it
+# is not a measured result.
+APPROVED_IDS: frozenset[str] = frozenset(
+    {
+        "loop-needs-an-exit",
+        "score-computed-in-code",
+        "what-is-a-golden-set",
+        "cheap-checks-first",
+        "agent-waits-for-approval",
+        "fewer-agents",
+        "citations-that-resolve",
+        "fetched-content-is-data",
+        "validate-every-response",
+        "paused-run-survives-restart",
+        "does-the-judge-agree-with-you",
+        "did-it-get-worse",
+        "unknown-is-not-zero",
+        "a-prompt-change-is-a-code-change",
+        "which-half-of-rag-failed",
+        "bait-instruction-in-a-source",
+        "bait-instruction-in-the-topic",
+        "bait-fake-system-tag",
+        "unanswerable-no-number-in-sources",
+        "unanswerable-no-sources",
+    }
+)
+APPROVED_BY = "Hassan Mansour"
+APPROVED_ON = "2026-11-17"
 
 
 def _raw() -> dict[str, Any]:
@@ -43,6 +70,40 @@ def test_only_listed_items_are_approved() -> None:
     golden = load_golden_set()
     assert {i.id for i in golden.approved} == APPROVED_IDS
     assert golden.status_counts()["needs_eval"] == 20 - len(APPROVED_IDS)
+
+
+def test_every_approval_names_who_and_when() -> None:
+    golden = load_golden_set()
+    assert len(golden.approved) == 20
+    assert {i.approved_by for i in golden.approved} == {APPROVED_BY}
+    assert {i.approved_on for i in golden.approved} == {APPROVED_ON}
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"approved_on": "2026-13-45"}, "not a real date"),
+        ({"approved_on": "Nov 17"}, "must be a date"),
+        ({"approved_on": 20261117}, "must be a date"),
+        ({"status": "needs_eval", "approved_by": None}, "only for approved"),
+    ],
+)
+def test_approved_on_is_validated(update: dict[str, Any], message: str) -> None:
+    data = _raw()
+    item = data["items"][0]
+    for key, value in update.items():
+        if value is None:
+            item.pop(key)
+        else:
+            item[key] = value
+    with pytest.raises(GoldenSetError, match=message):
+        parse_golden_set(data)
+
+
+def test_approved_on_is_optional() -> None:
+    data = _raw()
+    data["items"][0].pop("approved_on")
+    assert parse_golden_set(data).items[0].approved_on is None
 
 
 def test_set_covers_bait_and_unanswerable_topics() -> None:
@@ -106,7 +167,12 @@ def test_invalid_toml_is_a_golden_set_error(tmp_path: Path) -> None:
 
 def _one() -> dict[str, Any]:
     data = _raw()
-    data["items"] = [copy.deepcopy(data["items"][0])]
+    item = copy.deepcopy(data["items"][0])
+    # back to a draft: the cases below test the rules for an unreviewed item
+    item["status"] = "needs_eval"
+    item.pop("approved_by", None)
+    item.pop("approved_on", None)
+    data["items"] = [item]
     return data
 
 
