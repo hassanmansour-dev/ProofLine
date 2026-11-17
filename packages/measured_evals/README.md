@@ -21,6 +21,13 @@ checkable `expected` / `must_not` assertions in TOML, validated on load.
 `needs_eval` until its owner approves it, and `GoldenSet.approved` returns only
 approved items (today: none). See [`docs/GOLDEN_SET.md`](../../docs/GOLDEN_SET.md).
 
+`measured_evals.inbound` screens content read from outside (a web page, a tool
+result) for instruction-like text, with a small demo corpus that keeps its known
+misses in it; a flag never grants trust to unflagged text. `measured_evals.budget`
+stops a run before a model call would cross a cap on calls, tokens or cost, and
+fails closed when a cost is unknown. Neither is wired into the pipeline yet
+([ADR-0021](../../docs/adr/0021-inbound-injection-suite-and-budget-guard.md)).
+
 `measured_evals.cost` counts token usage (`Usage`, with prompt-cache reads and writes
 apart from normal input) and prices it from a table you pass in; a model the table
 doesn't list costs `None`, never 0.
