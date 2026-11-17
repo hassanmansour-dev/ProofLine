@@ -16,21 +16,37 @@ from measured_evals.cost import (
     load_prices,
     total_by_agent,
 )
+from measured_evals.golden import (
+    Assertion,
+    GoldenItem,
+    GoldenSet,
+    GoldenSetError,
+    GoldenSource,
+    load_golden_set,
+    parse_golden_set,
+)
 from measured_evals.scores import EvalScores, evaluate
 
 __version__ = version("measured-evals")
 
 __all__ = [
     "AgentTotal",
+    "Assertion",
     "Check",
     "CheckResult",
     "EvalScores",
+    "GoldenItem",
+    "GoldenSet",
+    "GoldenSetError",
+    "GoldenSource",
     "LongContext",
     "ModelPrice",
     "Usage",
     "__version__",
     "cost",
     "evaluate",
+    "load_golden_set",
     "load_prices",
+    "parse_golden_set",
     "total_by_agent",
 ]
