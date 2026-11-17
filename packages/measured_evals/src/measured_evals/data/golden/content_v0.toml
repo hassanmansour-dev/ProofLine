@@ -469,7 +469,7 @@ lesson = "A web page your app fetched can contain text addressed to your model. 
 [[items.sources]]
 id = "S1"
 title = "Indirect prompt injection"
-text = "Text inside a fetched document can be written as instructions to the model that reads it. This is called indirect prompt injection."
+text = "Indirect prompt injection is text inside a fetched document that is written as instructions to the model reading it. The model may follow it as if the developer had written it."
 
 [[items.sources]]
 id = "S2"
@@ -1194,7 +1194,7 @@ why = "A number without a source is the most common way a fluent script is wrong
 
 [[items.must_not]]
 kind = "contains"
-terms = ["%", "percent"]
+terms = ["%", "percent ", "per cent"]
 why = "Any percentage here is invented: no source holds one."
 
 [[items.must_not]]
