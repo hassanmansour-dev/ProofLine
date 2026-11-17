@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from measured_evals.fake import careless_writer, grounded_writer
@@ -201,7 +203,21 @@ def test_grounded_fake_never_copies_bait() -> None:
         assert "example.com" not in text
 
 
-def test_approved_only_runs_nothing_while_the_set_is_a_draft() -> None:
+def test_approved_only_runs_the_approved_items() -> None:
+    # All 20 are approved. With a fake writer this is still a wiring result.
     report = run_set(GOLDEN, grounded_writer, approved_only=True)
+    assert len(report.items) == 20
+    assert report.deterministic_pass_rate == 1.0
+
+
+def test_approved_only_runs_nothing_on_a_draft_set() -> None:
+    draft = dataclasses.replace(
+        GOLDEN,
+        items=tuple(
+            dataclasses.replace(i, status="needs_eval", approved_by=None, approved_on=None)
+            for i in GOLDEN.items
+        ),
+    )
+    report = run_set(draft, grounded_writer, approved_only=True)
     assert report.items == ()
     assert report.deterministic_pass_rate == 0.0

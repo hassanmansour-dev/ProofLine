@@ -7,6 +7,7 @@ real library in test_deepeval_judge.py, also with a fake model.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -36,7 +37,15 @@ from measured_evals.judge import (
     run_judge,
 )
 
-GOLDEN = load_golden_set()
+APPROVED = load_golden_set()  # all 20 approved (2026-11-17)
+# The same set with approvals removed, for the draft paths.
+GOLDEN = dataclasses.replace(
+    APPROVED,
+    items=tuple(
+        dataclasses.replace(i, status="needs_eval", approved_by=None, approved_on=None)
+        for i in APPROVED.items
+    ),
+)
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
 OUTPUTS = {item.id: grounded_writer(item) for item in GOLDEN.items}
@@ -61,8 +70,19 @@ def outputs_dir(tmp_path: Path) -> Path:
     return directory
 
 
-def test_approved_only_is_the_default_and_today_judges_nothing() -> None:
+def test_approved_only_is_the_default_and_a_draft_set_judges_nothing() -> None:
     assert plan(GOLDEN, OUTPUTS).cases == ()
+
+
+def test_the_approved_set_is_judged_by_default_and_is_not_labelled_draft() -> None:
+    judge_plan = plan(APPROVED, OUTPUTS)
+    assert len(judge_plan.cases) == 35
+    assert judge_plan.draft_items_included is False
+    report = run_judge(judge_plan, synthetic_judge(0.9), judge_name="SYNTHETIC")
+    lines = report_lines(report)
+    # approved topics don't make a judge score a fact: it is still needs_eval
+    assert "needs_eval" in lines[-1]
+    assert "not a quality claim" not in "\n".join(lines)
 
 
 def test_plan_covers_every_judge_assertion_of_the_draft_set() -> None:
@@ -195,11 +215,32 @@ def test_cli_dry_run_calls_nothing_even_with_a_key(
     assert "35 judge assertion(s)" in capsys.readouterr().out
 
 
-def test_cli_approved_only_judges_nothing_today(
+def _draft_toml(tmp_path: Path) -> Path:
+    """The bundled set with every approval removed, as a file for `--golden`."""
+    text = (PACKAGE / "src/measured_evals/data/golden/content_v0.toml").read_text("utf-8")
+    lines = [ln for ln in text.splitlines() if not ln.startswith(("approved_by", "approved_on"))]
+    path = tmp_path / "draft.toml"
+    body = "\n".join(lines).replace('status = "approved"', 'status = "needs_eval"')
+    path.write_text(body + "\n", encoding="utf-8")
+    return path
+
+
+def test_cli_approved_only_judges_nothing_on_a_draft_set(
+    outputs_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ["run", "--outputs", str(outputs_dir), "--golden", str(_draft_toml(tmp_path))]
+    assert main(argv, env=FAKE_KEY, judge_factory=_never) == 0
+    assert "nothing to judge" in capsys.readouterr().out
+
+
+def test_cli_default_run_plans_the_approved_set_and_still_skips_without_a_key(
     outputs_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(["run", "--outputs", str(outputs_dir)], env=FAKE_KEY, judge_factory=_never) == 0
-    assert "nothing to judge" in capsys.readouterr().out
+    assert main(["run", "--outputs", str(outputs_dir)], env={}, judge_factory=_never) == 0
+    out = capsys.readouterr().out
+    assert "35 judge assertion(s)" in out
+    assert "SKIPPED" in out
+    assert "no score exists" in out
 
 
 def test_cli_needs_an_explicit_judge_model(

@@ -132,9 +132,39 @@ def test_cli_passes_with_the_fake_and_fails_with_the_careless_one(
     assert "0/20 items passed" in capsys.readouterr().out
 
 
-def test_cli_approved_only_says_nothing_was_measured(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["run", "--approved-only"]) == 0
+def _draft_copy(tmp_path: Path) -> Path:
+    """The bundled set with every approval removed: what an unreviewed set looks like."""
+    from importlib import resources
+
+    text = (
+        resources.files("measured_evals")
+        .joinpath("data", "golden", "content_v0.toml")
+        .read_text(encoding="utf-8")
+    )
+    lines = [ln for ln in text.splitlines() if not ln.startswith(("approved_by", "approved_on"))]
+    path = tmp_path / "draft.toml"
+    path.write_text(
+        "\n".join(lines).replace('status = "approved"', 'status = "needs_eval"') + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_cli_approved_only_on_a_draft_set_says_nothing_was_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["run", "--approved-only", "--golden", str(_draft_copy(tmp_path))]) == 0
     assert "nothing was measured" in capsys.readouterr().out
+
+
+def test_cli_approved_only_runs_all_20_but_the_baseline_is_still_not_enforced(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Approved topics, fake writer, placeholder baseline: still no measured result.
+    assert main(["run", "--approved-only", "--baseline", str(PLACEHOLDER)]) == 0
+    out = capsys.readouterr().out
+    assert "20/20 items passed" in out
+    assert "NOT ENFORCED" in out
 
 
 def test_cli_reads_saved_outputs_and_writes_a_draft(

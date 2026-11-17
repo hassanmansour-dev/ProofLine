@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     agree.add_argument("--critic-scores", type=Path, required=True)
     agree.add_argument("--threshold", type=float, required=True, help="the critic's pass score")
     run = commands.add_parser("run")
-    run.add_argument("--golden", type=Path, help="golden set TOML (default: bundled draft)")
+    run.add_argument("--golden", type=Path, help="golden set TOML (default: bundled)")
     run.add_argument("--writer", choices=sorted(WRITERS), default="fake")
     run.add_argument("--outputs", type=Path, help="directory of saved outputs, <item-id>.md")
     run.add_argument("--max-words", type=int, default=DEFAULT_MAX_WORDS)

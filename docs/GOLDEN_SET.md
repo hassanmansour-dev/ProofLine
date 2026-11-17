@@ -1,8 +1,21 @@
-# Golden set (draft): 20 topics for cited technical scripts
+# Golden set: 20 topics for cited technical scripts
 
-Status: **draft, not approved.** All 20 items are `status = "needs_eval"`. They were
-drafted by an assistant for Hassan's review (GROW-13). Until he approves an item, it
-is not part of the golden set, and no result measured against it is a quality claim.
+Status: **topics approved; nothing measured.** All 20 items are
+`status = "approved"`, approved by Hassan Mansour on 2026-11-17
+(`approved_by`, `approved_on`). They were drafted by an assistant (GROW-13) and
+approved as drafted.
+
+What the approval means, and what it does not:
+
+| | |
+|---|---|
+| It means | These 20 cases, with their `expected` and `must_not` lines, are the ones the pipeline should be held to |
+| It does not mean | Any output has passed them. No real pipeline output has been run against this set |
+| Still a placeholder | The only baseline, `evals/baselines/content_v0.placeholder.json`: it came from a fake writer and is not enforced |
+| Still unmeasured | Every `judge` assertion: the model-graded tier has never been run against a model |
+
+An approved question is not an answer. The first measured result needs a real run
+([`EVALS.md`](EVALS.md), "Making it real").
 
 - Data: `packages/measured_evals/src/measured_evals/data/golden/content_v0.toml`
 - Format and loader: `measured_evals.golden` (`load_golden_set()`, `parse_golden_set()`)
@@ -36,7 +49,7 @@ Each item has:
 |---|---|
 | `id` | A stable slug. Baselines and calibration sheets refer to it |
 | `kind` | `standard`, `injection_bait` or `unanswerable` |
-| `status` | `needs_eval`, `approved` (needs `approved_by`) or `rejected` |
+| `status` | `needs_eval`, `approved` (needs `approved_by`; `approved_on`, an ISO date, is optional) or `rejected` |
 | `topic`, `audience` | The pipeline's two inputs |
 | `difficulty` | `easy`, `medium` or `hard`: how hard it is to write well, not how advanced the subject is |
 | `tags` | Lowercase slugs, for filtering |
@@ -83,12 +96,16 @@ review of each item, are for.
    agree with; tighten what is vague; add what is missing.
 3. For bait items, check that the canary in `must_not` can only appear if the
    writer obeyed the bait.
-4. Set `status = "approved"` and `approved_by`, or `status = "rejected"`.
+4. Set `status = "approved"` with `approved_by` and `approved_on`, or `status = "rejected"`.
 5. Add the id to `APPROVED_IDS` in `tests/test_golden.py` in the same change. The
    test fails otherwise, so an approval can't happen by accident.
 
-`GoldenSet.approved` returns only approved items. A baseline (GROW-14) that Hassan
-signs off should be measured on those.
+`GoldenSet.approved` returns only approved items: today, all 20. A baseline
+(GROW-14) that Hassan signs off should be measured on those. That baseline does not
+exist yet.
+
+An item edited after approval goes back to `needs_eval` until it is approved again:
+the approval is for the text that was read.
 
 ## The bait items are inert
 
@@ -99,6 +116,7 @@ data: fetched content is never instructions.
 
 ## Seeding from real edits
 
-`docs/PLAN.md` says the golden set is seeded from a week of real use (C9). This
-draft comes before that week. When the week's rejections and edits exist, the
-topics Hassan actually rejected should replace or reshape the weakest drafts here.
+`docs/PLAN.md` says the golden set is seeded from a week of real use (C9). These 20
+were approved before that week. When the week's rejections and edits exist, the
+topics Hassan actually rejected should replace or reshape the weakest items here,
+each change going through review again.
