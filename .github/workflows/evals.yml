@@ -4,6 +4,14 @@
 # deterministic tier: every push and PR. A fake writer, no model, no API key, no
 # network beyond installing dependencies. It checks that the golden set, the suite
 # and the baseline format agree with each other. It measures no model.
+#
+# judge wiring: every push and PR. No key is given to the job and no model is
+# called. It checks that the model-graded tier still installs, that its tests pass
+# on fakes, and that the promptfoo config is valid.
+#
+# model-graded tier: only when a person starts the workflow by hand and names a
+# directory of saved outputs. Never on push or pull_request: spending is a person's
+# decision. Without the repository secret it prints SKIPPED and stays green.
 name: Evals
 
 on:
@@ -11,6 +19,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      outputs_dir:
+        description: "Directory in the repo with one <item-id>.md per golden item. Empty: the model-graded tier does not run."
+        required: false
+        default: ""
+      judge_model:
+        description: "Judge model. No default on purpose: choose it, and prefer one that did not write the outputs."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -52,3 +69,102 @@ jobs:
             echo "::error::the careless fake passed the deterministic tier"; exit 1
           fi
           tail -n 1 /tmp/careless.txt
+
+  judge-wiring:
+    name: judge wiring (fakes only, no key, no model call)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+      PROMPTFOO_DISABLE_REMOTE_GENERATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Judge tests on fakes (pinned judge requirements)
+        run: >-
+          uv run --isolated --no-project --python 3.12
+          --with ./packages/measured_evals
+          --with-requirements packages/measured_evals/requirements-judge.txt
+          python -m pytest -q -p no:cacheprovider -rs
+          packages/measured_evals/tests/test_deepeval_judge.py
+          packages/measured_evals/tests/test_judge.py
+
+      - name: Generate promptfoo tests from the fake writer
+        run: |
+          mkdir -p /tmp/fake-outputs
+          uv run --isolated --no-project --python 3.12 --with ./packages/measured_evals python - <<'PY'
+          from pathlib import Path
+          from measured_evals.fake import grounded_writer
+          from measured_evals.golden import load_golden_set
+          for item in load_golden_set().items:
+              Path("/tmp/fake-outputs", f"{item.id}.md").write_text(grounded_writer(item), encoding="utf-8")
+          PY
+          uv run --isolated --no-project --python 3.12 --with ./packages/measured_evals \
+            python -m measured_evals.judge promptfoo-tests --outputs /tmp/fake-outputs \
+            --out packages/measured_evals/promptfoo/tests.generated.json
+
+      - name: promptfoo config is valid (nothing is graded)
+        working-directory: packages/measured_evals/promptfoo
+        env:
+          PROMPTFOO_GRADER: "anthropic:messages:not-called"
+        run: npx --yes promptfoo@0.125.1 validate config -c promptfooconfig.yaml
+
+  model-graded:
+    name: model-graded tier (manual start only; spends if the secret exists)
+    if: github.event_name == 'workflow_dispatch' && inputs.outputs_dir != ''
+    needs: [deterministic, judge-wiring]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MEASURED_EVALS_JUDGE_MODEL: ${{ inputs.judge_model }}
+      OUTPUTS_DIR: ${{ inputs.outputs_dir }}
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+      PROMPTFOO_DISABLE_REMOTE_GENERATION: "1"
+    steps:
+      - name: No secret, so nothing runs
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::model-graded tier SKIPPED - the ANTHROPIC_API_KEY secret is not set. No model was called and no score exists."
+
+      - uses: actions/checkout@v7
+        if: env.ANTHROPIC_API_KEY != ''
+
+      - uses: astral-sh/setup-uv@v7
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v7
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          node-version: 22
+
+      - name: DeepEval judge on the saved outputs (one call per assertion)
+        if: env.ANTHROPIC_API_KEY != ''
+        run: >-
+          uv run --isolated --no-project --python 3.12
+          --with ./packages/measured_evals
+          --with-requirements packages/measured_evals/requirements-judge.txt
+          python -m measured_evals.judge run --outputs "$OUTPUTS_DIR"
+
+      - name: promptfoo, second grader on the same outputs
+        if: env.ANTHROPIC_API_KEY != '' && env.MEASURED_EVALS_JUDGE_MODEL != ''
+        run: |
+          uv run --isolated --no-project --python 3.12 --with ./packages/measured_evals \
+            python -m measured_evals.judge promptfoo-tests --outputs "$OUTPUTS_DIR" \
+            --out packages/measured_evals/promptfoo/tests.generated.json
+          cd packages/measured_evals/promptfoo
+          PROMPTFOO_GRADER="anthropic:messages:$MEASURED_EVALS_JUDGE_MODEL" \
+            npx --yes promptfoo@0.125.1 eval -c promptfooconfig.yaml --no-cache --no-progress-bar
