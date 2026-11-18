@@ -3,6 +3,7 @@ name = "measured-evals"
 version = "0.0.1"
 description = "Evaluation and security checks for LLM pipelines: quality metrics, regression gates, cost budgets, prompt-injection tests."
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Hassan Mansour" }]
 # Standalone by design: must never depend on (or import) the proofline app.

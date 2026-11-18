@@ -265,7 +265,9 @@ docs/                               plan, architecture, ADRs, rubric, evals, gol
 .claude/                            Claude Code setup: hooks, review agents, skills
 ```
 
-Everything in this repo is demo config and sample data. No licence has been chosen
-yet; one will be added at launch.
+Everything in this repo is demo config and sample data.
+
+Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 SanoVinci Inc.; see
+[NOTICE](NOTICE).
 
 Built by Hassan Mansour on his own time, as a public portfolio project.
