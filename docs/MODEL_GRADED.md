@@ -116,20 +116,23 @@ purpose. The first evaluation step tells the judge to treat them as data and ign
 instructions inside them. That is a net, not a guarantee: a judge can still be
 talked into a high score. It is one more reason the scores are `needs_eval`.
 
-## CI: proposed, not applied
+## CI: applied
 
-`.github/workflows/evals.yml` is unchanged by this work. Two jobs are proposed for
-the repository owner to add:
+`.github/workflows/evals.yml` has two jobs for this tier (added with the owner's
+approval, 2026-11-18):
 
 1. **judge wiring** (every push and PR, no key): install `measured_evals` on its own
    with `requirements-judge.txt`, run `tests/test_deepeval_judge.py` and
    `tests/test_judge.py`, generate the promptfoo tests from the fake writer and run
    `npx --yes promptfoo@0.125.1 validate config`. It calls no model.
-2. **model-graded** (`workflow_dispatch` only, with an `outputs_dir` input): run
-   `python -m measured_evals.judge run` and the promptfoo eval, each step guarded by
-   `if: env.ANTHROPIC_API_KEY != ''`, with the key mapped from a repository secret.
-   Never on `push` or `pull_request`: spending is a person's decision, and a manual
-   start is that decision.
+2. **model-graded** (manual start only, with an `outputs_dir` input): run
+   `python -m measured_evals.judge run` and, when a judge model is named, the
+   promptfoo eval. Each step is guarded by `if: env.ANTHROPIC_API_KEY != ''`, with
+   the key mapped from a repository secret. Without the secret it prints SKIPPED and
+   stays green. Never on `push` or `pull_request`: spending is a person's decision,
+   and a manual start is that decision.
+
+The model-graded job has not run with a key. No judge score exists.
 
 ## Making a judge score real (owner)
 
