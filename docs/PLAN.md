@@ -258,14 +258,31 @@ comments. Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 
 ### C10 · Staging as scheduled jobs (GROW-89)
 
-Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
+Waits on: C8. Daily digests, budget caps, kill switch, own infra only. Decisions:
+ADR-0023 (proposed). The parts that need neither C9 nor Hassan's accounts are built on
+branch `c10/staging-jobs` (Hassan's go, 2026-11-23); nothing here waits on C9.
 
 - [ ] First real run of the bootstrap's Supabase step (hosted project): moved here
   from C0, because the free tier is full. Check that `projects create` reads the DB
   password from the environment and that `-o json` (not `--output-format json`)
-  gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier)
-- [ ] Judge log and posted marks move into Postgres when runs are hosted (now local
-  JSONL files under `.data/`, ADR-0019, ADR-0020; Hassan, 2026-11-16)
+  gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier).
+  Hassan, on his machine, in the SanoVinci Supabase organization (GROW-89, 2026-11-14)
+- [x] Judge log and posted marks can live in Postgres (`MEASURED_OPS_LOGS_URL`;
+  `python -m measured_ops.worker import-logs` copies the JSONL files in, idempotently).
+  Switching them over waits for hosted runs (ADR-0019, ADR-0020; Hassan, 2026-11-16)
+- [x] Kill switch: one file stops every agent run before it starts; every supervisor
+  reads it by default; the inbox won't retry or sweep while it's on (`worker kill|release`)
+- [x] Budget caps per run: checked before each agent run and before every model call
+  (ADR-0021's guard, wired); unknown cost fails closed; caps from TOML
+- [x] Digests: read-only Markdown (waiting, stopped, drafts to paste, cost, kill switch),
+  `worker digest` once or `worker run` at 07:00 and 21:00 America/Toronto, written to
+  `outputs/digests/`
+- [ ] Hassan: real caps in measured-ops-private (`MEASURED_OPS_BUDGET_PATH`) and how a
+  digest reaches the phone (a channel is "message a real person": his decision)
+- [ ] Hassan: where the worker and inbox run (his machine or hosted), then the deploy
+  (an approval-policy action), then 3 unattended days with digests arriving
+- [ ] After C6 (it creates tasks): a daily cap, and revisions moved from the inbox to the
+  worker (ADR-0019)
 
 **Done when:** it runs unattended for 3 days with digests arriving.
 

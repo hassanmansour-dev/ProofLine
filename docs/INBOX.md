@@ -32,6 +32,13 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
 | `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
 | `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
+| `MEASURED_OPS_LOGS_URL` | no | unset: the two JSONL files above; `postgresql://...` keeps both in Postgres (C10) |
+| `MEASURED_OPS_KILL_SWITCH_PATH` | no | `.data/kill_switch`: while it exists no agent runs (C10) |
+| `MEASURED_OPS_BUDGET_PATH` | no | unset: no caps; a budget table caps each run (C10) |
+
+Stop everything with `uv run python -m measured_ops.worker kill --reason "..."` and resume
+with `... worker release`; `... worker status` shows the switch, the budget and where the
+logs go. `... worker run` writes a digest to `outputs/digests/` at 07:00 and 21:00.
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
