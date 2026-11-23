@@ -245,7 +245,38 @@ Waits on: C3 ✅. Reads run freely; every write goes through the approval policy
 (calendar blocks need approval, per C3; ticket triage is auto); `approve_draft` never
 gets an executor (ADR-0019); the executor handles a revision re-proposing an action
 that was already approved. Real credentials only in the environment or
-measured-ops-private; tests use fakes. Plan and checklist: to come with Hassan's review.
+measured-ops-private; tests use fakes. Decisions: ADR-0022 (proposed). Built on branch
+`c5/mcp-tools` with Hassan's go to proceed (2026-11-23); the checklist below was drafted
+from this section and GROW-84, for his review on the PR.
+
+- [x] Read/write split by construction: agents get read ports (Jira search / issue /
+  transitions, calendar events); write tools live only in the supervisor's executors;
+  each MCP client has a tool allowlist, and a tool can't be both read and write
+- [x] Every write is a `PendingAction` through the policy: `triage_ticket` (auto) and
+  `schedule_calendar_block` (approval, per C3) in the demo table; unknown types still
+  default to approval; the preview and target are rendered from `PendingAction.params`
+  and re-checked, so what's approved is what runs; out-of-scope projects and calendars
+  are refused
+- [x] `execute` node: one ready action per step, read-before-write and verified;
+  `approve_draft` gets a "manual" outcome and can never have an executor; a revision
+  re-proposing an applied change is "already_applied" without a call; a failed call
+  stops the run with the decision saved, transient ones retried; the inbox runs approved
+  actions and shows "Stopped" + Retry on failure
+- [x] MCP client on `mcp` 2.3 (optional `tools` extra): stdio and streamable HTTP, secrets
+  only from env vars the config names; demo MCP servers + demo tools config;
+  `python -m measured_ops.tools check|list` to verify a config against real servers
+- [x] e2e: an agent reads the tracker over MCP, proposes a ticket move, approval applies it
+  across a restart; rejection doesn't; auto applies without pausing (SQLite + Postgres)
+- [x] Private side (measured-ops-private, branch `c5/tools-config` on top of
+  `policy/c5-tool-actions`): tools config skeleton with `[NEEDS HASSAN]` values, and its
+  tests (loads with the public loader; policy never looser than the demo)
+- [ ] Hassan: choose the Jira and personal-calendar MCP servers, fill the private tools
+  config (tool names, credential env vars, the personal calendar's id), and run
+  `uv run python -m measured_ops.tools check --config config/tools.toml` on his machine
+- [ ] Hassan: review the PR and ADR-0022; green in CI (Postgres e2e)
+
+**Done when:** e2e passes in CI and the private config passes `tools check` against the
+real servers.
 
 ### C9 · A week of real use (GROW-88)
 
