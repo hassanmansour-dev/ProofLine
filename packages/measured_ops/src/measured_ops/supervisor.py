@@ -27,6 +27,11 @@
   count of results (a thread may hold several tasks once C6 creates them). No
   interrupt and no I/O, so it runs once per pass; the gate is unchanged.
 
+- Before any agent runs (C10, ADR-0023): the kill switch (`killswitch.KillSwitch`, on by
+  default from the environment) and the run's budget (`budget.Budget`, optional). Both
+  raise before money is spent; the budget is also checked before every model call inside
+  the agent (`budget.guard_budget`).
+
 Nothing in `ready` executes yet: tools arrive in C5. A rejection without feedback, or
 past the cap, ends the run with the decision recorded.
 """
@@ -35,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -42,7 +48,9 @@ from langgraph.types import interrupt
 from pydantic import AfterValidator
 
 from measured_evals import EvalScores, evaluate
+from measured_evals.budget import Budget, check_budget
 from measured_evals.checks import TARGET_CHECKS
+from measured_evals.cost import Prices
 from measured_ops.agent import (
     Agent,
     AgentContractError,
@@ -51,8 +59,11 @@ from measured_ops.agent import (
     check_agent_graph,
     run_agent,
 )
+from measured_ops.budget import guard_budget
 from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction, Task
+from measured_ops.killswitch import KillSwitch
 from measured_ops.policy import ApprovalPolicy
+from measured_ops.prices import load_model_prices
 from measured_ops.usage import collect_usage
 
 log = logging.getLogger("measured_ops.supervisor")
@@ -191,6 +202,9 @@ def build_supervisor(
     evaluator: Evaluator = evaluate,
     target_evaluator: Evaluator | None = None,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
+    budget: Budget | None = None,
+    prices: Prices | None = None,
+    kill_switch: KillSwitch | None = None,
 ) -> SupervisorGraph:
     """Wire the supervisor. Compiles and checks every agent's graph now, so a broken
     agent fails at startup, not mid-run. Compile the result with a checkpointer from
@@ -199,8 +213,14 @@ def build_supervisor(
     `eval_context` goes to every eval (e.g. `{"pii_allow": [...]}` from private
     config); `evaluator` scores each action's preview and defaults to
     `measured_evals.evaluate` (guard-v0). `target_evaluator` scores its target (a URL,
-    a repo) with the injection and PII checks only; its metrics are prefixed `target_`."""
+    a repo) with the injection and PII checks only; its metrics are prefixed `target_`.
+
+    `budget` (C10, ADR-0023) caps each run's calls, tokens and cost, priced with `prices`
+    (default: the bundled demo table); no budget, no caps. `kill_switch` defaults to
+    `KillSwitch.from_env()`: every supervisor honours it."""
     context: Mapping[str, object] = dict(eval_context or {})
+    switch = kill_switch or KillSwitch.from_env()
+    run_prices: Prices = load_model_prices() if prices is None and budget else (prices or {})
 
     async def _default_target_evaluator(text: str, ctx: Mapping[str, object]) -> EvalScores:
         return await evaluate(text, ctx, checks=TARGET_CHECKS)
@@ -225,11 +245,17 @@ def build_supervisor(
                 f"no agent named {task.agent!r} for task {task.id}; known agents: {sorted(graphs)}"
             )
         agent, graph = graphs[task.agent]
+        switch.check()  # KillSwitchEngaged: nothing runs, the run stays resumable
+        prior = state.get("usage") or []
+        if budget is not None:
+            check_budget(budget, prior, run_prices)  # BudgetExceeded before the agent runs
         with collect_usage(agent.name) as usage:
+            guard = guard_budget(budget, run_prices, prior, usage) if budget else nullcontext()
             try:
-                result = await run_agent(
-                    agent, graph, task, config=agent_run_config(agent.name, task)
-                )
+                with guard:  # and before every model call inside the agent
+                    result = await run_agent(
+                        agent, graph, task, config=agent_run_config(agent.name, task)
+                    )
             except BaseException:  # incl. cancellation (an inbox revision's timeout)
                 # the run's spend is lost with the state update: keep it in the log
                 per_model: dict[str, int] = {}

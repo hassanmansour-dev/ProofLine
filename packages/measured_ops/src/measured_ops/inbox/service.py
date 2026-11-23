@@ -49,8 +49,9 @@ from measured_evals import ModelPrice, total_by_agent
 from measured_evals.scores import DEFAULT_THRESHOLD
 from measured_ops.contracts import ApprovalDecision, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
+from measured_ops.killswitch import KillSwitch
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
-from measured_ops.posted import JsonlPostedLog, posted_log_from_env
+from measured_ops.posted import PostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
 from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
 from measured_ops.tracing import masked_tracing_callbacks
@@ -255,8 +256,9 @@ class Inbox:
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
         judge_log: JudgeLog | None = None,
         max_revisions: int = DEFAULT_MAX_REVISIONS,
-        posted: JsonlPostedLog | None = None,
+        posted: PostedLog | None = None,
         paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
+        kill_switch: KillSwitch | None = None,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -269,6 +271,7 @@ class Inbox:
         self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
         self.posted = posted_log_from_env() if posted is None else posted
         self.paste_types = paste_types
+        self.kill_switch = kill_switch or KillSwitch.from_env()  # C10, ADR-0023
         self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
         self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
         self._revisions: dict[str, Literal["queued", "running"]] = {}
@@ -286,6 +289,10 @@ class Inbox:
                 continue  # a subgraph's checkpoint (older runs): the thread's own is enough
             seen.setdefault(configurable["thread_id"], None)
         return list(seen)
+
+    async def thread_ids(self) -> list[str]:
+        """Every supervisor thread in the checkpointer (the digest reads them, C10)."""
+        return await self._thread_ids()
 
     async def get(self, thread_id: str) -> PendingItem | None:
         """The action `thread_id` is waiting on, or None if it isn't waiting."""
@@ -531,7 +538,9 @@ class Inbox:
         return out
 
     async def retry(self, thread_id: str) -> None:
-        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped."""
+        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped;
+        KillSwitchEngaged while the kill switch is on (C10)."""
+        self.kill_switch.check()
         async with self._thread_lock(thread_id) as lock, lock:
             status = await self._status(thread_id)
             if status is None or status.state != "stopped":
@@ -544,6 +553,9 @@ class Inbox:
         if self._started:
             return
         self._started = True
+        if self.kill_switch.engaged():
+            log.warning("inbox: kill switch is on; not continuing stopped runs (Retry later)")
+            return
         for status in await self.in_progress():
             if status.state == "stopped":
                 log.info("inbox: continuing stopped run %s", status.thread_id)

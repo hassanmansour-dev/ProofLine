@@ -50,3 +50,10 @@ def _no_writes_to_real_runtime_data() -> Iterator[None]:
     finally:
         for cls, name, original in patches:
             setattr(cls, name, original)
+
+
+@pytest.fixture(autouse=True)
+def _kill_switch_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every supervisor honours the kill switch (C10, ADR-0023); tests use their own, so a
+    switch Hassan engaged in `.data/` never fails a test run, and no test can engage his."""
+    monkeypatch.setenv("MEASURED_OPS_KILL_SWITCH_PATH", str(tmp_path / "kill_switch"))

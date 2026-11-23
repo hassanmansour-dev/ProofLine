@@ -1,0 +1,11 @@
+# Demo budget (public, C10, ADR-0023): caps per supervisor run, checked before the agent
+# runs and before every model call. Placeholder values to exercise the guard, not a
+# recommendation: the real caps are Hassan's and live in measured-ops-private
+# (MEASURED_OPS_BUDGET_PATH). Unknown cost fails closed under a cost cap.
+
+version = 1
+
+[run]
+max_calls = 60
+max_tokens = 600000
+max_cost = 3.00  # in the price table's currency (USD in the demo table)

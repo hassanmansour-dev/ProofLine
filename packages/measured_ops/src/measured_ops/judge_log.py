@@ -83,5 +83,10 @@ class NullJudgeLog:
 
 
 def judge_log_from_env() -> JudgeLog:
+    """Postgres when `MEASURED_OPS_LOGS_URL` is set (C10), else the JSONL file."""
+    if os.environ.get("MEASURED_OPS_LOGS_URL", "").strip():
+        from measured_ops.pg_logs import PostgresJudgeLog
+
+        return PostgresJudgeLog(os.environ["MEASURED_OPS_LOGS_URL"].strip())
     raw = os.environ.get(ENV)
     return JsonlJudgeLog(Path(raw) if raw else DEFAULT_PATH)
