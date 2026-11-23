@@ -26,7 +26,7 @@ no network). Nothing here publishes, deploys, spends or messages anyone.
 | Content agent | `proofline/agent.py` | Works: one topic becomes one `approve_draft` action (LinkedIn post, 1-minute clip script, lesson outline). It never publishes |
 | Supervisor and approval gate | `measured_ops/supervisor.py` | Works: `call_agent → evaluate → triage → gate`, paused with `interrupt()`, resumed from a checkpoint (SQLite or Postgres) |
 | Eval/guard node | `measured_evals/checks.py`, run by the supervisor | Works: deterministic quality, prompt-injection and PII checks (guard-v0). No model |
-| Approval inbox, phone-sized | `measured_ops/inbox/` | Works: sign-in, list, preview with checks and cost, approve or reject with feedback, Ready to paste |
+| Approval inbox, phone-sized | `measured_ops/inbox/` | Works: sign-in, list, preview with checks and cost, approve, revise with feedback, or reject and stop, Ready to paste |
 | Golden set, 20 topics | `measured_evals/data/golden/content_v0.toml` | **Topics approved** by the owner (2026-11-17). No real output has been run against them ([`docs/GOLDEN_SET.md`](docs/GOLDEN_SET.md)) |
 | Deterministic eval tier | `python -m measured_evals run`, `.github/workflows/evals.yml` | Works in CI with a fake writer. **It measures no model** |
 | Regression baseline | `evals/baselines/content_v0.placeholder.json` | **Placeholder.** Reported, never enforced ([`docs/EVALS.md`](docs/EVALS.md)) |
@@ -93,9 +93,10 @@ flowchart LR
   to 3 revisions by default ([ADR-0019](docs/adr/0019-content-agent-and-revision-loop.md)).
 
 The inbox ([`docs/INBOX.md`](docs/INBOX.md), [ADR-0017](docs/adr/0017-approval-inbox.md))
-is a small server-rendered web page with no JavaScript. It binds to `127.0.0.1`,
-needs a passphrase, and is meant to be reached from a phone over a private tailnet,
-never the public internet. Each waiting action shows its checks and the run's cost
+is a small server-rendered web page. Its one first-party script copies drafts to the
+clipboard, and every page works without it. It binds to `127.0.0.1`, needs a
+passphrase, and is meant to be reached from a phone over a private tailnet, never the
+public internet. Each waiting action shows its checks and the run's cost
 per agent. Approving a content draft only moves it to **Ready to paste**; a human
 copies and posts it ([ADR-0020](docs/adr/0020-ready-to-paste-and-explicit-reject.md)).
 
@@ -203,11 +204,12 @@ uv run mypy                   # strict, on every package
 
 Unit tests never touch the network: nodes run inside a real one-node graph with a
 fake model, and their updates are read back from a checkpointer, so serialization
-problems show up in tests. On every push and pull request, CI runs a secret and PII
-scan, ruff, mypy and pytest on every package, the supervisor's end-to-end test
-against a Postgres service, and installs `measured_evals` and `measured_ops` on
-their own to prove the package boundaries. A second workflow, Evals, runs the
-deterministic eval tier.
+problems show up in tests. On every pull request and every push to `main`, CI runs a
+secret and PII scan, ruff, mypy and pytest on every package, the supervisor's
+end-to-end test against a Postgres service, and installs `measured_evals` and
+`measured_ops` on their own to prove the package boundaries. A second workflow, Evals,
+runs the deterministic eval tier and checks, without a key, that the model-graded
+tier still installs and its config is valid.
 
 ## Evals: what is real and what is not
 
@@ -247,7 +249,7 @@ Ordered steps, no dates. Each starts when the steps it depends on are done.
 | C10 | Scheduled runs with budget caps and a kill switch |
 | C11 | More agents, one at a time, same recipe |
 | Evals | Golden set approved (20 topics) and deterministic tier in CI (done; nothing measured yet); model-graded tier, critic calibration sheet, inbound injection screen and budget guard built (none run or wired in yet); next: a real run and a real baseline, calibration, wiring, auth |
-| Launch | Case study, demo video, licence, `measured-evals` on PyPI · `v1.0.0` |
+| Launch | Case study, demo video, `measured-evals` on PyPI · `v1.0.0` (licence done: Apache-2.0) |
 
 Step detail: [`docs/PLAN.md`](docs/PLAN.md). Architecture:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -262,6 +264,7 @@ packages/measured_ops/              contracts, policy (+ demo table), supervisor
 packages/measured_evals/            checks, cost, golden set, suites, baseline
 evals/baselines/                    the placeholder baseline
 docs/                               plan, architecture, ADRs, rubric, evals, golden set, inbox
+scripts/pii_scan.py                 the PII scan run by pre-commit and CI
 .claude/                            Claude Code setup: hooks, review agents, skills
 ```
 
