@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -56,6 +57,7 @@ from measured_ops.tools.ports import CalendarEvent, JiraIssue, JiraTransition
 log = logging.getLogger("measured_ops.tools")
 
 MAX_SEARCH = 50
+DEADLINE_FACTOR = 2  # a whole call takes at most twice the server's timeout_s
 ERROR_TEXT_MAX = 200
 Target = ServerConfig | MCPServer  # an MCPServer instance: in-process, for tests and demos
 
@@ -173,8 +175,11 @@ class McpToolClient:
             raise ToolNotAllowedError(f"{self.name}.{tool} is not allowed on this client")
         statuses: list[int] = []
         try:
-            async with self._connect(statuses) as client:
-                result = await client.call_tool(tool, dict(args))
+            # One deadline for the whole call (start, handshake, call), on top of the
+            # per-request timeout: a server that hangs before answering can't hold a run.
+            async with asyncio.timeout(DEADLINE_FACTOR * self.timeout_s):
+                async with self._connect(statuses) as client:
+                    result = await client.call_tool(tool, dict(args))
         except ToolError:
             raise
         except Exception as exc:
@@ -190,8 +195,9 @@ class McpToolClient:
         """The server's tool list (names and input schemas), for `tools check`."""
         statuses: list[int] = []
         try:
-            async with self._connect(statuses) as client:
-                listing = await client.list_tools()
+            async with asyncio.timeout(DEADLINE_FACTOR * self.timeout_s):
+                async with self._connect(statuses) as client:
+                    listing = await client.list_tools()
         except ToolError:
             raise
         except Exception as exc:

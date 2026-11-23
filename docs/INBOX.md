@@ -32,6 +32,13 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
 | `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
 | `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
+| `MEASURED_OPS_TOOLS_CONFIG` | no | none: approved ticket moves and calendar blocks can't run (C5, ADR-0022) |
+
+With `MEASURED_OPS_TOOLS_CONFIG` pointing at a tools config (the real one lives in
+measured-ops-private), approving a ticket move or a calendar block runs it before the
+page answers. Check a config first: `uv run python -m measured_ops.tools check --config
+<path>` lists each server's tools and calls none of them. The config names the env vars
+that hold each server's credentials; it never holds them.
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the

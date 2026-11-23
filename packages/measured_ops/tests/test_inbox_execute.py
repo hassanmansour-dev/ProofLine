@@ -100,3 +100,35 @@ async def test_after_a_restart_an_approved_unrun_action_is_stopped_at_once() -> 
     [status] = await restarted.in_progress()
 
     assert status.state == "stopped"
+
+
+async def test_approving_the_last_action_of_a_revised_round_runs_it_then_revises() -> None:
+    # The new continuation: execute runs in the request, the revision in the background.
+    from ops_fakes import ScriptedAgent, make_task
+
+    saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=SERDE_ALLOWLIST))
+    agent = ScriptedAgent([("publish_public", "medium", "A."), ("publish_public", "medium", "B.")])
+    graph = build_supervisor([agent], load_policy()).compile(checkpointer=saver)
+    cfg: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
+    await graph.ainvoke(initial_ops_state(make_task()), cfg)
+    inbox = Inbox(graph, load_policy(), callbacks=[])
+    [first] = await inbox.list_pending()
+    await inbox.decide(
+        "t",
+        interrupt_id=first.interrupt_id,
+        action_id=first.action_id,
+        approved=False,
+        feedback="Shorter.",
+    )
+    [second] = await inbox.list_pending()
+
+    outcome = await inbox.decide(
+        "t", interrupt_id=second.interrupt_id, action_id=second.action_id, approved=True
+    )
+    await inbox.wait_idle()
+
+    assert outcome.revising
+    assert [(o.action_id, o.status) for o in outcome.executed] == [(second.action_id, "manual")]
+    assert agent.runs == 2  # the revision ran (in the background)
+    [again] = await inbox.list_pending()
+    assert again.revision == 1

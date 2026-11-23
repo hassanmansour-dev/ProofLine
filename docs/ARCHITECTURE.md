@@ -412,8 +412,8 @@ number fails closed (END, logged).
   argument names (dotted = nested), constants and result paths. A tool can't be both read
   and write.
 - `mcp.py`: `McpToolClient(name, server, allowed)` opens a session per call (`mcp.Client`:
-  stdio, streamable HTTP, or an in-process `MCPServer` in tests), refuses tools outside
-  its allowlist, and maps failures to `ToolUnavailableError` (retried) / `ToolError` /
+  stdio, streamable HTTP, or an in-process `MCPServer` in tests) under one deadline (twice
+  the server's `timeout_s`), refuses tools outside its allowlist, and maps failures to `ToolUnavailableError` (retried) / `ToolError` /
   `ToolConfigError`. `build_read_tools(config)` → read ports for agents (read allowlist);
   `build_executors(config)` → executors (read + write clients). Jira search results
   outside the configured projects are dropped.
