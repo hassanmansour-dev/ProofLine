@@ -53,6 +53,7 @@ from measured_ops.inbox.settings import InboxSettings, single_process_lock
 from measured_ops.judge_log import JudgeLog
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.supervisor import build_supervisor
+from measured_ops.tools.executors import Executors
 
 log = logging.getLogger("measured_ops.inbox")
 
@@ -87,12 +88,13 @@ def create_inbox_app(
     prices: Mapping[str, ModelPrice] | None = None,
     eval_context: Mapping[str, object] | None = None,
     judge_log: JudgeLog | None = None,
+    executors: Executors | None = None,
     clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Build the inbox app. Refuses settings without usable secrets (no defaults).
 
     The lifespan takes the single-process lock, opens the checkpointer and compiles the
-    supervisor with `agents`, `policy` and `eval_context`: the same graph the runs
+    supervisor with `agents`, `policy`, `eval_context` and `executors` (C5): the same graph the runs
     paused in. `prices` (default: the bundled demo table) prices each run's usage.
     """
     settings.check()
@@ -122,9 +124,9 @@ def create_inbox_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with single_process_lock(settings.lock_path):
             async with open_checkpointer(settings.checkpointer_url) as saver:
-                graph = build_supervisor(agents, policy, eval_context=eval_context).compile(
-                    checkpointer=saver
-                )
+                graph = build_supervisor(
+                    agents, policy, eval_context=eval_context, executors=executors
+                ).compile(checkpointer=saver)
                 app.state.inbox = Inbox(
                     graph,
                     policy,
@@ -385,10 +387,16 @@ def create_inbox_app(
         verb = "Approved" if outcome.approved else "Rejected"
         if not outcome.approved and choice == "reject":
             verb = "Rejected and stopped"
-        if outcome.revising:
-            more = " Revising: the new draft comes back here when it's ready."
+        statuses = {o.status for o in outcome.executed}
+        ran = (" Applied." if "applied" in statuses else "") + (
+            " Already in place." if "already_applied" in statuses else ""
+        )
+        if outcome.failed:
+            more = " Running it failed: the run is under Stopped; Retry when the tool is back."
+        elif outcome.revising:
+            more = f"{ran} Revising: the new draft comes back here when it's ready."
         else:
-            more = " The run has another action waiting." if outcome.still_paused else ""
+            more = ran + (" The run has another action waiting." if outcome.still_paused else "")
         request.session["flash"] = f"{verb}.{more}"
         return RedirectResponse("/", status_code=303)
 
@@ -426,7 +434,7 @@ def create_inbox_app(
             await inbox(request).retry(thread_id)
         except AlreadyDecided:
             return message(request, 409, "Not stopped", "This run isn't stopped. Nothing changed.")
-        request.session["flash"] = "Retrying the revision."
+        request.session["flash"] = "Retrying."
         return RedirectResponse("/", status_code=303)
 
     return app

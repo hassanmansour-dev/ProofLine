@@ -26,6 +26,12 @@
   stopped run and `start()` continues each one once, with `ainvoke(None)`: safe there
   because no interrupt is pending (ADR-0016 forbids it only at a pending gate). C10
   moves this to a worker with budget caps.
+- Approved actions run in `decide` (C5, ADR-0022): after the gate step it continues through
+  `execute` synchronously (a tool call takes seconds) and stops before a `revise`, which goes
+  to the background as above. If an execution fails, the decision still stands, the run is
+  "stopped" (Retry continues it; executors read before they write, so nothing applies
+  twice) and the outcome says so. A run waiting to execute an action a human approved is
+  "stopped" at once; one executing an "auto" action may be another process's first pass.
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -39,7 +45,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
@@ -47,12 +53,12 @@ from pydantic import ValidationError
 
 from measured_evals import ModelPrice, total_by_agent
 from measured_evals.scores import DEFAULT_THRESHOLD
-from measured_ops.contracts import ApprovalDecision, PendingAction, Task
+from measured_ops.contracts import ActionOutcome, ApprovalDecision, OpsState, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.posted import JsonlPostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
-from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
+from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision, unexecuted
 from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
@@ -227,6 +233,8 @@ class Outcome:
     approved: bool
     still_paused: bool  # the run paused again, on its next action
     revising: bool = False  # a rejection with feedback: the revision runs in the background
+    executed: tuple[ActionOutcome, ...] = ()  # what ran during this decision (C5)
+    failed: bool = False  # running an approved action failed: the run is stopped (C5)
 
 
 def _cfg(thread_id: str) -> Any:
@@ -416,18 +424,39 @@ class Inbox:
                 "approved" if approved else "rejected",
             )
             snap = await self.graph.aget_state(_cfg(thread_id))
+            executed: tuple[ActionOutcome, ...] = ()
+            if snap.next in (("execute",), ("gate",)):
+                # Run what was just approved (C5), then pause on the round's next action;
+                # stop before a revision, which goes to the background below.
+                before = len(snap.values.get("executed") or [])
+                try:
+                    await self.graph.ainvoke(None, cfg, interrupt_before=["revise"])
+                except Exception:
+                    log.exception(
+                        "inbox: run %s stopped while running an approved action; "
+                        "the decision stands (retry from the inbox)",
+                        thread_id,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id, approved=approved, still_paused=False, failed=True
+                    )
+                snap = await self.graph.aget_state(_cfg(thread_id))
+                executed = tuple((snap.values.get("executed") or [])[before:])
             if snap.next == ("revise",):
                 # A revision runs the agent for minutes: in the background (ADR-0019).
                 self._schedule(thread_id, None)
                 return Outcome(
-                    thread_id=thread_id, approved=approved, still_paused=False, revising=True
+                    thread_id=thread_id,
+                    approved=approved,
+                    still_paused=False,
+                    revising=True,
+                    executed=executed,
                 )
-            if snap.next == ("gate",):
-                # The round's next action: the gate pauses on it at once.
-                out = await self.graph.ainvoke(None, cfg)
-                still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
-                return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
-        return Outcome(thread_id=thread_id, approved=approved, still_paused=False)
+            still_paused = snap.next == ("gate",) and bool(snap.interrupts)
+            return Outcome(
+                thread_id=thread_id, approved=approved, still_paused=still_paused, executed=executed
+            )
 
     def _log_decision(self, item: PendingItem, *, approved: bool) -> None:
         """Judge-agreement log: ids, eval scores and the decision; never text (ADR-0019)."""
@@ -508,6 +537,7 @@ class Inbox:
             or snap.next
             in (("gate",), ("revise",))  # after a gate step: only the inbox stops there
             or task.parent_id is not None  # a revision: only the inbox runs those
+            or _approved_but_not_run(snap)  # an approved action: only the inbox runs those
         ):
             return RunStatus(thread_id, task.agent, task.goal, "stopped")
         # A first pass between nodes may be a `proofline propose` run in another process.
@@ -559,6 +589,15 @@ class Inbox:
         for task in list(self._tasks):
             task.cancel()
         await self.wait_idle()
+
+
+def _approved_but_not_run(snap: Any) -> bool:
+    """Waiting to execute an action a human approved (C5): only the inbox gets there."""
+    if snap.next != ("execute",):
+        return False
+    waiting = unexecuted(cast(OpsState, snap.values or {}))
+    approved = {d.action_id for d in (snap.values or {}).get("decisions") or [] if d.approved}
+    return bool(waiting) and waiting[0].id in approved
 
 
 def _age_s(created_at: str | None) -> float | None:

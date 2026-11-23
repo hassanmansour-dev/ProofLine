@@ -1,0 +1,102 @@
+"""The inbox runs approved actions (C5, ADR-0022): after the gate step it continues
+through `execute`; a failure leaves the decision standing and the run stopped, and
+Retry applies it once."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from tool_fakes import FakeJira, TriageStubAgent, fake_executors
+
+from measured_ops import ApprovalPolicy, Task, initial_ops_state, load_policy
+from measured_ops.contracts import SERDE_ALLOWLIST
+from measured_ops.inbox.service import Inbox
+from measured_ops.supervisor import build_supervisor
+from measured_ops.tools.errors import ToolError
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def _strict_serde(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGGRAPH_STRICT_MSGPACK", "true")
+
+
+def _setup(jira: FakeJira) -> tuple[Any, Inbox]:
+    saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=SERDE_ALLOWLIST))
+    demo = load_policy()
+    policy = ApprovalPolicy(version=1, actions={**demo.actions, "triage_ticket": "approval"})
+    graph = build_supervisor(
+        [TriageStubAgent(jira)], policy, executors=fake_executors(jira)
+    ).compile(checkpointer=saver)
+    return graph, Inbox(graph, policy, callbacks=[])
+
+
+async def _start(graph: Any) -> None:
+    cfg: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
+    await graph.ainvoke(initial_ops_state(Task(agent="ops", goal="Triage.")), cfg)
+
+
+async def test_approving_a_move_applies_it_and_says_so() -> None:
+    jira = FakeJira()
+    graph, inbox = _setup(jira)
+    await _start(graph)
+    [item] = await inbox.list_pending()
+    assert item.type == "triage_ticket"
+
+    outcome = await inbox.decide(
+        "t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+    )
+
+    assert [o.status for o in outcome.executed] == ["applied"]
+    assert not outcome.failed
+    assert jira.issues["DEMO-1"]["status"] == "In Progress"
+    assert await inbox.list_pending() == []
+    assert await inbox.in_progress() == []
+
+
+async def test_a_failed_execution_keeps_the_decision_and_stops_the_run() -> None:
+    jira = FakeJira()
+    graph, inbox = _setup(jira)
+    await _start(graph)
+    [item] = await inbox.list_pending()
+    jira.fail_next, jira.fail_only, jira.error = 1, {"get_issue"}, ToolError("fake: refused")
+
+    outcome = await inbox.decide(
+        "t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+    )
+
+    assert outcome.failed
+    assert outcome.approved
+    [status] = await inbox.in_progress()
+    assert status.state == "stopped"
+    snap = await graph.aget_state({"configurable": {"thread_id": "t"}})
+    assert [d.approved for d in snap.values["decisions"]] == [True]  # the decision stands
+
+    await inbox.retry("t")
+    await inbox.wait_idle()
+
+    snap = await graph.aget_state({"configurable": {"thread_id": "t"}})
+    assert [o.status for o in snap.values["executed"]] == ["applied"]
+    assert len([w for w in jira.writes if w[0] == "transition"]) == 1
+    assert await inbox.in_progress() == []
+
+
+async def test_after_a_restart_an_approved_unrun_action_is_stopped_at_once() -> None:
+    # Only the inbox gets past an approval, so a run waiting to execute an approved action
+    # is stopped (Retry, or the startup sweep), not "elsewhere" for twice the timeout.
+    jira = FakeJira()
+    graph, _ = _setup(jira)
+    await _start(graph)
+    first = Inbox(graph, load_policy(), callbacks=[])
+    [item] = await first.list_pending()
+    jira.fail_next, jira.fail_only, jira.error = 1, {"get_issue"}, ToolError("fake: refused")
+    await first.decide("t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True)
+
+    restarted = Inbox(graph, load_policy(), callbacks=[])  # new process: no memory of it
+    [status] = await restarted.in_progress()
+
+    assert status.state == "stopped"

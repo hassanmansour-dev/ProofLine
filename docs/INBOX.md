@@ -127,8 +127,10 @@ Never run `tailscale funnel` for this port.
   **Copy** button (if the browser won't copy, it selects the text for you). **Mark as
   posted** only records that you posted it and hides it; nothing is ever published from
   here. `proofline ready` prints the same list in the terminal.
-- "In progress" lists runs not waiting for you. "Revision stopped" means a revision
-  hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
+- "In progress" lists runs not waiting for you. "Stopped" means a revision hit the
+  timeout, failed, or was cut off by a restart, or an approved action failed to run
+  (C5: a tool was down or refused it; your decision stands): tap **Retry**. Retrying
+  never applies a change twice: executors check what's already in place first. The inbox also
   continues stopped runs once when it starts. "In progress elsewhere" is a run another
   process is working on (e.g. `proofline propose`, which gives up after the same timeout);
   it's left alone, and shows as stopped only after twice the timeout.
