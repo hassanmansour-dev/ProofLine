@@ -1,7 +1,11 @@
 # ADR-0016: Supervisor graph, approval gate and Postgres checkpointer
 
 - Status: accepted (2026-11-14, Hassan's review on PR #9). Amends
-  ADR-0014 on `pending_actions` ownership (see State).
+  ADR-0014 on `pending_actions` ownership (see State). Amended by ADR-0022 (C5): an
+  `execute` node now consumes `ready`, one action per step, after triage and after the
+  gate; the gate itself is unchanged (nothing before `interrupt()`, nothing raised
+  after it), and the inbox's `ainvoke(None)` after a committed gate step is the same
+  safe case as before (no interrupt pending).
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C2 (GROW-81)
 
