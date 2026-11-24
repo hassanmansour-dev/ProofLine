@@ -342,6 +342,8 @@ def test_propose_says_the_kill_switch_is_on_in_one_line(
 
 
 def test_golden_help_says_the_budget_is_per_item() -> None:
+    # the command's docstring is its help text; rendered help carries colour codes and
+    # box wrapping that differ between terminals (and CI), so the source is checked
     result = CliRunner().invoke(cli.app, ["golden", "--help"])
-    text = " ".join(result.output.split())
-    assert "caps each item, not the whole run" in text
+    assert result.exit_code == 0
+    assert "caps each item, not the whole run" in " ".join((cli.golden.__doc__ or "").split())
