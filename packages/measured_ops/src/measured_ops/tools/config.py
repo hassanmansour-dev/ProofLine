@@ -162,6 +162,14 @@ class EventFields(_Model):
     title: str = Field(default="title", pattern=PATH)
     start: str = Field(default="start", pattern=PATH)
     end: str = Field(default="end", pattern=PATH)
+    time_zone: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Zone for event times the server returns with no zone at all (IANA name or UTC). "
+            "Unset: such a time is an error, never a guess."
+        ),
+    )
 
 
 class CalendarTools(_Model):

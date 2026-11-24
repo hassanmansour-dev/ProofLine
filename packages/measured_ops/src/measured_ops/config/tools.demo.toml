@@ -81,6 +81,9 @@ args = { calendar_id = "calendar_id", title = "summary", start = "start", end = 
 id = "id"
 
 [calendar.fields]
+# Event times are read in the shapes servers send: ISO 8601 with an offset or Z, with a
+# zone label ("2026-12-01T14:00:00.0000000 (UTC)"), or a {dateTime, timeZone} pair. A time
+# with no zone at all is an error unless you name its zone: time_zone = "UTC".
 id = "id"
 title = "summary"
 start = "start"

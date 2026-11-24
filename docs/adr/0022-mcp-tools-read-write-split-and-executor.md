@@ -93,6 +93,16 @@ restart. `create_inbox_app` and `serve` take `executors`; `serve` builds them fr
   (`MEASURED_OPS_INBOX_EXECUTE_TIMEOUT_S`, default 120). On timeout the decision stands,
   the run is "Stopped", and Retry is safe (read before write).
 - `execute` checks the kill switch before any executable action (ADR-0023).
+- Event times are parsed tolerantly and never guessed (found with the chosen Outlook
+  server, whose `outlook_list_events` returns `2026-12-01T14:00:00.0000000 (UTC)`, which
+  `datetime.fromisoformat` rejects: the calendar executor's read-before-write check then
+  never matched, and a retry could have created a duplicate block).
+  `tools.mcp.parse_event_time` reads ISO 8601 with any fractional digits, a trailing zone
+  label, and Graph's `{dateTime, timeZone}` pair (IANA, UTC, common Windows zone names);
+  an all-day date has no instant; anything else, including a time with no zone and no
+  `calendar.fields.time_zone` in the config, raises `ToolError`.
+- The Jira project scope keeps a query's ORDER BY outside the parentheses
+  (`project in (GROW) AND (cond) ORDER BY ...`), skipping quoted text (`scope_jql`).
 
 **6. Tools config, in TOML, per deployment.** `measured_ops/config/tools.demo.toml` maps
 each logical operation (`search`, `get_issue`, `transitions`, `transition`, `update`,

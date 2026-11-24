@@ -434,7 +434,11 @@ number fails closed (END, logged).
   the server's `timeout_s`), refuses tools outside its allowlist, and maps failures to `ToolUnavailableError` (retried) / `ToolError` /
   `ToolConfigError`. `build_read_tools(config)` → read ports for agents (read allowlist);
   `build_executors(config)` → executors (read + write clients). Jira search results
-  outside the configured projects are dropped.
+  outside the configured projects are dropped; `scope_jql` adds the project scope and keeps
+  ORDER BY outside its parentheses. `parse_event_time` reads event times as servers send
+  them (ISO 8601 with any fractional digits, a zone label such as ` (UTC)`, Graph's
+  `{dateTime, timeZone}`) and raises on one it can't read: an unread time must never look
+  like "no such event", or a retry would duplicate a block.
 - `demo_servers.py`: demo tracker and calendar MCP servers over one JSON file
   (`MEASURED_OPS_DEMO_TOOLS_STATE`, default `.data/demo_tools.json`), used by the demo
   config and the tests. `python -m measured_ops.tools check|list` verifies a config

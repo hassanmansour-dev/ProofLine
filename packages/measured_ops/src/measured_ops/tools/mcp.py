@@ -19,12 +19,14 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx2
 import mcp_types
@@ -243,14 +245,106 @@ def _str(value: Any, what: str) -> str:
     return str(value)
 
 
-def _when(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
+# Windows zone names Microsoft Graph uses, for the zones this is likely to meet. Anything
+# else must be an IANA name or UTC; an unknown name fails loudly (configure the server to
+# answer in UTC, or add the name here).
+WINDOWS_ZONES = {
+    "utc": "UTC",
+    "gmt": "UTC",
+    "z": "UTC",
+    "coordinated universal time": "UTC",
+    "eastern standard time": "America/Toronto",
+    "central standard time": "America/Chicago",
+    "mountain standard time": "America/Denver",
+    "pacific standard time": "America/Los_Angeles",
+    "atlantic standard time": "America/Halifax",
+    "newfoundland standard time": "America/St_Johns",
+    "gmt standard time": "Europe/London",
+    "w. europe standard time": "Europe/Berlin",
+    "romance standard time": "Europe/Paris",
+}
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_LABEL = re.compile(
+    r"^(?P<stamp>.*?\d)\s*(?:\((?P<paren>[^()]+)\)|\s(?P<bare>[A-Za-z][A-Za-z_/+\-. ]*))$"
+)
+_FRACTION = re.compile(r"(\.\d{6})\d+")
+
+
+def _zone(name: str) -> tzinfo:
+    key = name.strip()
     try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
+        return ZoneInfo(WINDOWS_ZONES.get(key.casefold(), key))
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ToolError("event time: unknown time zone label in a tool result") from None
+
+
+def parse_event_time(value: Any, *, default_zone: str | None = None) -> datetime | None:
+    """An event's start or end as an aware datetime, or None when it has no instant (an
+    all-day date, or no value). Reads what calendar servers actually send:
+
+    - ISO 8601 with an offset or `Z`, with any number of fractional digits;
+    - the same followed by a zone label: `2026-12-01T14:00:00.0000000 (UTC)`, `... UTC`;
+    - Microsoft Graph's pair `{"dateTime": "...", "timeZone": "..."}` (IANA, UTC or a
+      common Windows zone name);
+    - a time with no zone at all only when the config names one (`default_zone`).
+
+    Anything else raises ToolError. It never returns None for a value it couldn't read:
+    "no instant" would make an existing block look absent, and a retry would duplicate it.
+    The message names the problem, never the value (titles and times are personal)."""
+    if value is None:
         return None
-    return parsed if parsed.tzinfo is not None else None  # all-day / floating: no instant
+    zone_name = default_zone
+    if isinstance(value, Mapping):
+        if "dateTime" not in value:
+            if isinstance(value.get("date"), str) and _DATE_ONLY.match(value["date"]):
+                return None  # an all-day event
+            raise ToolError("event time: an object without dateTime in a tool result")
+        zone_name = value.get("timeZone") or default_zone
+        value = value["dateTime"]
+    if not isinstance(value, str):
+        raise ToolError("event time: not text in a tool result")
+    text = value.strip()
+    if _DATE_ONLY.match(text):
+        return None  # an all-day event
+    labelled = _LABEL.match(text)
+    if labelled and (labelled["paren"] or labelled["bare"]):
+        text, zone_name = labelled["stamp"], labelled["paren"] or labelled["bare"]
+    text = _FRACTION.sub(r"\1", text.replace(" ", "T", 1) if "T" not in text else text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ToolError("event time: unreadable date and time in a tool result") from None
+    if parsed.tzinfo is not None:
+        return parsed
+    if not zone_name:
+        raise ToolError(
+            "event time: no time zone in a tool result; set calendar.fields.time_zone "
+            "in the tools config, or have the server answer in UTC"
+        )
+    return parsed.replace(tzinfo=_zone(str(zone_name)))
+
+
+_ORDER_BY = re.compile(r"\border\s+by\b", re.IGNORECASE)
+
+
+def scope_jql(jql: str, projects: Sequence[str]) -> str:
+    """`jql` limited to `projects`. An ORDER BY clause stays outside the parentheses
+    (`project in (X) AND (cond) ORDER BY ...`): inside them it's a syntax error. Quoted
+    text is skipped when looking for it."""
+    scope = f"project in ({', '.join(projects)})"
+    cut, quote = None, None
+    for i, ch in enumerate(jql):
+        if quote:
+            if ch == quote and jql[i - 1] != "\\":
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "oO" and _ORDER_BY.match(jql, i) and (i == 0 or not jql[i - 1].isalnum()):
+            cut = i  # the last top-level one wins
+    condition, order = (jql, "") if cut is None else (jql[:cut], jql[cut:])
+    condition, order = condition.strip(), order.strip()
+    scoped = f"{scope} AND ({condition})" if condition else scope
+    return f"{scoped} {order}" if order else scoped
 
 
 class McpJiraReads:
@@ -281,8 +375,7 @@ class McpJiraReads:
 
     async def search(self, jql: str, *, limit: int = 20) -> list[JiraIssue]:
         op = self.cfg.tools.search
-        projects = ", ".join(self.cfg.projects)
-        scoped = f"project in ({projects}) AND ({jql})"
+        scoped = scope_jql(jql, self.cfg.projects)
         limit = max(1, min(limit, MAX_SEARCH))
         raw = await self.client.call(op.tool, build_args(op, {"jql": scoped, "limit": limit}))
         items = get_path(raw, op.items, what=f"{self.cfg.server}.{op.tool}")
@@ -387,8 +480,12 @@ class McpCalendarReads:
                 title=_str(get_path(e, f.title, what=what), "event title")
                 if _has(e, f.title)
                 else "",
-                start=_when(get_path(e, f.start, what=what)) if _has(e, f.start) else None,
-                end=_when(get_path(e, f.end, what=what)) if _has(e, f.end) else None,
+                start=parse_event_time(get_path(e, f.start, what=what), default_zone=f.time_zone)
+                if _has(e, f.start)
+                else None,
+                end=parse_event_time(get_path(e, f.end, what=what), default_zone=f.time_zone)
+                if _has(e, f.end)
+                else None,
             )
             for e in items
         ]
