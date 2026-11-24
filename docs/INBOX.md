@@ -32,6 +32,13 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_INBOX_REVISION_TIMEOUT_S` | no | `600` (one background revision) |
 | `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
 | `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
+| `MEASURED_OPS_TOOLS_CONFIG` | no | none: approved ticket moves and calendar blocks can't run (C5, ADR-0022) |
+
+With `MEASURED_OPS_TOOLS_CONFIG` pointing at a tools config (the real one lives in
+measured-ops-private), approving a ticket move or a calendar block runs it before the
+page answers. Check a config first: `uv run python -m measured_ops.tools check --config
+<path>` lists each server's tools and calls none of them. The config names the env vars
+that hold each server's credentials; it never holds them.
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
@@ -127,8 +134,10 @@ Never run `tailscale funnel` for this port.
   **Copy** button (if the browser won't copy, it selects the text for you). **Mark as
   posted** only records that you posted it and hides it; nothing is ever published from
   here. `proofline ready` prints the same list in the terminal.
-- "In progress" lists runs not waiting for you. "Revision stopped" means a revision
-  hit the timeout, failed, or was cut off by a restart: tap **Retry**. The inbox also
+- "In progress" lists runs not waiting for you. "Stopped" means a revision hit the
+  timeout, failed, or was cut off by a restart, or an approved action failed to run
+  (C5: a tool was down or refused it; your decision stands): tap **Retry**. Retrying
+  never applies a change twice: executors check what's already in place first. The inbox also
   continues stopped runs once when it starts. "In progress elsewhere" is a run another
   process is working on (e.g. `proofline propose`, which gives up after the same timeout);
   it's left alone, and shows as stopped only after twice the timeout.

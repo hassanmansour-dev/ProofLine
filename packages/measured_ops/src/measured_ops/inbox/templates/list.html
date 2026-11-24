@@ -33,7 +33,7 @@
     <span class="meta">{{ run.agent }} ·
       {% if run.state == "running" %}Revising…
       {% elif run.state == "queued" %}Revision queued
-      {% elif run.state == "stopped" %}Revision stopped (timeout, error or restart)
+      {% elif run.state == "stopped" %}Stopped (timeout, error or restart)
       {% else %}In progress elsewhere{% endif %}
     </span>
     {% if run.state == "stopped" %}

@@ -14,7 +14,7 @@ version = 1
 # internal work: nothing leaves the system
 draft_content = "auto"
 research = "auto"
-schedule_internal_block = "auto"
+# ticket triage on the configured projects: a move, labels, priority (C5, ADR-0022)
 triage_ticket = "auto"
 run_tests = "auto"
 run_evals = "auto"
@@ -23,6 +23,8 @@ run_evals = "auto"
 publish_public = "approval"
 # a content draft Hassan approves on the phone and pastes himself; never executed (ADR-0019)
 approve_draft = "approval"
+# a block on a personal calendar: Hassan approves each one (C3 review; C5, ADR-0022)
+schedule_calendar_block = "approval"
 deploy_production = "approval"
 spend_money = "approval"
 message_person = "approval"

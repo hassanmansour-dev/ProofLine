@@ -29,7 +29,7 @@ dev = [
     "aiosqlite>=0.22.1",
     "langgraph-checkpoint-sqlite>=3.1.2",
     "pre-commit>=4.3",
-    "measured-ops[inbox,postgres]",
+    "measured-ops[inbox,postgres,tools]",
 ]
 
 [tool.ruff]
@@ -49,6 +49,7 @@ known-first-party = ["proofline", "measured_ops", "measured_evals", "tests", "sc
 ".claude/hooks/**" = ["T20"]
 "scripts/pii_scan.py" = ["T20"]
 "packages/measured_ops/src/measured_ops/inbox/__main__.py" = ["T20"]
+"packages/measured_ops/src/measured_ops/tools/__main__.py" = ["T20"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -244,6 +244,8 @@ def test_route_pending_is_pure() -> None:
     state = initial_ops_state(task)
     state["pending_actions"] = [make_action(task.id)]
     assert route_pending(state) == "gate"
+    state["ready"] = [make_action(task.id)]  # C5: what's ready runs before the gate
+    assert route_pending(state) == "execute"
 
 
 # ---- agents --------------------------------------------------------------------------
@@ -277,6 +279,7 @@ def test_graph_shape() -> None:
         "evaluate",
         "triage",
         "gate",
+        "execute",
         "revise",
         "__end__",
     }

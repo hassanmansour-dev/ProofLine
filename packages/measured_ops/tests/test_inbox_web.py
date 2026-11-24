@@ -500,7 +500,7 @@ def test_list_shows_runs_in_progress_and_retry_for_stopped_ones(
         c.app.state.inbox.in_progress = fake_in_progress  # type: ignore[attr-defined]
         html = c.get("/").text
 
-    for text in ("Revising…", "Revision queued", "Revision stopped", "In progress elsewhere"):
+    for text in ("Revising…", "Revision queued", "Stopped (timeout", "In progress elsewhere"):
         assert text in html
     assert html.count('action="/r/') == 1  # Retry only on the stopped run
     assert 'action="/r/r3/retry"' in html

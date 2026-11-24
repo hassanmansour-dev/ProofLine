@@ -45,14 +45,18 @@ async def _start(graph: Any, thread: str, goal: str = "Echo the topic back.") ->
 
 
 class SpyGraph:
-    """Records every ainvoke input, so tests can prove the inbox never resumes with None."""
+    """Records every ainvoke input, and whether an interrupt was pending when it was sent,
+    so tests can prove the inbox never answers a waiting gate with None (ADR-0016)."""
 
     def __init__(self, graph: Any) -> None:
         self._graph = graph
         self.inputs: list[Any] = []
+        self.calls: list[tuple[Any, bool]] = []  # (input, an interrupt was pending)
 
     async def ainvoke(self, value: Any, config: Any = None, **kwargs: Any) -> Any:
+        snap = await self._graph.aget_state(config)
         self.inputs.append(value)
+        self.calls.append((value, bool(snap.interrupts)))
         return await self._graph.ainvoke(value, config, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
@@ -212,9 +216,12 @@ async def test_refused_answer_keeps_the_item_and_a_new_answer_works() -> None:
     assert still.interrupt_id == item.interrupt_id
     await inbox.decide("t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True)
     assert await inbox.list_pending() == []
-    resumes = spy.inputs[1:]  # the first input started the run
-    assert resumes
-    assert all(isinstance(r, Command) for r in resumes)  # never ainvoke(None)
+    at_the_gate = [value for value, pending in spy.calls if pending]
+    assert len(at_the_gate) == 2  # the refused answer and the accepted one
+    assert all(isinstance(v, Command) for v in at_the_gate)  # never ainvoke(None) there
+    # C5: once the gate step is committed (no interrupt pending), the inbox continues the
+    # run to execute the approved action; that's the only None it sends.
+    assert [v for v, pending in spy.calls[1:] if not pending] == [None]
 
 
 async def test_feedback_over_the_limit_is_refused_without_resuming() -> None:

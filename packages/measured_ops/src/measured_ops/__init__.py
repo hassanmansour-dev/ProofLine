@@ -15,6 +15,7 @@ from measured_ops.agent import (
     run_agent,
 )
 from measured_ops.contracts import (
+    ActionOutcome,
     AgentResult,
     ApprovalDecision,
     OpsState,
@@ -30,6 +31,7 @@ __version__ = version("measured-ops")
 
 __all__ = [
     "ActionBlockedError",
+    "ActionOutcome",
     "Agent",
     "AgentContractError",
     "AgentGraph",
