@@ -50,8 +50,10 @@ A rejection without feedback, or past the cap, ends the run with the decision re
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable, Hashable, Mapping, Sequence
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -59,7 +61,7 @@ from langgraph.types import RetryPolicy, interrupt
 from pydantic import AfterValidator
 
 from measured_evals import EvalScores, evaluate
-from measured_evals.budget import Budget, check_budget
+from measured_evals.budget import Budget, BudgetExceeded, check_budget
 from measured_evals.checks import TARGET_CHECKS
 from measured_evals.cost import Prices
 from measured_ops.agent import (
@@ -70,8 +72,8 @@ from measured_ops.agent import (
     check_agent_graph,
     run_agent,
 )
-from measured_ops.budget import guard_budget
-from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction, Task
+from measured_ops.budget import budget_from_env, guard_budget
+from measured_ops.contracts import AgentResult, ApprovalDecision, OpsState, PendingAction, Task
 from measured_ops.killswitch import KillSwitch
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.prices import load_model_prices
@@ -89,6 +91,13 @@ Evaluator = Callable[[str, Mapping[str, object]], Awaitable[EvalScores]]
 # Transient tool failures (unreachable, timed out) retry the execute step; executors
 # read before they write, so a retry never applies a change twice.
 EXECUTE_RETRY = RetryPolicy(max_attempts=3, retry_on=ToolUnavailableError)
+
+
+class _FromEnv:
+    """Default for `build_supervisor(budget=...)`: the budget the environment names."""
+
+
+FROM_ENV = _FromEnv()
 
 
 def unexecuted(state: OpsState) -> list[PendingAction]:
@@ -235,7 +244,7 @@ def build_supervisor(
     target_evaluator: Evaluator | None = None,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
     executors: Executors | None = None,
-    budget: Budget | None = None,
+    budget: Budget | _FromEnv | None = FROM_ENV,
     prices: Prices | None = None,
     kill_switch: KillSwitch | None = None,
 ) -> SupervisorGraph:
@@ -252,12 +261,26 @@ def build_supervisor(
     they're ready. Without them an agent can't propose an executable type: `evaluate`
     fails loudly instead of letting an approval go nowhere.
 
-    `budget` (C10, ADR-0023) caps each run's calls, tokens and cost, priced with `prices`
-    (default: the bundled demo table); no budget, no caps. `kill_switch` defaults to
+    `budget` (C10, ADR-0023) caps each run's calls, tokens and cost, priced with `prices`.
+    By default it is the table `MEASURED_OPS_BUDGET_PATH` names (no caps when unset), so
+    every runner gets it without wiring; `budget=None` opts out. `prices` default to
+    `MEASURED_OPS_PRICES_PATH`, else the bundled demo table. A run that crosses a cap ends
+    with a failed `AgentResult` and its spend recorded, so it can't be resumed into more. `kill_switch` defaults to
     `KillSwitch.from_env()`: every supervisor honours it."""
     context: Mapping[str, object] = dict(eval_context or {})
     switch = kill_switch or KillSwitch.from_env()
-    run_prices: Prices = load_model_prices() if prices is None and budget else (prices or {})
+    run_budget = budget_from_env() if isinstance(budget, _FromEnv) else budget
+    run_prices: Prices = prices if prices is not None else {}
+    if prices is None and run_budget is not None:
+        raw = os.environ.get("MEASURED_OPS_PRICES_PATH", "").strip()
+        run_prices = load_model_prices(Path(raw) if raw else None)
+
+    def over_budget(task: Task, agent_name: str, exc: BudgetExceeded) -> AgentResult:
+        # numbers and cap names only (measured_evals.budget), never content
+        log.warning("supervisor: task %s stopped by its budget: %s", task.id, exc)
+        return AgentResult(
+            task_id=task.id, agent=agent_name, status="failed", summary="", error=f"budget: {exc}"
+        )
 
     async def _default_target_evaluator(text: str, ctx: Mapping[str, object]) -> EvalScores:
         return await evaluate(text, ctx, checks=TARGET_CHECKS)
@@ -284,15 +307,25 @@ def build_supervisor(
         agent, graph = graphs[task.agent]
         switch.check()  # KillSwitchEngaged: nothing runs, the run stays resumable
         prior = state.get("usage") or []
-        if budget is not None:
-            check_budget(budget, prior, run_prices)  # BudgetExceeded before the agent runs
+        if run_budget is not None:
+            try:
+                check_budget(run_budget, prior, run_prices)  # before the agent runs
+            except BudgetExceeded as exc:
+                return {"results": [over_budget(task, agent.name, exc)], "usage": []}
         with collect_usage(agent.name) as usage:
-            guard = guard_budget(budget, run_prices, prior, usage) if budget else nullcontext()
+            guard = (
+                guard_budget(run_budget, run_prices, prior, usage) if run_budget else nullcontext()
+            )
             try:
                 with guard:  # and before every model call inside the agent
                     result = await run_agent(
                         agent, graph, task, config=agent_run_config(agent.name, task)
                     )
+            except BudgetExceeded as exc:
+                # The run ends here, as a failed result with this pass's spend recorded:
+                # raising would lose the state update, and every Retry would then start
+                # from a fresh allowance (review B2).
+                return {"results": [over_budget(task, agent.name, exc)], "usage": usage.calls()}
             except BaseException:  # incl. cancellation (an inbox revision's timeout)
                 # the run's spend is lost with the state update: keep it in the log
                 per_model: dict[str, int] = {}

@@ -15,7 +15,7 @@ from ops_fakes import LLMAgent, ScriptedAgent, make_task
 
 from measured_evals import ModelPrice, Usage
 from measured_ops import initial_ops_state, load_policy
-from measured_ops.budget import Budget, BudgetExceeded, load_budget
+from measured_ops.budget import Budget, load_budget
 from measured_ops.contracts import SERDE_ALLOWLIST
 from measured_ops.inbox.service import AlreadyDecided, Inbox
 from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
@@ -129,9 +129,9 @@ async def test_a_model_call_past_the_cap_is_never_made() -> None:
         [agent], load_policy(), budget=Budget(max_calls=2), prices=PRICES
     ).compile(checkpointer=_saver())
 
-    with pytest.raises(BudgetExceeded, match="next call would cross max_calls: 3 > 2"):
-        await app.ainvoke(initial_ops_state(make_task()), CFG)
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
 
+    assert out["results"][-1].error == "budget: the next call would cross max_calls: 3 > 2"
     remaining = list(agent.model.messages)  # the third reply was never consumed
     assert len(remaining) == 1
 
@@ -144,8 +144,10 @@ async def test_a_run_already_over_budget_doesnt_start_the_agent() -> None:
     state = initial_ops_state(make_task())
     state["usage"] = [Usage(agent="echo", model="model-a", input_tokens=90, output_tokens=20)]
 
-    with pytest.raises(BudgetExceeded, match="max_tokens: 110 > 100"):
-        await app.ainvoke(state, CFG)
+    out = await app.ainvoke(state, CFG)
+
+    assert out["results"][-1].status == "failed"
+    assert "max_tokens: 110 > 100" in out["results"][-1].error
     assert agent.runs == 0
 
 
@@ -157,8 +159,10 @@ async def test_unknown_cost_stops_the_run_under_a_cost_cap() -> None:
         [agent], load_policy(), budget=Budget(max_cost=10.0), prices=PRICES
     ).compile(checkpointer=_saver())
 
-    with pytest.raises(BudgetExceeded, match="cost unknown"):
-        await app.ainvoke(initial_ops_state(make_task()), CFG)
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
+
+    assert "cost unknown" in out["results"][-1].error
+    assert len(out["usage"]) == 1  # the second call was never made
 
 
 async def test_within_budget_nothing_changes() -> None:
@@ -169,3 +173,50 @@ async def test_within_budget_nothing_changes() -> None:
     out = await app.ainvoke(initial_ops_state(make_task()), CFG)
     assert len(out["usage"]) == 2
     assert "__interrupt__" in out
+
+
+# ---- review B2: caps wired to real runs, and never reset by a resume ----------------------
+
+
+async def test_the_budget_defaults_to_the_one_the_environment_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = tmp_path / "budget.toml"
+    table.write_text("version = 1\n[run]\nmax_calls = 1\n")
+    monkeypatch.setenv("MEASURED_OPS_BUDGET_PATH", str(table))
+
+    capped = LLMAgent([_reply(), _reply()])
+    out = await (
+        build_supervisor([capped], load_policy())  # no budget argument: like every runner
+        .compile(checkpointer=_saver())
+        .ainvoke(initial_ops_state(make_task()), CFG)
+    )
+    assert out["results"][-1].status == "failed"
+    assert "max_calls" in (out["results"][-1].error or "")
+
+    free = LLMAgent([_reply(), _reply()])
+    out = await (
+        build_supervisor([free], load_policy(), budget=None)  # an explicit opt-out
+        .compile(checkpointer=_saver())
+        .ainvoke(initial_ops_state(make_task()), CFG)
+    )
+    assert out["results"][-1].status == "succeeded"
+
+
+async def test_a_budget_stopped_run_records_its_spend_and_cannot_be_resumed_into_more() -> None:
+    agent = LLMAgent([_reply()] * 6)  # would make six calls if every retry got a new allowance
+    agent.calls = 3
+    app = build_supervisor(
+        [agent], load_policy(), budget=Budget(max_calls=2), prices=PRICES
+    ).compile(checkpointer=_saver())
+
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
+
+    [result] = out["results"]
+    assert result.status == "failed"
+    assert result.error == "budget: the next call would cross max_calls: 3 > 2"
+    assert len(out["usage"]) == 2  # the spend is in the state, not only in a log
+    assert (await app.aget_state(CFG)).next == ()  # the run ended: nothing to retry
+    for _ in range(2):  # the inbox's Retry and its start-up sweep, had it been "stopped"
+        await app.ainvoke(None, CFG)
+    assert len(list(agent.model.messages)) == 4  # two calls made, ever
