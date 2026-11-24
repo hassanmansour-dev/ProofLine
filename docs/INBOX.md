@@ -149,6 +149,9 @@ Never run `tailscale funnel` for this port.
   continues stopped runs once when it starts. "In progress elsewhere" is a run another
   process is working on (e.g. `proofline propose`, which gives up after the same timeout);
   it's left alone, and shows as stopped only after twice the timeout.
+- "Failed (last 7 days)" lists runs that ended without a draft: the agent failed, or the
+  run crossed its budget (the line says which cap). Nothing more is coming from those;
+  raise the cap or propose the topic again.
 - An action marked **Blocked by policy** was paused before the policy changed to
   "never". It can only be rejected.
 - Tapping twice is safe: the second tap says "Already decided".

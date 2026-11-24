@@ -468,8 +468,9 @@ number fails closed (END, logged).
   `status`, `import-logs`. Runs no agent.
 - Postgres logs (`pg_logs.py`): `PostgresJudgeLog`, `PostgresPostedLog` behind the same
   ports, chosen by `MEASURED_OPS_LOGS_URL` in `judge_log_from_env` / `posted_log_from_env`;
-  tables created on first use (nothing connects at construction); `import_jsonl` is
-  idempotent; callers on an event loop run them in a worker thread.
+  nothing connects at construction; `setup()` creates the tables and is run, and allowed to
+  raise, when the inbox starts and before the content agent's first run (`judge_log.setup_log`);
+  `import_jsonl` is idempotent; callers on an event loop run them in a worker thread.
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool
@@ -544,6 +545,10 @@ adds its own case.
   leaves the decision saved and the run "Stopped". Log writes (judge log, posted marks)
   run in a worker thread. `create_inbox_app(...,
   executors=...)`; `serve` builds them from `MEASURED_OPS_TOOLS_CONFIG`.
+- Failed runs (C10 review): `failed_runs()` lists threads that ended with a failed agent
+  result in the last 7 days (`FailedRun`: thread, agent, goal, task, error), read from the
+  checkpointer; the list page shows them under "Failed", the digest in a Failed section,
+  and a background revision that ends failed is logged at ERROR, not as "revised".
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
   (`docs/INBOX.md`). Edit is deferred to C9.

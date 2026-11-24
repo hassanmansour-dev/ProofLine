@@ -82,6 +82,18 @@ exception reaches the caller unchanged.
 - Good: every run can be stopped from a terminal in one command; a runaway loop stops at
   the cap before its next call; a digest shows what needs attention without opening the
   inbox; the logs can move to Postgres with one env var and one import.
+- A run that ended as failed is shown (second review, 2026-11-24): ending the run on a
+  budget stop made it neither waiting nor stopped, so nothing told the human that no
+  draft was coming. The inbox lists runs that ended with a failed result in the last 7
+  days (read from the checkpointer: a failed first pass from another process and a
+  restart are covered), the digest has a Failed section, and a revision that ends
+  failed is logged at ERROR.
+- Log setup is explicit and loud: the Postgres adapters' `setup()` runs once when the
+  inbox starts and before the content agent's first run, and may raise; later write
+  errors are logged and never undo a decision. Construction still does no I/O.
+- `KillSwitch.from_env()` warns when a file exists at the first default
+  (`./.data/kill_switch`) and not at the current one. `proofline golden`'s budget caps
+  each item, not the whole run.
 - Known limit: a pass cut off by something other than its budget (a timeout, a crash,
   the kill switch) still loses that pass's usage with its state update; the earlier
   passes' usage is kept, and such a run continues only by a manual Retry or once per

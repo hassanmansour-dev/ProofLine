@@ -311,7 +311,8 @@ branch `c10/staging-jobs` (Hassan's go, 2026-11-23); nothing here waits on C9.
   spend recorded. Not covered: `proofline run`, and the usage of a pass cut off by a
   timeout or crash (ADR-0023)
 - [x] Review of the integration branch (2026-11-24): two blockers, six should-fixes and
-  three nits fixed, each with a test (ADR-0022 §5b, ADR-0023)
+  three nits fixed, each with a test (ADR-0022 §5b, ADR-0023); second review: failed
+  runs shown in the inbox and the digest, log setup at start-up
 - [x] Digests: read-only Markdown (waiting, stopped, drafts to paste, cost, kill switch),
   `worker digest` once or `worker run` at 07:00 and 21:00 America/Toronto, written to
   `outputs/digests/`
