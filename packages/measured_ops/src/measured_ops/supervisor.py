@@ -348,13 +348,16 @@ def build_supervisor(
         return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
-        decided = {d.action_id for d in state.get("decisions") or []}
-        reused = sorted(a.id for a in state["results"][-1].actions if a.id in decided)
+        # Decisions, outcomes and revisions are all keyed by action id, so an id from an
+        # earlier round could match an old rejection (and revise again, C8 review) or an
+        # old outcome (and an approved action would silently never run). Ids are new
+        # every round.
+        seen = {a.id for r in state["results"][:-1] for a in r.actions}
+        seen |= {d.action_id for d in state.get("decisions") or []}
+        reused = sorted(a.id for a in state["results"][-1].actions if a.id in seen)
         if reused:
-            # Revisions key on action ids: a reused id could match an earlier round's
-            # rejection and revise again (C8 review). Ids must be new every round.
             raise AgentContractError(
-                f"agent {state['task'].agent!r} reused already-decided action ids {reused}"
+                f"agent {state['task'].agent!r} reused action ids {reused} from an earlier round"
             )
         for action in state["results"][-1].actions:
             check_executable(action)

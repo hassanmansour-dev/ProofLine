@@ -4,21 +4,37 @@ one per step; failures stop the run loudly; nothing runs twice."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.graph import END, StateGraph
+from langgraph.graph import START as GRAPH_START
 from langgraph.types import Command
 from ops_fakes import ScriptedAgent, make_task
 from tool_fakes import FakeCalendar, FakeJira, TriageStubAgent, fake_executors
 
-from measured_ops import AgentContractError, ApprovalDecision, initial_ops_state, load_policy
+from measured_ops import (
+    AgentContractError,
+    AgentInput,
+    AgentOutput,
+    AgentResult,
+    ApprovalDecision,
+    initial_ops_state,
+    load_policy,
+)
 from measured_ops.contracts import SERDE_ALLOWLIST, ActionOutcome, Task
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.supervisor import build_supervisor, route_after_gate
 from measured_ops.tools.errors import ToolError, ToolUnavailableError
 from measured_ops.tools.executors import Executors
+
+
+class _S(TypedDict, total=False):
+    task: Task
+    result: AgentResult
+
 
 pytestmark = pytest.mark.anyio
 CFG: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
@@ -218,3 +234,39 @@ def test_router_runs_ready_actions_before_anything_else() -> None:
         ActionOutcome(action_id=action.id, type=action.type, status="manual", detail="x")
     ]
     assert route_after_gate(state, 3) == "gate"
+
+
+async def test_an_action_id_from_an_earlier_round_is_refused() -> None:
+    # Review: outcomes are keyed by action id, so a reused id would look already executed
+    # and an approved action would silently never run.
+    from ops_fakes import make_action
+
+    class ReusingAgent:
+        name = "echo"
+
+        def build(self) -> Any:
+            async def propose(state: _S) -> dict[str, Any]:
+                task = state["task"]
+                auto = make_action(task.id, id="same-id", type="draft_content", preview="Draft.")
+                ask = make_action(task.id, type="publish_public", preview="Post.")
+                result = AgentResult(
+                    task_id=task.id,
+                    agent="echo",
+                    status="succeeded",
+                    summary="x",
+                    actions=(auto, ask),
+                )
+                return {"result": result}
+
+            builder = StateGraph(_S, input_schema=AgentInput, output_schema=AgentOutput)
+            builder.add_node("propose", propose)
+            builder.add_edge(GRAPH_START, "propose")
+            builder.add_edge("propose", END)
+            return builder.compile()
+
+    app = _app(ReusingAgent(), None)
+    out = await app.ainvoke(initial_ops_state(make_task()), CFG)
+    assert [o.action_id for o in out["executed"]] == ["same-id"]
+
+    with pytest.raises(AgentContractError, match=r"reused action ids \['same-id'\]"):
+        await app.ainvoke(_answer(out, approved=False, feedback="Shorter."), CFG)
