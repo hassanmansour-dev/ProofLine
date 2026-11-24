@@ -98,7 +98,11 @@ came from the fake writer. Its values are placeholders, tagged `needs_eval`
 ### Making it real (Hassan)
 
 1. Approve golden items (`GOLDEN_SET.md`). Done for all 20 on 2026-11-17.
-2. Run the real pipeline on the approved items and save each output as `<item-id>.md`.
+2. Run the real pipeline on the approved items and save each output as `<item-id>.md`:
+   `uv run proofline golden --out outputs/golden/run1` (real models: keys and cost). Each
+   item uses its own fixture sources, no search; items already saved are skipped, so a
+   stopped run resumes; `--item ID` runs one. It also writes `critic_scores.json`, the
+   critic-scores file `calibration-sheet` reads ([`CALIBRATION.md`](CALIBRATION.md)).
 3. `uv run python -m measured_evals run --approved-only --outputs DIR --write-draft-baseline evals/baselines/content_v0.json`
 4. Read the result. If you accept it, set `status` to `real` on the file and on each
    entry, fill `source` (which run) and `approved_by`, and point the workflow at it.

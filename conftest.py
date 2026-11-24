@@ -57,3 +57,48 @@ def _kill_switch_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     """Every supervisor honours the kill switch (C10, ADR-0023); tests use their own, so a
     switch Hassan engaged in `.data/` never fails a test run, and no test can engage his."""
     monkeypatch.setenv("MEASURED_OPS_KILL_SWITCH_PATH", str(tmp_path / "kill_switch"))
+
+
+class _OfflineAdapter:
+    """A requests transport that answers every request locally (200, `{}`) and records it."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def send(self, request: Any, **kwargs: Any) -> Any:
+        import requests
+
+        self.sent.append(str(request.url))
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b"{}"
+        response.headers["Content-Type"] = "application/json"
+        response.url = str(request.url)
+        response.request = request
+        return response
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _langsmith_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fast tests never reach LangSmith, even with tracing switched on and a fake key: the
+    masked tracer's client gets a session whose transport answers locally."""
+    try:  # measured_ops isn't installed in measured_evals' standalone CI run
+        import requests
+        from langsmith import Client
+
+        import measured_ops.tracing as tracing
+    except ImportError:
+        return
+
+    def offline_client(**kwargs: Any) -> Client:
+        client = Client(session=requests.Session(), **kwargs)
+        # mounted after construction: the client mounts its own retrying adapter in __init__
+        adapter = _OfflineAdapter()
+        client.session.mount("https://", adapter)  # type: ignore[arg-type]
+        client.session.mount("http://", adapter)  # type: ignore[arg-type]
+        return client
+
+    monkeypatch.setattr(tracing, "Client", offline_client)

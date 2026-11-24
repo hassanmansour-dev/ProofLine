@@ -37,7 +37,8 @@ packages/
 ```
 
 Dependencies point one way: **proofline → measured_ops → measured_evals**, never
-back (ADR-0014; `proofline` depends on `measured_ops` since C8). The
+back (ADR-0014; `proofline` depends on `measured_ops` since C8, and declares
+`measured_evals` directly since the golden-set runner reads its golden sets). The
 supervisor gets agents injected, so `measured_ops` never imports `proofline`
 (`packages/measured_ops/tests/test_ops_boundary.py`). `measured_evals` is published
 as open source at launch and reused by a separate web app (Measured Lab), so it
@@ -116,6 +117,9 @@ guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries 
   `max_sources`, truncates, **assigns `S1..Sn` in code**, and makes one structured LLM
   call for findings. Sources reach the model inside escaped `<source>` tags, as
   untrusted data.
+- `FixtureResearcher` (`proofline golden` only): a golden item's own fixture sources, ids
+  kept as written, findings from the same `extract_findings` call as `WebResearcher`; an
+  item with no sources gets empty notes and no call.
 - ⟶ Content agent v1 (GROW-9): a web-search agent behind the same protocol; graph.py doesn't change.
 
 **writer** — reads `outline, research_notes, run_config` (+ `draft, critique,
@@ -168,6 +172,13 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 ## 9. Interfaces
 
 **CLI** (`cli.py`, Typer):
+- `proofline golden --out outputs/golden/<run> [--item ID] [--all] [--overwrite]`
+  (`golden.py`, GROW-14): the full pipeline on each approved golden item, with
+  `research/fixture.py`'s `FixtureResearcher` (the item's own sources, ids kept as written,
+  findings from the same `extract_findings` step `WebResearcher` uses; no search). Saves
+  `<item-id>.md` (title, hook, body, call to action; no Sources list) and
+  `critic_scores.json`, under `outputs/` only; skips items already saved; a failed item
+  is reported and the rest run. `measured_evals run --outputs` checks the files.
 - `proofline propose --topic … --audience …` (C8) runs the supervisor with the content
   agent against the inbox's database (`MEASURED_OPS_INBOX_CHECKPOINTER_URL`), masked
   tracing on, and prints the run's id once the draft waits at the gate; a failed draft
