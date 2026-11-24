@@ -210,9 +210,9 @@ async def test_executors_apply_a_move_and_a_block_over_mcp(
         ),
     )
 
-    moved = await executors.run(move, [])
-    added = await executors.run(block, [])
-    again = await executors.run(block.model_copy(update={"id": "other"}), [])  # fresh run
+    moved = await executors.run(move)
+    added = await executors.run(block)
+    again = await executors.run(block.model_copy(update={"id": "other"}))  # fresh run
 
     data = state.load()
     assert moved.status == "applied"

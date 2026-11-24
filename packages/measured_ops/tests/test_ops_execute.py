@@ -213,11 +213,9 @@ async def test_a_revision_re_proposing_an_approved_action_does_not_run_it_twice(
     # revision 1 proposes the same move and the same block again
     assert agent.runs == 2
     out = await app.ainvoke(_answer(out, approved=True), CFG)  # the move, again
-    calls_before = len(jira.calls)
 
     statuses = [(o.type, o.status) for o in out["executed"]]
     assert statuses == [("triage_ticket", "applied"), ("triage_ticket", "already_applied")]
-    assert len(jira.calls) == calls_before
     assert len([w for w in jira.writes if w[0] == "transition"]) == 1
 
 

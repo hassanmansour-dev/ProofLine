@@ -109,23 +109,23 @@ def test_registry_refuses_approve_draft_and_unknown_types() -> None:
 
 
 async def test_types_without_a_spec_are_manual() -> None:
-    outcome = await execute_action(make_action("t", type="approve_draft"), None, [])
+    outcome = await execute_action(make_action("t", type="approve_draft"), None)
     assert (outcome.status, outcome.detail) == (
         "manual",
         "approved draft: pasted by hand, never executed",
     )
-    outcome = await execute_action(make_action("t", type="publish_public"), None, [])
+    outcome = await execute_action(make_action("t", type="publish_public"), None)
     assert outcome.status == "manual"
 
 
 async def test_an_executable_type_never_runs_without_tools() -> None:
     action = TRIAGE.propose("t", _move())
     with pytest.raises(ToolConfigError, match="no tools are configured"):
-        await execute_action(action, None, [])
+        await execute_action(action, None)
     jira = FakeJira()
     only_calendar = Executors([CalendarBlockExecutor(FakeCalendar(), FakeCalendar())], SCOPE)
     with pytest.raises(ToolConfigError, match="no executor configured for triage_ticket"):
-        await execute_action(action, only_calendar, [])
+        await execute_action(action, only_calendar)
     assert jira.calls == []
 
 
@@ -134,32 +134,46 @@ async def test_re_checked_before_running() -> None:
     executors = fake_executors(jira)
     tampered = TRIAGE.propose("t", _move()).model_copy(update={"preview": "Looks harmless."})
     with pytest.raises(AgentContractError):
-        await execute_action(tampered, executors, [])
+        await execute_action(tampered, executors)
     with pytest.raises(ScopeError):
-        await execute_action(TRIAGE.propose("t", _move("OTHER-1")), executors, [])
+        await execute_action(TRIAGE.propose("t", _move("OTHER-1")), executors)
     assert jira.calls == []
 
 
-async def test_same_change_proposed_again_is_already_applied_without_a_call() -> None:
+async def test_same_change_proposed_again_is_already_applied_without_a_write() -> None:
     # ADR-0019: a revision may re-propose an approved action; it must not run twice
     jira = FakeJira()
     executors = fake_executors(jira)
-    first = await execute_action(TRIAGE.propose("t1", _move(reason="A")), executors, [])
-    calls = len(jira.calls)
+    first = await execute_action(TRIAGE.propose("t1", _move(reason="A")), executors)
+    writes = len(jira.writes)
 
-    again = await execute_action(TRIAGE.propose("t2", _move(reason="B")), executors, [first])
+    again = await execute_action(TRIAGE.propose("t2", _move(reason="B")), executors)
 
     assert first.status == "applied"
-    assert again.status == "already_applied"
+    assert again.status == "already_applied"  # found in place by reading the tracker
     assert again.key == first.key
-    assert first.action_id in again.detail
-    assert len(jira.calls) == calls
+    assert len(jira.writes) == writes
 
 
 async def test_outcome_for_a_block_carries_the_event_id() -> None:
     cal = FakeCalendar()
     outcome = await execute_action(
-        CALENDAR_BLOCK.propose("t", _block()), fake_executors(FakeJira(), cal), []
+        CALENDAR_BLOCK.propose("t", _block()), fake_executors(FakeJira(), cal)
     )
     assert outcome.status == "applied"
     assert outcome.ref == cal.events["personal"][0].id
+
+
+async def test_a_re_proposed_change_is_checked_against_the_tracker_not_the_runs_memory() -> None:
+    # Review: an earlier "applied" outcome is stale evidence. If the ticket was moved back
+    # since, the same change proposed and approved again must be applied again.
+    jira = FakeJira()
+    executors = fake_executors(jira)
+    first = await execute_action(TRIAGE.propose("t1", _move(reason="A")), executors)
+    assert first.status == "applied"
+    jira.issues["DEMO-1"]["status"] = "To Do"  # someone moved it back in Jira
+
+    again = await execute_action(TRIAGE.propose("t2", _move(reason="B")), executors)
+
+    assert again.status == "applied"
+    assert jira.issues["DEMO-1"]["status"] == "In Progress"

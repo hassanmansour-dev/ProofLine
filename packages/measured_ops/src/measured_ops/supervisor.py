@@ -427,7 +427,7 @@ def build_supervisor(
             # retried: the run stops here with the decision saved, and the action runs
             # once after release. A "manual" outcome runs nothing, so it isn't stopped.
             switch.check()
-        outcome = await execute_action(action, executors, state.get("executed") or [])
+        outcome = await execute_action(action, executors)
         return {"executed": [outcome]}
 
     async def revise(state: OpsState) -> dict[str, Any]:

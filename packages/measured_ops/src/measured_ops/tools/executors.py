@@ -11,10 +11,11 @@ the `ActionOutcome`. Rules:
   dropped as "manual".
 - **Re-checked before it runs**: params, target and preview (`spec.check`), then scope
   (configured projects and calendars). A mismatch or a scope breach raises.
-- **Idempotent.** A change already applied in this run (same identity key: a revision
-  re-proposing an approved action) is "already_applied" without a tool call. Otherwise each
-  executor reads first and writes only what differs, so a retry after a crash between the
-  write and the checkpoint finds the change in place and records "already_applied".
+- **Idempotent, by reading the system itself.** Each executor reads first and writes only
+  what differs, so a retry after a crash between the write and the checkpoint, or a
+  revision re-proposing a change that was already applied, finds it in place and records
+  "already_applied". An earlier outcome in the run is never taken as proof: the ticket may
+  have been changed since, and the human approved the change again.
 - **Verified.** The triage executor re-reads the issue after writing and raises if the
   change didn't take.
 """
@@ -22,7 +23,7 @@ the `ActionOutcome`. Rules:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -180,20 +181,10 @@ class Executors:
         spec.check_scope(params, self.scope)
         return params
 
-    async def run(self, action: PendingAction, done: Sequence[ActionOutcome]) -> ActionOutcome:
+    async def run(self, action: PendingAction) -> ActionOutcome:
         params = self.check(action)
         spec = SPECS[action.type]
         key = spec.key(params)
-        for prior in done:
-            if prior.key == key and prior.status in ("applied", "already_applied"):
-                return ActionOutcome(
-                    action_id=action.id,
-                    type=action.type,
-                    status="already_applied",
-                    key=key,
-                    detail=f"same change as action {prior.action_id}, already applied",
-                    ref=prior.ref,
-                )
         result = await self._by_type[action.type].run(params)
         return ActionOutcome(
             action_id=action.id,
@@ -214,9 +205,7 @@ def manual_outcome(action: PendingAction) -> ActionOutcome:
     return ActionOutcome(action_id=action.id, type=action.type, status="manual", detail=detail)
 
 
-async def execute_action(
-    action: PendingAction, executors: Executors | None, done: Sequence[ActionOutcome]
-) -> ActionOutcome:
+async def execute_action(action: PendingAction, executors: Executors | None) -> ActionOutcome:
     """The outcome of one ready action. Raises (and so stops the run) on any failure."""
     if action.type not in SPECS:
         return manual_outcome(action)
@@ -225,7 +214,7 @@ async def execute_action(
             f"action {action.id} is {action.type}, which only runs through a configured "
             "executor, and no tools are configured (MEASURED_OPS_TOOLS_CONFIG)"
         )
-    outcome = await executors.run(action, done)
+    outcome = await executors.run(action)
     # ids, type and status only: details can name calendars, targets can be personal
     log.info("tools: action %s (%s) %s", action.id, action.type, outcome.status)
     return outcome
