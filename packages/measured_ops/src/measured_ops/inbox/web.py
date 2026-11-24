@@ -392,7 +392,12 @@ def create_inbox_app(
         ran = (" Applied." if "applied" in statuses else "") + (
             " Already in place." if "already_applied" in statuses else ""
         )
-        if outcome.failed:
+        if outcome.kill_switch:
+            more = (
+                " The kill switch is on, so it did not run: the run is under Stopped;"
+                " Retry after the switch is released."
+            )
+        elif outcome.failed:
             more = " Running it failed: the run is under Stopped; Retry when the tool is back."
         elif outcome.revising:
             more = f"{ran} Revising: the new draft comes back here when it's ready."

@@ -132,3 +132,61 @@ async def test_approving_the_last_action_of_a_revised_round_runs_it_then_revises
     assert agent.runs == 2  # the revision ran (in the background)
     [again] = await inbox.list_pending()
     assert again.revision == 1
+
+
+async def test_kill_switch_stops_an_approved_write_until_it_is_released() -> None:
+    # Review B1: the switch must stop writes, not only agent runs.
+    from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
+
+    jira = FakeJira()
+    graph, inbox = _setup(jira)
+    await _start(graph)
+    [item] = await inbox.list_pending()
+    switch = KillSwitch.from_env()
+    switch.engage("testing")
+
+    outcome = await inbox.decide(
+        "t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+    )
+
+    assert outcome.failed
+    assert outcome.kill_switch
+    assert jira.writes == []
+    assert jira.issues["DEMO-1"]["status"] == "To Do"
+    snap = await graph.aget_state({"configurable": {"thread_id": "t"}})
+    assert snap.next == ("execute",)  # stopped there, the decision saved
+    assert [d.approved for d in snap.values["decisions"]] == [True]
+    with pytest.raises(KillSwitchEngaged):
+        await inbox.retry("t")
+    assert jira.writes == []
+
+    switch.release()
+    await inbox.retry("t")
+    await inbox.wait_idle()
+
+    snap = await graph.aget_state({"configurable": {"thread_id": "t"}})
+    assert [o.status for o in snap.values["executed"]] == ["applied"]
+    assert len([w for w in jira.writes if w[0] == "transition"]) == 1
+
+
+async def test_kill_switch_does_not_block_a_manual_outcome() -> None:
+    # Nothing runs for a type without an executor, so recording it is not stopped.
+    from ops_fakes import ScriptedAgent, make_task
+
+    from measured_ops.killswitch import KillSwitch
+
+    saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=SERDE_ALLOWLIST))
+    agent = ScriptedAgent([("approve_draft", "medium", "## LinkedIn post\nText.")])
+    graph = build_supervisor([agent], load_policy()).compile(checkpointer=saver)
+    cfg: Any = {"configurable": {"thread_id": "t"}, "recursion_limit": 40}
+    await graph.ainvoke(initial_ops_state(make_task()), cfg)
+    inbox = Inbox(graph, load_policy(), callbacks=[])
+    [item] = await inbox.list_pending()
+    KillSwitch.from_env().engage("testing")
+
+    outcome = await inbox.decide(
+        "t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True
+    )
+
+    assert not outcome.failed
+    assert [o.status for o in outcome.executed] == ["manual"]

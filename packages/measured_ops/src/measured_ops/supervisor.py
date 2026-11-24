@@ -386,6 +386,11 @@ def build_supervisor(
     async def execute(state: OpsState) -> dict[str, Any]:
         # One action per step: its outcome is checkpointed before the next one runs.
         action = unexecuted(state)[0]
+        if action.type in SPECS:
+            # The kill switch stops writes too, not only agent runs (ADR-0023). Not
+            # retried: the run stops here with the decision saved, and the action runs
+            # once after release. A "manual" outcome runs nothing, so it isn't stopped.
+            switch.check()
         outcome = await execute_action(action, executors, state.get("executed") or [])
         return {"executed": [outcome]}
 

@@ -55,7 +55,7 @@ from measured_evals import ModelPrice, total_by_agent
 from measured_evals.scores import DEFAULT_THRESHOLD
 from measured_ops.contracts import ActionOutcome, ApprovalDecision, OpsState, PendingAction, Task
 from measured_ops.judge_log import JudgeLog, judge_log_from_env
-from measured_ops.killswitch import KillSwitch
+from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.posted import PostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
@@ -236,6 +236,7 @@ class Outcome:
     revising: bool = False  # a rejection with feedback: the revision runs in the background
     executed: tuple[ActionOutcome, ...] = ()  # what ran during this decision (C5)
     failed: bool = False  # running an approved action failed: the run is stopped (C5)
+    kill_switch: bool = False  # ... because the kill switch is on (C10)
 
 
 def _cfg(thread_id: str) -> Any:
@@ -438,6 +439,20 @@ class Inbox:
                 before = len(snap.values.get("executed") or [])
                 try:
                     await self.graph.ainvoke(None, cfg, interrupt_before=["revise"])
+                except KillSwitchEngaged:
+                    log.warning(
+                        "inbox: run %s not continued: the kill switch is on; the decision "
+                        "stands and the action runs after release",
+                        thread_id,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id,
+                        approved=approved,
+                        still_paused=False,
+                        failed=True,
+                        kill_switch=True,
+                    )
                 except Exception:
                     log.exception(
                         "inbox: run %s stopped while running an approved action; "

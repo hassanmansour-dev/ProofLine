@@ -82,3 +82,16 @@ def test_a_failed_run_says_where_it_is(client: TestClient, jira: FakeJira) -> No
     assert "Stopped (timeout, error or restart)" in page
     assert "/r/t1/retry" in page  # the Retry button
     assert jira.issues["DEMO-1"]["status"] == "To Do"
+
+
+def test_the_page_says_when_the_kill_switch_stopped_it(client: TestClient, jira: FakeJira) -> None:
+    from measured_ops.killswitch import KillSwitch
+
+    login(client)
+    html = client.get("/a/t1").text
+    KillSwitch.from_env().engage("testing")
+
+    decide(client, html, "approve")
+
+    assert "The kill switch is on, so it did not run" in client.get("/").text
+    assert jira.writes == []
