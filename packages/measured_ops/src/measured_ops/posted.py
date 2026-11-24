@@ -12,9 +12,16 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 DEFAULT_PATH = Path(".data/posted.jsonl")
 ENV = "MEASURED_OPS_POSTED_PATH"
+
+
+class PostedLog(Protocol):
+    def mark(self, action_id: str) -> None: ...
+
+    def posted(self) -> set[str]: ...
 
 
 class JsonlPostedLog:
@@ -44,6 +51,11 @@ class JsonlPostedLog:
         return ids
 
 
-def posted_log_from_env() -> JsonlPostedLog:
+def posted_log_from_env() -> PostedLog:
+    """Postgres when `MEASURED_OPS_LOGS_URL` is set (C10), else the JSONL file."""
+    if os.environ.get("MEASURED_OPS_LOGS_URL", "").strip():
+        from measured_ops.pg_logs import PostgresPostedLog
+
+        return PostgresPostedLog(os.environ["MEASURED_OPS_LOGS_URL"].strip())
     raw = os.environ.get(ENV)
     return JsonlPostedLog(Path(raw) if raw else DEFAULT_PATH)

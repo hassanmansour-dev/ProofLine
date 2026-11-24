@@ -50,6 +50,7 @@ known-first-party = ["proofline", "measured_ops", "measured_evals", "tests", "sc
 "scripts/pii_scan.py" = ["T20"]
 "packages/measured_ops/src/measured_ops/inbox/__main__.py" = ["T20"]
 "packages/measured_ops/src/measured_ops/tools/__main__.py" = ["T20"]
+"packages/measured_ops/src/measured_ops/worker.py" = ["T20"]
 
 [tool.mypy]
 python_version = "3.12"

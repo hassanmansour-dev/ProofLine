@@ -51,6 +51,7 @@ from measured_ops.inbox.auth import LoginThrottle, verify_passphrase
 from measured_ops.inbox.service import AlreadyDecided, Inbox, NotReady, PendingItem, Refused
 from measured_ops.inbox.settings import InboxSettings, single_process_lock
 from measured_ops.judge_log import JudgeLog
+from measured_ops.killswitch import KillSwitchEngaged
 from measured_ops.policy import ApprovalPolicy
 from measured_ops.supervisor import build_supervisor
 from measured_ops.tools.executors import Executors
@@ -434,6 +435,13 @@ def create_inbox_app(
             await inbox(request).retry(thread_id)
         except AlreadyDecided:
             return message(request, 409, "Not stopped", "This run isn't stopped. Nothing changed.")
+        except KillSwitchEngaged:
+            return message(
+                request,
+                409,
+                "Kill switch is on",
+                "Nothing runs until the kill switch is released. Nothing changed.",
+            )
         request.session["flash"] = "Retrying."
         return RedirectResponse("/", status_code=303)
 

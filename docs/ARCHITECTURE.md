@@ -4,7 +4,8 @@ Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
 built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018); **content agent and
 same-thread revisions built** (C8, ADR-0019); **MCP tools and the execute node built**
-(C5, ADR-0022). Sections 3–11
+(C5, ADR-0022); **kill switch, per-run budget, digests and Postgres logs built** (C10 parts,
+ADR-0023). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
 interface, the approval policy, the supervisor, its eval node, its gate, the tools and
@@ -424,6 +425,28 @@ number fails closed (END, logged).
 - e2e (`tests/test_tools_e2e.py`): an agent reads the demo tracker over stdio MCP,
   proposes a move, the run pauses in another process, approval applies it (and a
   rejection doesn't; "auto" applies without pausing), on SQLite and Postgres.
+
+**Staging pieces** (C10, ADR-0023).
+- Kill switch (`killswitch.py`): a file (`MEASURED_OPS_KILL_SWITCH_PATH`, default
+  `.data/kill_switch`). `build_supervisor(..., kill_switch=...)` defaults to
+  `KillSwitch.from_env()`; `call_agent` raises `KillSwitchEngaged` before any agent runs
+  (the run is resumable after release). The inbox refuses Retry and skips its start-up
+  sweep while it's on.
+- Budget (`budget.py`): `build_supervisor(..., budget=Budget(...), prices=...)` checks the
+  run's `usage` before each agent run and, through a `raise_error` callback set in a
+  context variable, before every model call inside it (`guard_budget`). The calls cap
+  counts the call about to be made; tokens and cost use spend so far; unknown cost fails
+  closed. `load_budget(path)` / `MEASURED_OPS_BUDGET_PATH`; demo table
+  `config/budget.demo.toml` (placeholder values).
+- Digest (`digest.py`): `build_digest(inbox, prices=, kill_switch=)` → Markdown from the
+  inbox service (waiting, stopped, in progress, drafts not posted, cost of runs active in
+  the window, kill switch); no targets. `FileDigestSink(dir)` writes it.
+- Worker (`worker.py`, `python -m measured_ops.worker`): `digest`, `run` (07:00 and
+  21:00 America/Toronto by default, per-day local times, lock file), `kill`, `release`,
+  `status`, `import-logs`. Runs no agent.
+- Postgres logs (`pg_logs.py`): `PostgresJudgeLog`, `PostgresPostedLog` behind the same
+  ports, chosen by `MEASURED_OPS_LOGS_URL` in `judge_log_from_env` / `posted_log_from_env`;
+  tables created if missing; `import_jsonl` is idempotent.
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool

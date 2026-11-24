@@ -33,12 +33,19 @@ Put both in your local env file (never committed), plus where the runs are:
 | `MEASURED_OPS_JUDGE_LOG_PATH` | no | `.data/judge_log.jsonl` (ids, scores, decisions; no text) |
 | `MEASURED_OPS_POSTED_PATH` | no | `.data/posted.jsonl` (drafts you marked as posted) |
 | `MEASURED_OPS_TOOLS_CONFIG` | no | none: approved ticket moves and calendar blocks can't run (C5, ADR-0022) |
+| `MEASURED_OPS_LOGS_URL` | no | unset: the two JSONL files above; `postgresql://...` keeps both in Postgres (C10) |
+| `MEASURED_OPS_KILL_SWITCH_PATH` | no | `.data/kill_switch`: while it exists no agent runs (C10) |
+| `MEASURED_OPS_BUDGET_PATH` | no | unset: no caps; a budget table caps each run (C10) |
 
 With `MEASURED_OPS_TOOLS_CONFIG` pointing at a tools config (the real one lives in
 measured-ops-private), approving a ticket move or a calendar block runs it before the
 page answers. Check a config first: `uv run python -m measured_ops.tools check --config
 <path>` lists each server's tools and calls none of them. The config names the env vars
 that hold each server's credentials; it never holds them.
+
+Stop everything with `uv run python -m measured_ops.worker kill --reason "..."` and resume
+with `... worker release`; `... worker status` shows the switch, the budget and where the
+logs go. `... worker run` writes a digest to `outputs/digests/` at 07:00 and 21:00.
 
 The inbox refuses to start if either secret is missing or unusable. To use your
 local Postgres, set `MEASURED_OPS_INBOX_CHECKPOINTER_URL=postgresql://...` and give the
