@@ -190,3 +190,41 @@ async def test_kill_switch_does_not_block_a_manual_outcome() -> None:
 
     assert not outcome.failed
     assert [o.status for o in outcome.executed] == ["manual"]
+
+
+async def test_a_hanging_execution_is_cut_off_and_the_run_is_stopped() -> None:
+    # Review: the continuation after a decision had no time bound, so a hanging tool
+    # held the phone's request (and the thread's lock) forever.
+    import asyncio
+
+    jira = FakeJira()
+    graph, _ = _setup(jira)
+    await _start(graph)
+    inbox = Inbox(graph, load_policy(), callbacks=[], execute_timeout_s=0.05)
+    [item] = await inbox.list_pending()
+    real_get = jira.get_issue
+    hang = True
+
+    async def slow_get(key: str) -> Any:
+        if hang:
+            await asyncio.sleep(30)
+        return await real_get(key)
+
+    jira.get_issue = slow_get  # type: ignore[method-assign]
+
+    outcome = await asyncio.wait_for(
+        inbox.decide("t", interrupt_id=item.interrupt_id, action_id=item.action_id, approved=True),
+        timeout=5,
+    )
+
+    assert outcome.failed
+    assert outcome.timed_out
+    [status] = await inbox.in_progress()
+    assert status.state == "stopped"
+    assert jira.writes == []
+
+    hang = False
+    await inbox.retry("t")
+    await inbox.wait_idle()
+    assert jira.issues["DEMO-1"]["status"] == "In Progress"
+    assert len([w for w in jira.writes if w[0] == "transition"]) == 1

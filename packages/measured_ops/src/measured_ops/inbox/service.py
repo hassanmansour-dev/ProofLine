@@ -66,6 +66,7 @@ log = logging.getLogger("measured_ops.inbox")
 
 RECURSION_LIMIT = 40
 DEFAULT_REVISION_TIMEOUT_S = 600.0
+DEFAULT_EXECUTE_TIMEOUT_S = 120.0  # running approved actions after one decision
 RunState = Literal["queued", "running", "stopped", "elsewhere"]
 
 
@@ -237,6 +238,7 @@ class Outcome:
     executed: tuple[ActionOutcome, ...] = ()  # what ran during this decision (C5)
     failed: bool = False  # running an approved action failed: the run is stopped (C5)
     kill_switch: bool = False  # ... because the kill switch is on (C10)
+    timed_out: bool = False  # ... because it took longer than the execute timeout
 
 
 def _cfg(thread_id: str) -> Any:
@@ -263,6 +265,7 @@ class Inbox:
         prices: Mapping[str, ModelPrice] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
+        execute_timeout_s: float = DEFAULT_EXECUTE_TIMEOUT_S,
         judge_log: JudgeLog | None = None,
         max_revisions: int = DEFAULT_MAX_REVISIONS,
         posted: PostedLog | None = None,
@@ -277,6 +280,7 @@ class Inbox:
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self.revision_timeout_s = revision_timeout_s
+        self.execute_timeout_s = execute_timeout_s  # running approved actions, per decision
         self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
         self.posted = posted_log_from_env() if posted is None else posted
         self.paste_types = paste_types
@@ -439,7 +443,26 @@ class Inbox:
                 # stop before a revision, which goes to the background below.
                 before = len(snap.values.get("executed") or [])
                 try:
-                    await self.graph.ainvoke(None, cfg, interrupt_before=["revise"])
+                    await asyncio.wait_for(
+                        self.graph.ainvoke(None, cfg, interrupt_before=["revise"]),
+                        timeout=self.execute_timeout_s,
+                    )
+                except TimeoutError:
+                    # Cut off, possibly mid-write: Retry is safe, executors read first.
+                    log.error(
+                        "inbox: run %s: running an approved action took over %ss; stopped "
+                        "(the decision stands; retry from the inbox)",
+                        thread_id,
+                        self.execute_timeout_s,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id,
+                        approved=approved,
+                        still_paused=False,
+                        failed=True,
+                        timed_out=True,
+                    )
                 except KillSwitchEngaged:
                     log.warning(
                         "inbox: run %s not continued: the kill switch is on; the decision "

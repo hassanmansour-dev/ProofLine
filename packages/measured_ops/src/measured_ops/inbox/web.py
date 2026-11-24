@@ -133,6 +133,7 @@ def create_inbox_app(
                     policy,
                     prices=prices,
                     revision_timeout_s=settings.revision_timeout_s,
+                    execute_timeout_s=settings.execute_timeout_s,
                     judge_log=judge_log,
                 )
                 log.info("inbox: serving runs from %s", settings.checkpointer_url.split(":")[0])
@@ -397,6 +398,8 @@ def create_inbox_app(
                 " The kill switch is on, so it did not run: the run is under Stopped;"
                 " Retry after the switch is released."
             )
+        elif outcome.timed_out:
+            more = " Running it took too long and was cut off: the run is under Stopped; Retry."
         elif outcome.failed:
             more = " Running it failed: the run is under Stopped; Retry when the tool is back."
         elif outcome.revising:
