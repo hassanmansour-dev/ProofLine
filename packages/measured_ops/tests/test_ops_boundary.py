@@ -55,3 +55,22 @@ def test_the_base_package_never_imports_mcp() -> None:
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_tests_never_see_the_developers_runtime_config() -> None:
+    # Review: with these exported in a shell, tests could write real Postgres logs,
+    # run under a real budget or start real MCP servers. The root conftest clears them.
+    import os
+
+    for name in ("MEASURED_OPS_LOGS_URL", "MEASURED_OPS_BUDGET_PATH", "MEASURED_OPS_TOOLS_CONFIG"):
+        assert name not in os.environ, name
+
+
+def test_tests_cannot_open_postgres_logs_outside_the_test_database() -> None:
+    import pytest
+
+    from measured_ops.pg_logs import PostgresJudgeLog, PostgresPostedLog
+
+    for cls in (PostgresJudgeLog, PostgresPostedLog):
+        with pytest.raises(AssertionError, match="real Postgres logs"):
+            cls("postgresql://someone@db.example.com/ops")

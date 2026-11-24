@@ -53,6 +53,38 @@ def _no_writes_to_real_runtime_data() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_developer_runtime_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shell that exports these (to run the inbox) must not change what tests do: no
+    real Postgres logs, no real budget table, no real MCP servers. A test that needs one
+    sets it itself."""
+    for name in ("MEASURED_OPS_LOGS_URL", "MEASURED_OPS_BUDGET_PATH", "MEASURED_OPS_TOOLS_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _postgres_logs_only_in_the_test_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Postgres judge log and posted marks open only against the test database
+    (MEASURED_OPS_TEST_DATABASE_URL); any other Postgres URL is refused before a
+    connection is made."""
+    try:  # measured_ops isn't installed in measured_evals' standalone CI run
+        from measured_ops import pg_logs
+    except ImportError:
+        return
+    import os
+
+    original = pg_logs._Pg.__init__
+    test_db = os.environ.get("MEASURED_OPS_TEST_DATABASE_URL", "")
+
+    def guarded(self: Any, url: str, *args: Any, **kwargs: Any) -> None:
+        is_pg = url.startswith(("postgresql://", "postgres://"))
+        if is_pg and not (test_db and url.startswith(test_db)):
+            raise AssertionError("a test tried to open real Postgres logs; use the test database")
+        original(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(pg_logs._Pg, "__init__", guarded)
+
+
+@pytest.fixture(autouse=True)
 def _kill_switch_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every supervisor honours the kill switch (C10, ADR-0023); tests use their own, so a
     switch Hassan engaged in `.data/` never fails a test run, and no test can engage his."""
