@@ -217,6 +217,63 @@ def ready(
 
 
 @app.command()
+def golden(
+    out: Annotated[Path, typer.Option(help="Directory for <item-id>.md files, under outputs/")],
+    item: Annotated[
+        list[str] | None, typer.Option("--item", help="Only these item ids (repeatable)")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="Include items not approved yet (not for baselines)")
+    ] = False,
+    overwrite: Annotated[bool, typer.Option(help="Run items already saved again")] = False,
+) -> None:
+    """Run the real pipeline on the golden set and save one output per item.
+
+    Each item uses its own fixture sources (no search) and real models: this costs money.
+    Then check the outputs with `python -m measured_evals run --approved-only --outputs OUT`.
+    Items already saved are skipped, so a stopped run resumes where it left off.
+    """
+    from measured_evals.golden import load_golden_set
+    from proofline.golden import CRITIC_FILE, run_golden
+
+    deps = _deps_or_exit()
+    root = deps.settings.output_dir.resolve()
+    if not out.resolve().is_relative_to(root):
+        typer.echo(
+            f"error: --out must be under {deps.settings.output_dir}/ (git-ignored)", err=True
+        )
+        raise typer.Exit(code=1)
+    golden_set = load_golden_set()
+    try:
+        result = asyncio.run(
+            run_golden(
+                golden_set,
+                deps,
+                out,
+                approved_only=not all_items,
+                only=set(item) if item else None,
+                overwrite=overwrite,
+                progress=lambda item_id, what: typer.echo(f"{item_id}: {what}", err=True),
+            )
+        )
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"saved {len(result.written)}, skipped {len(result.skipped)}, failed {len(result.failed)} "
+        f"(golden set {golden_set.name}) in {out}/, critic scores in {out}/{CRITIC_FILE}"
+    )
+    for item_id, error in result.failed.items():
+        typer.echo(f"FAILED {item_id}: {error}", err=True)
+    typer.echo(
+        "next: uv run python -m measured_evals run --approved-only "
+        f"--outputs {out} --write-draft-baseline evals/baselines/content_v0.json"
+    )
+    if result.failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def inbox() -> None:
     """Serve the approval inbox with the content agent (127.0.0.1, one process).
 

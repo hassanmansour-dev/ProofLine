@@ -75,6 +75,24 @@ def _rank(results: list[SearchResult]) -> list[SearchResult]:
     return sorted(best.values(), key=lambda r: (r.score is None, -(r.score or 0.0)))
 
 
+async def extract_findings(
+    llm: StructuredLLM,
+    topic: str,
+    outline: Outline,
+    sources: list[Source],
+    run_config: RunConfig,
+) -> ExtractedFindings:
+    """One structured call: findings from `sources`, which reach the model inside escaped
+    `<source>` tags as untrusted data. Shared by every researcher that has sources."""
+    prompt = load_prompt("researcher").render(
+        topic=topic,
+        angle=outline.angle,
+        key_questions=bullet_list(outline.key_questions),
+        sources=sources_block(sources),
+    )
+    return await llm.generate(prompt, ExtractedFindings, role="researcher", run_config=run_config)
+
+
 class WebResearcher:
     def __init__(self, search: SearchClient, llm: StructuredLLM, *, concurrency: int = 4) -> None:
         if concurrency < 1:
@@ -108,15 +126,7 @@ class WebResearcher:
             log.warning("research: no usable sources for %d queries", len(outline.search_queries))
             return ResearchNotes(sources=[], findings=[], gaps=list(outline.key_questions))
 
-        prompt = load_prompt("researcher").render(
-            topic=topic,
-            angle=outline.angle,
-            key_questions=bullet_list(outline.key_questions),
-            sources=sources_block(sources),
-        )
-        extracted = await self._llm.generate(
-            prompt, ExtractedFindings, role="researcher", run_config=cfg
-        )
+        extracted = await extract_findings(self._llm, topic, outline, sources, cfg)
         log.info(
             "research: %d results -> %d sources, %d findings (%.1fs)",
             len(results),
