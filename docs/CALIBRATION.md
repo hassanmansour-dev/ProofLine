@@ -3,7 +3,9 @@
 Status: **the tool exists; no calibration has been run.** There is no agreement
 number for Proofline's critic yet. The only scores in the repo are a test fixture
 labelled synthetic (`packages/measured_evals/tests/fixtures/synthetic_critic_scores.json`),
-hand-typed to exercise the arithmetic.
+hand-typed to exercise the arithmetic. Golden run 1 (2026-11-24) produced real critic
+scores for the 20 approved items ([`evals/runs/golden-run-1.md`](../evals/runs/golden-run-1.md));
+no person has scored those outputs yet, so there is still nothing to compare.
 
 - Code: `measured_evals.calibration`
 - Tests: `packages/measured_evals/tests/test_calibration.py`

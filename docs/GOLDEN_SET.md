@@ -1,6 +1,6 @@
 # Golden set: 20 topics for cited technical scripts
 
-Status: **topics approved; nothing measured.** All 20 items are
+Status: **topics approved; one real run, not reviewed.** All 20 items are
 `status = "approved"`, approved by Hassan Mansour on 2026-11-17
 (`approved_by`, `approved_on`). They were drafted by an assistant (GROW-13) and
 approved as drafted.
@@ -10,12 +10,12 @@ What the approval means, and what it does not:
 | | |
 |---|---|
 | It means | These 20 cases, with their `expected` and `must_not` lines, are the ones the pipeline should be held to |
-| It does not mean | Any output has passed them. No real pipeline output has been run against this set |
-| Still a placeholder | The only baseline, `evals/baselines/content_v0.placeholder.json`: it came from a fake writer and is not enforced |
+| It does not mean | Any output has passed them. The one real run so far ([golden run 1](../evals/runs/golden-run-1.md), 2026-11-24) passed 0 of 20 on the deterministic tier |
+| Still a placeholder | The baseline CI prints against, `evals/baselines/content_v0.placeholder.json`: it came from a fake writer and is not enforced. Run 1's draft, `evals/baselines/content_v0.json`, is `needs_eval` and not enforced either |
 | Still unmeasured | Every `judge` assertion: the model-graded tier has never been run against a model |
 
-An approved question is not an answer. The first measured result needs a real run
-([`EVALS.md`](EVALS.md), "Making it real").
+An approved question is not an answer. The first measured result is a draft until
+the owner reviews it ([`EVALS.md`](EVALS.md), "Making it real", step 4).
 
 - Data: `packages/measured_evals/src/measured_evals/data/golden/content_v0.toml`
 - Format and loader: `measured_evals.golden` (`load_golden_set()`, `parse_golden_set()`)

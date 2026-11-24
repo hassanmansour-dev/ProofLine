@@ -27,9 +27,9 @@ no network). Nothing here publishes, deploys, spends or messages anyone.
 | Supervisor and approval gate | `measured_ops/supervisor.py` | Works: `call_agent → evaluate → triage → gate`, paused with `interrupt()`, resumed from a checkpoint (SQLite or Postgres) |
 | Eval/guard node | `measured_evals/checks.py`, run by the supervisor | Works: deterministic quality, prompt-injection and PII checks (guard-v0). No model |
 | Approval inbox, phone-sized | `measured_ops/inbox/` | Works: sign-in, list, preview with checks and cost, approve or reject with feedback, Ready to paste |
-| Golden set, 20 topics | `measured_evals/data/golden/content_v0.toml` | **Topics approved** by the owner (2026-11-17). No real output has been run against them ([`docs/GOLDEN_SET.md`](docs/GOLDEN_SET.md)) |
+| Golden set, 20 topics | `measured_evals/data/golden/content_v0.toml` | **Topics approved** by the owner (2026-11-17). One real run so far (2026-11-24): 0 of 20 outputs passed the deterministic tier; not reviewed ([`evals/runs/golden-run-1.md`](evals/runs/golden-run-1.md)) |
 | Deterministic eval tier | `python -m measured_evals run`, `.github/workflows/evals.yml` | Works in CI with a fake writer. **It measures no model** |
-| Regression baseline | `evals/baselines/content_v0.placeholder.json` | **Placeholder.** Reported, never enforced ([`docs/EVALS.md`](docs/EVALS.md)) |
+| Regression baseline | `evals/baselines/content_v0.placeholder.json`, `evals/baselines/content_v0.json` | **Placeholder**, and a **draft** from the first real run. Reported, never enforced ([`docs/EVALS.md`](docs/EVALS.md)) |
 
 Not built yet: MCP tools (Jira and calendar), scheduled runs with budget caps and a
 kill switch, and more agents. Built but not in use: the model-graded eval tier has
@@ -217,12 +217,14 @@ runs, so they come second and only when a key is present.
 
 - **Deterministic tier: in CI.** Structure, word limit, citations that resolve, no
   uncited body sentences, then each golden item's own assertions.
-- **Golden set: 20 approved topics, nothing measured.** 15 standard, 3 with
+- **Golden set: 20 approved topics, one real run.** 15 standard, 3 with
   injection bait, 2 unanswerable, with fixture sources written as demo data. The
-  owner approved the cases; no real pipeline output has been run against them, so
-  there is still no quality result.
-- **Baseline: placeholder.** It came from a fake writer that assembles text from
-  the fixture sources and passes by construction. It shows the set, the suite and
+  real pipeline ran on them once (2026-11-24): 0 of 20 outputs passed the
+  deterministic tier ([`evals/runs/golden-run-1.md`](evals/runs/golden-run-1.md)).
+  The result is not reviewed, so there is still no accepted quality result.
+- **Baseline: placeholder, plus an unreviewed draft from the real run.** The
+  placeholder came from a fake writer that assembles text from the fixture sources
+  and passes by construction. It shows the set, the suite and
   the format agree with each other. The comparison prints `NOT ENFORCED` and gates
   nothing until a reviewed, real baseline replaces it.
 - **Model-graded tier: built, never run against a model.** The `judge` assertions
@@ -246,7 +248,7 @@ Ordered steps, no dates. Each starts when the steps it depends on are done.
 | C9 | A week of real use (runs alongside C5) |
 | C10 | Scheduled runs with budget caps and a kill switch |
 | C11 | More agents, one at a time, same recipe |
-| Evals | Golden set approved (20 topics) and deterministic tier in CI (done; nothing measured yet); model-graded tier, critic calibration sheet, inbound injection screen and budget guard built (none run or wired in yet); next: a real run and a real baseline, calibration, wiring, auth |
+| Evals | Golden set approved (20 topics) and deterministic tier in CI (done); first real run 2026-11-24 (0 of 20 passed, not reviewed); model-graded tier, critic calibration sheet, inbound injection screen and budget guard built (none run or wired in yet); next: review of the first run and a real baseline, calibration, wiring, auth |
 | Launch | Case study, demo video, licence, `measured-evals` on PyPI · `v1.0.0` |
 
 Step detail: [`docs/PLAN.md`](docs/PLAN.md). Architecture:
@@ -260,7 +262,8 @@ packages/proofline/tests/           unit tests (fakes) + live tests
 packages/proofline/src/proofline/agent.py   the content agent (Task → approve_draft)
 packages/measured_ops/              contracts, policy (+ demo table), supervisor, inbox/
 packages/measured_evals/            checks, cost, golden set, suites, baseline
-evals/baselines/                    the placeholder baseline
+evals/baselines/                    the placeholder baseline and run 1's draft
+evals/runs/                         results of real golden runs
 docs/                               plan, architecture, ADRs, rubric, evals, golden set, inbox
 .claude/                            Claude Code setup: hooks, review agents, skills
 ```
