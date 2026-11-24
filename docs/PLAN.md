@@ -42,8 +42,8 @@ The content pipeline above becomes the seed of the **content agent** (C8). Its
 critic becomes the first rubric in the eval/guard node (C7).
 
 Open from the earlier Week 0–1:
-- [ ] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it).
-  The first live run's hook was weak because this file is still empty
+- [x] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it).
+  Filled by Hassan. The first live run's hook was weak because the file was still empty then
 - [x] First live run with a real key (input for the content agent's rubric)
 
 What the first live run surfaced (fix in the step named, not before):
@@ -285,6 +285,13 @@ week of phone review → enable. Never two new agents at once. Order:
   fact-checker, read-only knowledge MCP server
 - **Golden set, 20 topics** (GROW-13) · waits on C9: seeded from real edits;
   doubles as Measured Lab's first exercises
+- **Golden-set runner** (under GROW-14; no ticket of its own yet) ✅ built on branch
+  `evals/golden-runner`: `uv run proofline golden --out outputs/golden/<run>` runs the real
+  pipeline on each approved item with the item's own fixture sources (no search), saves
+  `<item-id>.md` in the shape the checks read and `critic_scores.json` for the calibration
+  sheet; resumable, one failed item doesn't stop the rest. Then `python -m measured_evals
+  run --approved-only --outputs outputs/golden/<run>`. The real run is Hassan's (keys,
+  model cost); tests use fake models (`docs/EVALS.md`, "Making it real")
 - **DeepEval + promptfoo in CI, publish `measured-evals`** (GROW-14) · waits on GROW-13.
   Measured Lab v0 (GROW-68) and Measured Index #1 (GROW-67) wait on this
 - **Production hardening** (GROW-15): cost budgets, injection suite, auth, rate limits
@@ -294,7 +301,7 @@ week of phone review → enable. Never two new agents at once. Order:
 - **L1 Case study + demo video** (GROW-16) · waits on C8 traces; demo uses the
   public demo config, no private data on screen
 - **L2 Public launch** (GROW-17) · waits on L1 and GROW-14: re-run the pre-public
-  check, choose a licence, tag `v1.0.0`, publish `measured-evals`, case study on
+  check, ~~choose a licence~~ (done: Apache-2.0, PR #23), tag `v1.0.0`, publish `measured-evals`, case study on
   hassanmansour.com, build post #3. **This gate opens Phase 2.**
 
 ## Phase 2 — Use the evidence (after L2)
