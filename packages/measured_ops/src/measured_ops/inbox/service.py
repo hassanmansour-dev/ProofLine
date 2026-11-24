@@ -54,7 +54,7 @@ from pydantic import ValidationError
 from measured_evals import ModelPrice, total_by_agent
 from measured_evals.scores import DEFAULT_THRESHOLD
 from measured_ops.contracts import ActionOutcome, ApprovalDecision, OpsState, PendingAction, Task
-from measured_ops.judge_log import JudgeLog, judge_log_from_env
+from measured_ops.judge_log import JudgeLog, judge_log_from_env, setup_log
 from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
 from measured_ops.posted import PostedLog, posted_log_from_env
@@ -692,6 +692,9 @@ class Inbox:
         if self._started:
             return
         self._started = True
+        # A log that can't be set up fails the start (write errors later are only logged).
+        await setup_log(self.judge_log)
+        await setup_log(self.posted)
         if self.kill_switch.engaged():
             log.warning("inbox: kill switch is on; not continuing stopped runs (Retry later)")
             return

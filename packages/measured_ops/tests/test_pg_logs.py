@@ -193,3 +193,39 @@ async def test_the_inbox_writes_its_logs_off_the_event_loop() -> None:
 
     assert set(seen) == {"decision", "posted", "mark"}
     assert all(thread != loop_thread for thread in seen.values()), seen
+
+
+# ---- review 2: a misconfigured log fails at start-up, not silently on the first write -----
+
+
+@pytest.mark.anyio
+async def test_the_inbox_refuses_to_start_with_a_log_it_cannot_set_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typing import Any
+
+    from langgraph.checkpoint.memory import InMemorySaver
+    from ops_fakes import ScriptedAgent
+
+    from measured_ops import load_policy, pg_logs
+    from measured_ops.inbox.service import Inbox
+    from measured_ops.supervisor import build_supervisor
+
+    url = "postgresql://test@127.0.0.1:1/none"
+    monkeypatch.setenv(PG_ENV, url)
+
+    def refuse(u: str) -> Any:
+        raise ConnectionError("database is not there")
+
+    monkeypatch.setattr(pg_logs, "_connect", refuse)
+    graph = build_supervisor([ScriptedAgent()], load_policy()).compile(checkpointer=InMemorySaver())
+    inbox = Inbox(
+        graph,
+        load_policy(),
+        callbacks=[],
+        judge_log=pg_logs.PostgresJudgeLog(url),  # constructing still does no I/O
+        posted=pg_logs.PostgresPostedLog(url),
+    )
+
+    with pytest.raises(ConnectionError, match="not there"):
+        await inbox.start()

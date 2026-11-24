@@ -68,8 +68,12 @@ class _Pg:
         self._ready = False
         self._setup_lock = threading.Lock()
 
-    def _setup(self) -> None:
-        """Create the tables once, on first use (never in __init__: no I/O at construction)."""
+    def setup(self) -> None:
+        """Create the tables once. Never called in __init__ (no I/O at construction);
+        the inbox calls it at start-up and the content agent before its first run, and
+        lets it raise, so a wrong URL or a database that is down fails there, loudly,
+        and not on a later write whose error is only logged. Blocking: callers on an
+        event loop use `asyncio.to_thread`."""
         if self._ready:
             return
         with self._setup_lock:
@@ -79,7 +83,7 @@ class _Pg:
                 self._ready = True
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
-        self._setup()
+        self.setup()
         with _connect(self.url) as conn:
             cur = conn.execute(sql, params)
             return list(cur.fetchall()) if cur.description else []

@@ -216,3 +216,29 @@ async def test_the_nested_pipeline_inherits_the_supervisors_tracer_and_thread(
     assert "content-pipeline" in marker.names
     assert "finalizer" in marker.names
     assert (agent.deps.settings.output_dir / "c1" / "script.md").exists()
+
+
+async def test_a_judge_log_that_cannot_be_set_up_fails_before_any_model_call(
+    tmp_path: Path,
+) -> None:
+    # Review 2: with log errors swallowed at write time, a misconfigured Postgres log would
+    # otherwise lose every critic line silently. Setup runs once, first, and raises.
+    from measured_ops import Task, run_agent
+
+    class BrokenLog:
+        def setup(self) -> None:
+            raise ConnectionError("database is not there")
+
+        def record_critic(self, action_id: str, scores: Any) -> None:
+            raise AssertionError("unreachable")
+
+        def record_decision(self, action_id: str, eval_scores: Any, approved: bool) -> None:
+            raise AssertionError("unreachable")
+
+    llm = FakeLLM()
+    agent = ContentAgent(make_deps(tmp_path, llm), judge_log=BrokenLog())
+    task = Task(agent="content", goal="Draft.", inputs={"topic": "T", "audience": "A"})
+
+    with pytest.raises(ConnectionError, match="not there"):
+        await run_agent(agent, agent.build(), task)
+    assert llm.calls == []

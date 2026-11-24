@@ -28,7 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from measured_ops import AgentResult, PendingAction, Task
 from measured_ops.agent import AgentGraph, AgentInput, AgentOutput
-from measured_ops.judge_log import JudgeLog, NullJudgeLog
+from measured_ops.judge_log import JudgeLog, NullJudgeLog, setup_log
 from proofline.context import Deps
 from proofline.graph import build_graph
 from proofline.render import approve_draft_preview
@@ -79,8 +79,16 @@ class ContentAgent:
         # checkpoint. It still gets the thread id and callbacks from the supervisor.
         pipeline = build_graph().compile(checkpointer=False)
 
+        log_ready = False
+
         async def draft(state: _State) -> dict[str, Any]:
+            nonlocal log_ready
             task = state["task"]
+            if not log_ready:
+                # Before anything is paid for: a judge log that can't be set up raises here
+                # (a later write error is only logged, so it must not be the first sign).
+                await setup_log(judge_log)
+                log_ready = True
             try:
                 topic = _text_input(task, "topic")
                 audience = _text_input(task, "audience")
