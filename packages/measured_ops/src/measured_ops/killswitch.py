@@ -21,12 +21,16 @@ Engage it from anywhere that can touch the file (`python -m measured_ops.worker 
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_DIR = ".measured_ops"  # under the home directory
 DEFAULT_NAME = "kill_switch"
+OLD_DEFAULT = ".data/kill_switch"  # the first default, relative to the working directory
+
+log = logging.getLogger("measured_ops.killswitch")
 ENV = "MEASURED_OPS_KILL_SWITCH_PATH"
 REASON_MAX = 200
 
@@ -43,7 +47,16 @@ class KillSwitch:
     def from_env(cls) -> KillSwitch:
         raw = os.environ.get(ENV, "").strip()
         if not raw:
-            return cls(Path.home() / DEFAULT_DIR / DEFAULT_NAME)
+            switch = cls(Path.home() / DEFAULT_DIR / DEFAULT_NAME)
+            old = Path(OLD_DEFAULT)
+            if old.exists() and not switch.path.exists():
+                log.warning(
+                    "kill switch: %s exists but is no longer read; the switch is %s now. "
+                    "Engage it with `python -m measured_ops.worker kill --reason ...`",
+                    old.resolve(),
+                    switch.path,
+                )
+            return switch
         path = Path(raw).expanduser()
         if not path.is_absolute():
             raise ValueError(f"{ENV} must be an absolute path, got {raw!r}")

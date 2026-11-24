@@ -236,3 +236,28 @@ def test_the_switch_path_does_not_depend_on_the_working_directory(
     monkeypatch.setenv("MEASURED_OPS_KILL_SWITCH_PATH", ".data/kill_switch")
     with pytest.raises(ValueError, match="absolute path"):
         KillSwitch.from_env()
+
+
+def test_a_switch_left_at_the_old_path_is_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Review 2 nit: the default moved from ./.data/kill_switch to ~/.measured_ops/. A file
+    # engaged by hand at the old place would stop nothing, silently.
+    import logging
+
+    monkeypatch.delenv("MEASURED_OPS_KILL_SWITCH_PATH")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".data").mkdir()
+    (tmp_path / ".data" / "kill_switch").write_text("old\n")
+
+    with caplog.at_level(logging.WARNING, logger="measured_ops.killswitch"):
+        switch = KillSwitch.from_env()
+    assert not switch.engaged()
+    assert any("no longer read" in r.getMessage() for r in caplog.records)
+
+    caplog.clear()
+    switch.engage("now in the right place")
+    with caplog.at_level(logging.WARNING, logger="measured_ops.killswitch"):
+        KillSwitch.from_env()
+    assert caplog.records == []
