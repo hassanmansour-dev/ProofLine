@@ -14,8 +14,10 @@ Reads `MEASURED_OPS_INBOX_CHECKPOINTER_URL` (the inbox's database), `MEASURED_OP
 `MEASURED_OPS_PRICES_PATH`, `MEASURED_OPS_BUDGET_PATH`, `MEASURED_OPS_KILL_SWITCH_PATH`.
 
 It runs no agent: digests only read. Moving revisions and scheduled agent runs here (from
-the inbox, ADR-0019) waits for C6, which creates tasks; the budget and the kill switch
-already apply to every supervisor run wherever it happens.
+the inbox, ADR-0019) waits for C6, which creates tasks. The kill switch applies to every
+supervisor run and every write on this machine. The budget applies to every supervisor
+run in a process that has `MEASURED_OPS_BUDGET_PATH` set (the inbox, `proofline propose`),
+and to nothing where it is unset: `status` shows what this environment would use.
 """
 
 from __future__ import annotations

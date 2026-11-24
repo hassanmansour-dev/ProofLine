@@ -370,7 +370,9 @@ number fails closed (END, logged).
   `evaluator` (default `measured_evals.evaluate`) and the supervisor's `eval_context`,
   plus its `target` with the injection and PII checks (metrics `target_injection`,
   `target_pii`), and writes the scored copies to `evaluated_actions`. The agent's own result stays
-  unscored. It logs pass/fail with metric names only. First (C5) it re-checks every
+  unscored. It logs pass/fail with metric names only. It refuses a result with more than 10
+  actions, or with an action id seen in an earlier result or decision (ids key decisions and
+  outcomes). First (C5) it re-checks every
   executable action (`tools.specs.SPECS`): params valid, target and preview equal to what
   they render, in the configured scope, with an executor configured; otherwise it raises
   `AgentContractError` and nothing reaches triage.
@@ -419,8 +421,9 @@ number fails closed (END, logged).
   found by target status, then labels/priority), re-reads and raises if it didn't take;
   `CalendarBlockExecutor` creates the block unless an event with the same title, start
   and end is there. `Executors(executors, scope)` refuses an executor for `approve_draft`;
-  `run` re-checks the action and returns "already_applied" without a call for a change
-  already applied in the run (a revision re-proposing an approved action).
+  `run` re-checks the action; a change already in place (a revision re-proposing an
+  approved action, a retry after a crash) is found by reading and recorded
+  "already_applied". An earlier outcome is never taken as proof.
 - `config.py`: `ToolsConfig` from TOML (`load_tools_config(path)`; the bundled demo when
   no path; `MEASURED_OPS_TOOLS_CONFIG`): servers (stdio with `env_from`, or https with
   `headers_from_env`: env var names, never values) and, per logical operation, the tool,
@@ -441,17 +444,22 @@ number fails closed (END, logged).
   rejection doesn't; "auto" applies without pausing), on SQLite and Postgres.
 
 **Staging pieces** (C10, ADR-0023).
-- Kill switch (`killswitch.py`): a file (`MEASURED_OPS_KILL_SWITCH_PATH`, default
-  `.data/kill_switch`). `build_supervisor(..., kill_switch=...)` defaults to
-  `KillSwitch.from_env()`; `call_agent` raises `KillSwitchEngaged` before any agent runs
-  (the run is resumable after release). The inbox refuses Retry and skips its start-up
-  sweep while it's on.
-- Budget (`budget.py`): `build_supervisor(..., budget=Budget(...), prices=...)` checks the
-  run's `usage` before each agent run and, through a `raise_error` callback set in a
-  context variable, before every model call inside it (`guard_budget`). The calls cap
-  counts the call about to be made; tokens and cost use spend so far; unknown cost fails
-  closed. `load_budget(path)` / `MEASURED_OPS_BUDGET_PATH`; demo table
-  `config/budget.demo.toml` (placeholder values).
+- Kill switch (`killswitch.py`): a file (`MEASURED_OPS_KILL_SWITCH_PATH`, absolute;
+  default `~/.measured_ops/kill_switch`, the same from every working directory).
+  `build_supervisor(..., kill_switch=...)` defaults to `KillSwitch.from_env()`.
+  `call_agent` raises `KillSwitchEngaged` before any agent runs, and `execute` before any
+  executable action (writes stop too; a "manual" outcome isn't stopped); the run is
+  resumable after release and the action then runs once. The inbox refuses Retry, skips
+  its start-up sweep and says the switch is on; `proofline golden` starts no item.
+- Budget (`budget.py`): `build_supervisor(..., budget=...)` defaults to the table
+  `MEASURED_OPS_BUDGET_PATH` names (`budget=None` opts out; unset = no caps), priced with
+  `MEASURED_OPS_PRICES_PATH` or the demo table. It checks the run's `usage` before each
+  agent run and, through a `raise_error` callback set in a context variable, before every
+  model call inside it (`guard_budget`). The calls cap counts the call about to be made;
+  tokens and cost use spend so far; unknown cost fails closed, and a call that reports no
+  usage counts as one call on the "unknown" model. Crossing a cap ends the run with a
+  failed `AgentResult` (`error = "budget: ..."`) and that pass's usage recorded, so a
+  resume can't spend more. Demo table `config/budget.demo.toml` (placeholder values).
 - Digest (`digest.py`): `build_digest(inbox, prices=, kill_switch=)` → Markdown from the
   inbox service (waiting, stopped, in progress, drafts not posted, cost of runs active in
   the window, kill switch); no targets. `FileDigestSink(dir)` writes it.
@@ -460,7 +468,8 @@ number fails closed (END, logged).
   `status`, `import-logs`. Runs no agent.
 - Postgres logs (`pg_logs.py`): `PostgresJudgeLog`, `PostgresPostedLog` behind the same
   ports, chosen by `MEASURED_OPS_LOGS_URL` in `judge_log_from_env` / `posted_log_from_env`;
-  tables created if missing; `import_jsonl` is idempotent.
+  tables created on first use (nothing connects at construction); `import_jsonl` is
+  idempotent; callers on an event loop run them in a worker thread.
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool
@@ -530,7 +539,10 @@ adds its own case.
   `execute` runs in the request and a revision still goes to the background. `Outcome`
   carries what ran (`executed`) or `failed`; a failure keeps the decision, marks the run
   "Stopped" and the page says so; Retry continues it. A run waiting to execute an action a
-  human approved is "stopped" at once after a restart. `create_inbox_app(...,
+  human approved is "stopped" at once after a restart. The continuation runs under
+  `MEASURED_OPS_INBOX_EXECUTE_TIMEOUT_S` (default 120); a timeout or the kill switch also
+  leaves the decision saved and the run "Stopped". Log writes (judge log, posted marks)
+  run in a worker thread. `create_inbox_app(...,
   executors=...)`; `serve` builds them from `MEASURED_OPS_TOOLS_CONFIG`.
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`

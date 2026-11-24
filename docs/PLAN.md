@@ -259,7 +259,7 @@ from this section and GROW-84, for his review on the PR.
   are refused
 - [x] `execute` node: one ready action per step, read-before-write and verified;
   `approve_draft` gets a "manual" outcome and can never have an executor; a revision
-  re-proposing an applied change is "already_applied" without a call; a failed call
+  re-proposing an applied change is found in place ("already_applied"); a failed call
   stops the run with the decision saved, transient ones retried; the inbox runs approved
   actions and shows "Stopped" + Retry on failure
 - [x] MCP client on `mcp` 2.3 (optional `tools` extra): stdio and streamable HTTP, secrets
@@ -301,10 +301,17 @@ branch `c10/staging-jobs` (Hassan's go, 2026-11-23); nothing here waits on C9.
 - [x] Judge log and posted marks can live in Postgres (`MEASURED_OPS_LOGS_URL`;
   `python -m measured_ops.worker import-logs` copies the JSONL files in, idempotently).
   Switching them over waits for hosted runs (ADR-0019, ADR-0020; Hassan, 2026-11-16)
-- [x] Kill switch: one file stops every agent run before it starts; every supervisor
-  reads it by default; the inbox won't retry or sweep while it's on (`worker kill|release`)
-- [x] Budget caps per run: checked before each agent run and before every model call
-  (ADR-0021's guard, wired); unknown cost fails closed; caps from TOML
+- [x] Kill switch: one file (`~/.measured_ops/kill_switch`) stops every agent run and
+  every approved or auto write before it starts; every supervisor reads it by default;
+  the inbox won't retry or sweep while it's on (`worker kill|release`)
+- [x] Budget caps per run: every supervisor takes them from `MEASURED_OPS_BUDGET_PATH`
+  (so: only in processes where that variable is set; unset = no caps); checked before
+  each agent run and before every model call (ADR-0021's guard, wired); unknown cost and
+  calls without usage fail closed; a run that crosses a cap ends as failed with its
+  spend recorded. Not covered: `proofline run`, and the usage of a pass cut off by a
+  timeout or crash (ADR-0023)
+- [x] Review of the integration branch (2026-11-24): two blockers, six should-fixes and
+  three nits fixed, each with a test (ADR-0022 §5b, ADR-0023)
 - [x] Digests: read-only Markdown (waiting, stopped, drafts to paste, cost, kill switch),
   `worker digest` once or `worker run` at 07:00 and 21:00 America/Toronto, written to
   `outputs/digests/`

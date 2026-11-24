@@ -23,22 +23,33 @@ Verified for this change on langchain-core 1.6.12: a callback handler with
 exception reaches the caller unchanged.
 
 ## Decision
-1. **Kill switch** (`measured_ops.killswitch`): a file (`MEASURED_OPS_KILL_SWITCH_PATH`,
-   default `.data/kill_switch`) holding when and why. While it exists, the supervisor's
-   `call_agent` raises `KillSwitchEngaged` before any agent runs (the run stops between
-   nodes, resumable after release); the inbox refuses Retry and skips its start-up sweep.
+1. **Kill switch** (`measured_ops.killswitch`): a file holding when and why:
+   `MEASURED_OPS_KILL_SWITCH_PATH` (absolute; a relative path is refused), default
+   `~/.measured_ops/kill_switch`, so every process on the machine watches the same file
+   whatever its working directory. While it exists, the supervisor's `call_agent` raises
+   `KillSwitchEngaged` before any agent runs (the run stops between nodes, resumable
+   after release), **`execute` raises it before any executable action** (no approved or
+   "auto" write happens; the decision stays saved and the action runs once after
+   release; a "manual" outcome runs nothing and isn't stopped), the inbox refuses Retry,
+   skips its start-up sweep and says so on the page, and `proofline golden` starts no item.
    **Every supervisor reads it by default** (`KillSwitch.from_env()`), so a runner can't
    forget it. Engage or release with `python -m measured_ops.worker kill|release`, or by
    hand: no process has to be reachable.
 2. **Per-run budget** (`measured_ops.budget`, on `measured_evals.budget`):
-   `build_supervisor(..., budget=Budget(...), prices=...)` checks the run's recorded usage
+   `build_supervisor(...)` takes its budget **by default from the table
+   `MEASURED_OPS_BUDGET_PATH` names** (like the kill switch: no runner has to wire it;
+   `budget=None` opts out; unset means no caps) and checks the run's recorded usage
    before each agent run, and a `raise_error` callback (set through a context variable,
    like `collect_usage`) checks before **every model call** inside the agent. The calls
    cap counts the call about to be made; tokens and cost are checked on spend so far
    (the supervisor doesn't know a call's `max_tokens`), so a run can exceed a token or
    cost cap by at most the call that crossed it. Unknown cost fails closed (ADR-0021).
-   `BudgetExceeded` stops the run loudly with its state saved. Caps come from TOML
-   (`MEASURED_OPS_BUDGET_PATH`; a placeholder demo table ships); no budget, no caps.
+   **Crossing a cap ends the run**: `call_agent` returns a failed `AgentResult`
+   (`error = "budget: ..."`) with that pass's usage recorded. It doesn't raise, because a
+   raise loses the state update and every Retry would start from a fresh allowance. A
+   model call that reports no usage counts as one call on the "unknown" model, so a
+   calls cap sees it and a cost cap fails closed. `proofline golden` applies the same
+   budget per item. Caps come from TOML (a placeholder demo table ships).
 3. **Digest** (`measured_ops.digest`): read-only Markdown from the checkpointer through the
    inbox service: waiting actions (oldest first, how long), stopped and in-progress runs,
    approved drafts not posted, the cost of runs active in the window (an unpriced model is
@@ -71,6 +82,14 @@ exception reaches the caller unchanged.
 - Good: every run can be stopped from a terminal in one command; a runaway loop stops at
   the cap before its next call; a digest shows what needs attention without opening the
   inbox; the logs can move to Postgres with one env var and one import.
+- Known limit: a pass cut off by something other than its budget (a timeout, a crash,
+  the kill switch) still loses that pass's usage with its state update; the earlier
+  passes' usage is kept, and such a run continues only by a manual Retry or once per
+  inbox start. `proofline run` (the bare pipeline CLI) has neither stop.
+- Tests never see a developer's exported `MEASURED_OPS_LOGS_URL`, `..._BUDGET_PATH` or
+  `..._TOOLS_CONFIG`, and can open Postgres logs only in the test database (root conftest).
+- Postgres log adapters connect on first use, never at construction, and every caller on
+  an event loop runs them in a worker thread.
 - Bad / cost: a daily (not per-run) cap isn't enforced yet: nothing starts runs on a
   schedule until C6, so per-run caps and the kill switch cover today's runners. The digest
   costs whole runs active in the window, not spend inside it. The kill switch file is per

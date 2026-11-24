@@ -12,7 +12,9 @@ The calls cap counts the call about to be made, so it's never crossed. Tokens an
 are checked on spend so far: the supervisor doesn't know a call's `max_tokens`, so a run
 can go over a token or cost cap by at most the one call that crossed it, and the next
 call never happens. Unknown cost fails closed under a cost cap (ADR-0021).
-`BudgetExceeded` stops the run loudly, its state saved; raise the cap or start again.
+The supervisor turns `BudgetExceeded` into a failed `AgentResult` with the pass's usage
+recorded, which ends the run: raising would lose that usage, and a resumed run would get a
+fresh allowance. Every supervisor reads its budget from `MEASURED_OPS_BUDGET_PATH` by default.
 
 Caps come from TOML (`load_budget(path)`; `MEASURED_OPS_BUDGET_PATH`):
 

@@ -66,9 +66,10 @@ new append-only field, `OpsState.executed`:
 - an executable type with no configured executor raises `ToolConfigError`: an approved
   ticket move is never silently recorded as manual;
 - `"applied"` or `"already_applied"` otherwise. Executors read before they write and write
-  only what differs (triage re-reads afterwards and raises if it didn't take); a change
-  with the same identity key already applied in the run (a revision re-proposing an
-  approved action) is `"already_applied"` without a tool call;
+  only what differs (triage re-reads afterwards and raises if it didn't take), so a
+  revision re-proposing an applied change, or a retry after a crash, finds it in place:
+  `"already_applied"`. An earlier outcome in the run is never taken as proof (review,
+  2026-11-24: the ticket may have changed since, and the human approved it again);
 - a failure raises and stops the run at `execute`, with the decision saved. A
   `RetryPolicy` retries `ToolUnavailableError` (unreachable, timeout, connection closed,
   HTTP 5xx/429) three times; nothing else is retried automatically.
@@ -81,6 +82,17 @@ A failed execution is logged, the run is "stopped" (Retry continues it), and the
 so. A run waiting to execute an action a human approved counts as stopped at once after a
 restart. `create_inbox_app` and `serve` take `executors`; `serve` builds them from
 `MEASURED_OPS_TOOLS_CONFIG` (none when unset).
+
+**5b. Added after the review of the integration branch (2026-11-24).**
+- Action ids are new every round: `evaluate` refuses an id seen in any earlier result or
+  decision. Outcomes are keyed by id, so a reused id would look already executed and an
+  approved action would silently never run.
+- A result proposes at most 10 actions (`MAX_ACTIONS_PER_RESULT`): each costs graph
+  steps, and a round must stay inside `recursion_limit` (40).
+- The inbox's continuation after a decision runs under a time bound
+  (`MEASURED_OPS_INBOX_EXECUTE_TIMEOUT_S`, default 120). On timeout the decision stands,
+  the run is "Stopped", and Retry is safe (read before write).
+- `execute` checks the kill switch before any executable action (ADR-0023).
 
 **6. Tools config, in TOML, per deployment.** `measured_ops/config/tools.demo.toml` maps
 each logical operation (`search`, `get_issue`, `transitions`, `transition`, `update`,
