@@ -1,10 +1,16 @@
 """Kill switch (C10, ADR-0023): one flag that stops every agent run before it starts.
 
-The flag is a file (`MEASURED_OPS_KILL_SWITCH_PATH`, default `.data/kill_switch`,
-git-ignored). While it exists:
+The flag is a file: `MEASURED_OPS_KILL_SWITCH_PATH` (an absolute path), default
+`~/.measured_ops/kill_switch`. The default is under the home directory, not the working
+directory, and a relative path is refused: every process on the machine must watch the
+same file wherever it was started. While it exists:
 - the supervisor's `call_agent` raises `KillSwitchEngaged` before running any agent, so
   no model is called and nothing is proposed; the run stops between nodes, its state
   saved, and continues normally once the switch is released (Retry, or the next start);
+- the supervisor's `execute` raises it before running any executable action, so no
+  approved or "auto" write happens either; the decision stays saved and the action runs
+  once after release;
+- `proofline golden` starts no item;
 - the inbox doesn't continue stopped runs at start-up and refuses Retry;
 - the worker skips its jobs that would run agents (digests still go out: they only read).
 
@@ -19,7 +25,8 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-DEFAULT_PATH = Path(".data/kill_switch")
+DEFAULT_DIR = ".measured_ops"  # under the home directory
+DEFAULT_NAME = "kill_switch"
 ENV = "MEASURED_OPS_KILL_SWITCH_PATH"
 REASON_MAX = 200
 
@@ -34,8 +41,13 @@ class KillSwitch:
 
     @classmethod
     def from_env(cls) -> KillSwitch:
-        raw = os.environ.get(ENV)
-        return cls(Path(raw) if raw else DEFAULT_PATH)
+        raw = os.environ.get(ENV, "").strip()
+        if not raw:
+            return cls(Path.home() / DEFAULT_DIR / DEFAULT_NAME)
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{ENV} must be an absolute path, got {raw!r}")
+        return cls(path)
 
     def engaged(self) -> bool:
         return self.path.exists()

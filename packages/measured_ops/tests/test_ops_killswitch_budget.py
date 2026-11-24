@@ -220,3 +220,19 @@ async def test_a_budget_stopped_run_records_its_spend_and_cannot_be_resumed_into
     for _ in range(2):  # the inbox's Retry and its start-up sweep, had it been "stopped"
         await app.ainvoke(None, CFG)
     assert len(list(agent.model.messages)) == 4  # two calls made, ever
+
+
+def test_the_switch_path_does_not_depend_on_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review nit: a relative default meant a process started elsewhere watched another
+    # file and never saw the switch.
+    monkeypatch.delenv("MEASURED_OPS_KILL_SWITCH_PATH")
+    here = KillSwitch.from_env().path
+    monkeypatch.chdir(tmp_path)
+    assert KillSwitch.from_env().path == here
+    assert here.is_absolute()
+
+    monkeypatch.setenv("MEASURED_OPS_KILL_SWITCH_PATH", ".data/kill_switch")
+    with pytest.raises(ValueError, match="absolute path"):
+        KillSwitch.from_env()
