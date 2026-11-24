@@ -114,6 +114,10 @@ def route_pending(state: OpsState) -> Literal["execute", "gate", "__end__"]:
 
 
 DEFAULT_MAX_REVISIONS = 3
+# Every action costs graph steps (an execute, and a gate when it needs approval). Ten
+# keeps a whole round (3 + 10 steps in one invocation at most) well inside the
+# recursion_limit of 40 that every entry point passes.
+MAX_ACTIONS_PER_RESULT = 10
 FEEDBACK_MAX = 4000  # Task.feedback's limit
 PREVIEW_SEPARATOR = "\n\n---\n\n"
 
@@ -348,6 +352,12 @@ def build_supervisor(
         return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
+        proposed = len(state["results"][-1].actions)
+        if proposed > MAX_ACTIONS_PER_RESULT:
+            raise AgentContractError(
+                f"agent {state['task'].agent!r} proposed {proposed} actions; a result has "
+                f"at most {MAX_ACTIONS_PER_RESULT} actions"
+            )
         # Decisions, outcomes and revisions are all keyed by action id, so an id from an
         # earlier round could match an old rejection (and revise again, C8 review) or an
         # old outcome (and an approved action would silently never run). Ids are new

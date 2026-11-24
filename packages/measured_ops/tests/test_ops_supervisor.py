@@ -320,3 +320,16 @@ def test_graph_shape() -> None:
         "revise",
         "__end__",
     }
+
+
+async def test_a_result_with_too_many_actions_is_refused() -> None:
+    # Review nit: every action costs graph steps (a gate and an execute), so an unbounded
+    # result would hit the recursion limit mid-round, after some actions had already run.
+    from measured_ops.supervisor import MAX_ACTIONS_PER_RESULT
+
+    app = _app(ScriptedAgent([AUTO] * (MAX_ACTIONS_PER_RESULT + 1)))
+    with pytest.raises(AgentContractError, match="at most 10 actions"):
+        await _start(app)
+
+    ok = await _start(_app(ScriptedAgent([APPROVAL] * MAX_ACTIONS_PER_RESULT)))
+    assert "__interrupt__" in ok
