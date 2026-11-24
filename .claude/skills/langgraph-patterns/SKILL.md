@@ -115,6 +115,10 @@ def approval_gate(state: OpsState) -> dict[str, Any]:
   decision = interrupt(payload, response_schema=Annotated[ApprovalDecision, AfterValidator(check)])
   ```
   The `Interrupt` then also carries the answer's JSON schema (`intr.response_schema`).
+- **After a refused answer, `ainvoke(None)` depends on how the answer was sent** (verified
+  1.2.16, 2026-11-24): unkeyed (`Command(resume=value)`) → the refused value is still
+  pending and is replayed (raises again); keyed (`Command(resume={intr.id: value})`) →
+  nothing is pending and the run pauses again, undecided. Always answer with a new `Command`.
 
 ## Streaming
 ```python
