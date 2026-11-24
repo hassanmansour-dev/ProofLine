@@ -14,6 +14,11 @@ anything to check. This is that step:
 - items already saved are skipped unless `overwrite`, so a stopped run resumes without
   paying twice; one item failing is reported and the others still run.
 
+It spends money, so the same two stops as a supervisor run apply (ADR-0023): the kill
+switch is checked before every item (engaged mid-run, the remaining items don't start),
+and a budget, when one is set, caps each item's calls, tokens and cost before every model
+call; an item over its cap is reported as failed and the next one still runs.
+
 It calls real models (keys, money): only Hassan runs it for real. Tests use fake models.
 Outputs go under `outputs/` (git-ignored): they are measurements, not fixtures.
 """
@@ -27,8 +32,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from measured_evals.budget import Budget
+from measured_evals.cost import Prices
 from measured_evals.golden import GoldenItem, GoldenSet
+from measured_ops.budget import guard_budget
+from measured_ops.killswitch import KillSwitch
 from measured_ops.tracing import masked_tracing_callbacks
+from measured_ops.usage import collect_usage
 from proofline.context import Deps
 from proofline.graph import build_graph, invoke_config, new_thread_id
 from proofline.research.fixture import FixtureResearcher
@@ -80,14 +90,25 @@ def _critic_file(out: Path) -> dict[str, object]:
     return {"scores": {}, "scale": [1, 10], "synthetic": False}
 
 
-async def run_item(item: GoldenItem, deps: Deps) -> tuple[str, float | None]:
-    """One item through the pipeline: (output text, critic overall score)."""
+async def run_item(
+    item: GoldenItem, deps: Deps, *, budget: Budget | None = None, prices: Prices | None = None
+) -> tuple[str, float | None]:
+    """One item through the pipeline: (output text, critic overall score). With `budget`,
+    every model call is checked against it first (BudgetExceeded stops the item)."""
     item_deps = replace(deps, researcher=FixtureResearcher(item.id, item.sources, deps.llm))
     cfg = invoke_config(new_thread_id(), deps.settings)
     cfg["callbacks"] = masked_tracing_callbacks()
     cfg.setdefault("metadata", {})["golden_item"] = item.id
     state = initial_state(item.topic, item.audience, deps.settings.run_config())
-    out = await build_graph().compile().ainvoke(state, cfg, context=item_deps)
+    graph = build_graph().compile()
+    if budget is None:
+        out = await graph.ainvoke(state, cfg, context=item_deps)
+    else:
+        with (
+            collect_usage("golden") as usage,
+            guard_budget(budget, prices or {}, [], usage),
+        ):
+            out = await graph.ainvoke(state, cfg, context=item_deps)
     score = out.get("score")
     return script_text(out["draft"]), None if score is None else float(score)
 
@@ -101,8 +122,13 @@ async def run_golden(
     only: set[str] | None = None,
     overwrite: bool = False,
     progress: Callable[[str, str], None] | None = None,
+    budget: Budget | None = None,
+    prices: Prices | None = None,
+    kill_switch: KillSwitch | None = None,
 ) -> GoldenRun:
-    """Run the items one at a time (cost and rate limits); save each as it finishes."""
+    """Run the items one at a time (cost and rate limits); save each as it finishes.
+    Raises KillSwitchEngaged if the kill switch is on before an item starts."""
+    switch = kill_switch or KillSwitch.from_env()
     items = golden.approved if approved_only else golden.items
     if only:
         unknown = sorted(only - {i.id for i in golden.items})
@@ -120,8 +146,9 @@ async def run_golden(
             if progress:
                 progress(item.id, "skipped (already saved)")
             continue
+        switch.check()  # before every item: nothing more is spent once it's engaged
         try:
-            text, score = await run_item(item, deps)
+            text, score = await run_item(item, deps, budget=budget, prices=prices)
         except Exception as exc:  # reported, and the next item still runs
             log.exception("golden: item %s failed", item.id)
             run.failed[item.id] = f"{type(exc).__name__}: {exc}"[:300]

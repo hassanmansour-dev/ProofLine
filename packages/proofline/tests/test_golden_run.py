@@ -159,3 +159,79 @@ def test_cli_runs_one_item_and_prints_the_next_command(
     assert "saved 1, skipped 0, failed 0" in result.output
     assert f"--outputs {out} --write-draft-baseline" in result.output
     assert (out / f"{STANDARD.id}.md").exists()
+
+
+# ---- review: the runner spends money, so the kill switch and the budget apply -------------
+
+
+class MeteredLLM(FakeLLM):
+    """FakeLLM whose every call also goes through a LangChain chat model, so usage
+    callbacks (and the budget guard) see it like a real call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        from langchain_core.language_models import GenericFakeChatModel
+        from langchain_core.messages import AIMessage
+
+        reply = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+            response_metadata={"model_name": "model-a"},
+        )
+        self.model = GenericFakeChatModel(messages=iter([reply] * 50))
+        self.metered = 0
+
+    async def generate(self, prompt: Any, schema: Any, *, role: Any, run_config: Any) -> Any:
+        await self.model.ainvoke("x")
+        self.metered += 1
+        return await super().generate(prompt, schema, role=role, run_config=run_config)
+
+
+async def test_the_kill_switch_stops_the_golden_run_before_any_call(tmp_path: Path) -> None:
+    from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
+
+    switch = KillSwitch(tmp_path / "kill")
+    switch.engage("testing")
+    llm = FakeLLM()
+    with pytest.raises(KillSwitchEngaged):
+        await run_golden(
+            _set(STANDARD), make_deps(tmp_path, llm), tmp_path / "outputs" / "g", kill_switch=switch
+        )
+    assert llm.calls == []
+
+
+async def test_a_budget_caps_each_golden_item(tmp_path: Path) -> None:
+    from measured_evals.budget import Budget
+
+    llm = MeteredLLM()
+    llm.queue(make_outline(), _findings(), make_draft(), make_critique(9))
+    out = tmp_path / "outputs" / "g"
+
+    run = await run_golden(
+        _set(STANDARD), make_deps(tmp_path, llm), out, budget=Budget(max_calls=2), prices={}
+    )
+
+    assert list(run.failed) == [STANDARD.id]
+    assert "max_calls: 3 > 2" in run.failed[STANDARD.id]
+    assert llm.metered == 2  # planner and researcher; the writer's call was never made
+    assert not (out / f"{STANDARD.id}.md").exists()
+
+
+def test_cli_refuses_to_start_while_the_kill_switch_is_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.killswitch import KillSwitch
+
+    llm = FakeLLM()
+    monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "get_settings", lambda: make_settings(tmp_path))
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
+    KillSwitch.from_env().engage("testing")
+
+    result = CliRunner().invoke(
+        cli.app, ["golden", "--out", str(tmp_path / "outputs" / "g"), "--item", STANDARD.id]
+    )
+
+    assert result.exit_code == 1
+    assert "kill switch is on" in result.output
+    assert llm.calls == []

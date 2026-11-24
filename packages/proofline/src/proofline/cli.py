@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -234,9 +235,16 @@ def golden(
     Items already saved are skipped, so a stopped run resumes where it left off.
     """
     from measured_evals.golden import load_golden_set
+    from measured_ops.budget import budget_from_env
+    from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
+    from measured_ops.prices import load_model_prices
     from proofline.golden import CRITIC_FILE, run_golden
 
     deps = _deps_or_exit()
+    switch = KillSwitch.from_env()
+    budget = budget_from_env()  # MEASURED_OPS_BUDGET_PATH: caps each item when set
+    prices_path = os.environ.get("MEASURED_OPS_PRICES_PATH", "").strip()
+    prices = load_model_prices(Path(prices_path) if prices_path else None)
     root = deps.settings.output_dir.resolve()
     if not out.resolve().is_relative_to(root):
         typer.echo(
@@ -254,8 +262,14 @@ def golden(
                 only=set(item) if item else None,
                 overwrite=overwrite,
                 progress=lambda item_id, what: typer.echo(f"{item_id}: {what}", err=True),
+                budget=budget,
+                prices=prices,
+                kill_switch=switch,
             )
         )
+    except KillSwitchEngaged as exc:
+        typer.echo(f"error: {exc}; saved items are kept, run again after release", err=True)
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
