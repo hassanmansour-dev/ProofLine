@@ -355,8 +355,11 @@ number fails closed (END, logged).
   waiting action, and `check_decision` runs. A bad answer raises to the caller
   (`ValidationError`, or `ActionBlockedError`, which `is_invalid_resume` doesn't
   mark: catch both), nothing is bound to the gate task, and the run stays paused
-  for a new `Command(resume=...)`. The refused value stays as the pending resume
-  until then, so never retry with a bare `ainvoke(None)`. (Raising after
+  for a new `Command(resume=...)`. A refused **unkeyed** answer (`Command(resume=value)`)
+  stays as the pending resume until then, and a bare `ainvoke(None)` replays it; a
+  refused answer **keyed by interrupt id** leaves nothing, and `ainvoke(None)` just
+  pauses again, undecided (ADR-0016 amendment). Either way, never retry with a bare
+  `ainvoke(None)`. (Raising after
   `interrupt()` returns would bind the bad answer and replay it on every resume.) An approved action goes
   to `ready`; a rejection is recorded.
 - `revise` (C8, ADR-0019) builds the next `Task` for the same agent: `parent_id` = the
