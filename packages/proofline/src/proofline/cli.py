@@ -157,7 +157,13 @@ def propose(
         format="%(levelname)s %(name)s: %(message)s",
     )
     deps = _deps_or_exit()
-    thread_id, paused, summary = asyncio.run(propose_topic(topic, audience, deps))
+    from measured_ops.killswitch import KillSwitchEngaged
+
+    try:
+        thread_id, paused, summary = asyncio.run(propose_topic(topic, audience, deps))
+    except KillSwitchEngaged as exc:
+        typer.echo(f"error: {exc}; nothing ran", err=True)
+        raise typer.Exit(code=1) from exc
     if not paused:
         typer.echo(f"error: no draft is waiting: {summary}", err=True)
         raise typer.Exit(code=1)
@@ -233,6 +239,9 @@ def golden(
     Each item uses its own fixture sources (no search) and real models: this costs money.
     Then check the outputs with `python -m measured_evals run --approved-only --outputs OUT`.
     Items already saved are skipped, so a stopped run resumes where it left off.
+
+    If MEASURED_OPS_BUDGET_PATH names a budget, it caps each item, not the whole run:
+    20 items can spend up to 20 times the cap. The kill switch stops the run between items.
     """
     from measured_evals.golden import load_golden_set
     from measured_ops.budget import budget_from_env
