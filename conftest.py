@@ -73,9 +73,9 @@ def _postgres_logs_only_in_the_test_database(monkeypatch: pytest.MonkeyPatch) ->
     import os
 
     original = pg_logs._Pg.__init__
-    test_db = os.environ.get("MEASURED_OPS_TEST_DATABASE_URL", "")
 
     def guarded(self: Any, url: str, *args: Any, **kwargs: Any) -> None:
+        test_db = os.environ.get("MEASURED_OPS_TEST_DATABASE_URL", "")
         is_pg = url.startswith(("postgresql://", "postgres://"))
         if is_pg and not (test_db and url.startswith(test_db)):
             raise AssertionError("a test tried to open real Postgres logs; use the test database")

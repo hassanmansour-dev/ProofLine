@@ -19,6 +19,7 @@ callbacks, including the masked tracer (ADR-0018).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, TypedDict
 
@@ -127,8 +128,11 @@ class ContentAgent:
             if critique is not None:  # ids and scores only, never the draft (ADR-0019)
                 scores: dict[str, float] = {c.criterion: c.score for c in critique.scores}
                 try:
-                    judge_log.record_critic(action.id, {**scores, "overall": critique.overall})
-                except OSError:
+                    # in a thread: the log may be Postgres (C10), and this is an async node
+                    await asyncio.to_thread(
+                        judge_log.record_critic, action.id, {**scores, "overall": critique.overall}
+                    )
+                except Exception:  # a file error or a database error
                     # the draft is paid for and stands; a lost log line must not undo it
                     log.exception("content: couldn't write the judge log for %s", action.id)
             return {

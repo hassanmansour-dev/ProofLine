@@ -424,7 +424,8 @@ class Inbox:
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
                 raise Refused(str(exc)) from exc
-            self._log_decision(item, approved=approved)  # saved: now it's a decision
+            # saved: now it's a decision. In a thread: the log may be Postgres (C10).
+            await asyncio.to_thread(self._log_decision, item, approved=approved)
             log.info(
                 "inbox: run %s action %s %s",
                 thread_id,
@@ -485,7 +486,7 @@ class Inbox:
         scores = None if item.eval is None else {c.name: c.score for c in item.eval.checks}
         try:
             self.judge_log.record_decision(item.action_id, scores, approved)
-        except OSError:
+        except Exception:  # a file error or a database error
             # the decision stands; a lost log line must not undo or hide it
             log.exception("inbox: couldn't write the judge log for action %s", item.action_id)
 
@@ -496,7 +497,7 @@ class Inbox:
         return await list_ready(
             self.graph,
             await self._thread_ids(),
-            posted=self.posted.posted(),
+            posted=await asyncio.to_thread(self.posted.posted),
             paste_types=self.paste_types,
             include_posted=include_posted,
         )
@@ -507,7 +508,7 @@ class Inbox:
         ready = await self.list_ready(include_posted=True)
         if action_id not in {r.action_id for r in ready}:
             raise NotReady(f"no approved draft {action_id}")
-        self.posted.mark(action_id)
+        await asyncio.to_thread(self.posted.mark, action_id)
         log.info("inbox: draft %s marked as posted", action_id)
 
     # ---- background revisions (C8, ADR-0019) ----------------------------------------

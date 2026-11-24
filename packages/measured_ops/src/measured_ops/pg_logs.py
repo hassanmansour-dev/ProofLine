@@ -14,8 +14,10 @@ Tables (created if missing, idempotently):
 log line is keyed by the hash of its own text, and a posted mark by its action id.
 
 The ports are synchronous (the JSONL adapters write files inline), so each write here is
-one short synchronous round trip on its own connection (10 s connect timeout). At a few
-writes per decision that's acceptable; an async port would change every caller.
+one short synchronous round trip on its own connection (10 s connect timeout). Callers on
+an event loop (the inbox, the content agent) run every log call in a worker thread
+(`asyncio.to_thread`), so a slow database never blocks the loop. Nothing connects when an
+adapter is constructed: the tables are created on first use.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -62,10 +65,21 @@ class _Pg:
         if not url.startswith(("postgresql://", "postgres://")):
             raise ValueError("MEASURED_OPS_LOGS_URL must be a postgresql:// URL")
         self.url = url
-        with _connect(url) as conn:
-            conn.execute(SCHEMA)
+        self._ready = False
+        self._setup_lock = threading.Lock()
+
+    def _setup(self) -> None:
+        """Create the tables once, on first use (never in __init__: no I/O at construction)."""
+        if self._ready:
+            return
+        with self._setup_lock:
+            if not self._ready:
+                with _connect(self.url) as conn:
+                    conn.execute(SCHEMA)
+                self._ready = True
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
+        self._setup()
         with _connect(self.url) as conn:
             cur = conn.execute(sql, params)
             return list(cur.fetchall()) if cur.description else []
