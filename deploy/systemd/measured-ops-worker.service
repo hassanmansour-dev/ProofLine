@@ -1,0 +1,22 @@
+# Ubuntu option (C10 deploy proposal): the digest worker (07:00 and 21:00 America/Toronto,
+# ADR-0023) as a systemd USER unit. Same install steps and assumptions as the inbox unit.
+[Unit]
+Description=Measured Ops worker (scheduled digests; runs no agent)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/measured-ops-private
+EnvironmentFile=%h/.config/measured-ops/env
+Environment=TZ=America/Toronto
+# One process: a lock file refuses a second worker.
+ExecStart=%h/.local/bin/uv run --frozen python -m measured_ops.worker run
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

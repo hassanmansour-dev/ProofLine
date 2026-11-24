@@ -1,0 +1,28 @@
+# Ubuntu option (C10 deploy proposal): the approval inbox as a systemd USER unit.
+# Install: copy to ~/.config/systemd/user/, then
+#   loginctl enable-linger "$USER"          # keep user units running without a login
+#   systemctl --user daemon-reload && systemctl --user enable --now measured-ops-inbox
+# Assumptions to edit: the checkout is ~/measured-ops-private (WorkingDirectory) and uv is in
+# ~/.local/bin. Secrets come from the EnvironmentFile (mode 600), never from this unit.
+[Unit]
+Description=Measured Ops approval inbox (127.0.0.1:8765, tailnet-only through Tailscale Serve)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/measured-ops-private
+EnvironmentFile=%h/.config/measured-ops/env
+Environment=TZ=America/Toronto
+# One process: the inbox refuses to start a second one (lock file).
+ExecStart=%h/.local/bin/uv run --frozen proofline inbox
+Restart=always
+RestartSec=10
+# A running inbox keeps the code it started with: restart it after every git pull.
+# Hardening that does not touch the user's home or the keyring session:
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

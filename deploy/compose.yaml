@@ -1,0 +1,89 @@
+# Measured Ops on one small always-on host (C10 deploy proposal). Run from this directory:
+#   docker compose --env-file .env up -d --build
+# Nothing here publishes a port: the inbox is reachable only over your tailnet (the
+# tailscale container shares the inbox's network namespace and runs `tailscale serve`).
+# NEVER add `ports:` to the inbox and never run `tailscale funnel` (docs/INBOX.md).
+name: measured-ops
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: measured-ops:local
+  restart: unless-stopped
+  init: true
+  env_file: .env
+  environment: &app-env
+    TZ: America/Toronto
+    # Own databases for the supervisor's checkpoints and for the logs (docs/INBOX.md).
+    MEASURED_OPS_INBOX_CHECKPOINTER_URL: postgresql://ops:${POSTGRES_PASSWORD}@postgres:5432/ops_checkpoints
+    MEASURED_OPS_LOGS_URL: postgresql://ops:${POSTGRES_PASSWORD}@postgres:5432/ops_logs
+    # One kill switch file for both containers (absolute path, ADR-0023).
+    MEASURED_OPS_KILL_SWITCH_PATH: /state/kill_switch
+  volumes:
+    - state:/state
+    - data:/app/.data
+    - outputs:/app/outputs
+    - outlook:/home/ops/.outlook-mcp
+    # Real config (tools, policy, prices, budget) from measured-ops-private, copied to
+    # ./private on the host. Read-only. Never commit ./private.
+    - ./private:/config:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ops -d ops_checkpoints"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    # Reachable from the other containers only; no published port.
+
+  inbox:
+    <<: *app
+    command: ["proofline", "inbox"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8765/login', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    <<: *app
+    # Digests at 07:00 and 21:00 America/Toronto (ADR-0023). Runs no agent.
+    command: ["python", "-m", "measured_ops.worker", "run"]
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    restart: unless-stopped
+    network_mode: service:inbox
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-measured-ops}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+    volumes:
+      - tsstate:/var/lib/tailscale
+    depends_on:
+      - inbox
+
+volumes:
+  pgdata:
+  state:
+  data:
+  outputs:
+  outlook:
+  tsstate:
