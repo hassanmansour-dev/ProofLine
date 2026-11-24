@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from measured_evals import EvalScores
 from measured_ops import AgentResult, ApprovalDecision, OpsState, Task
-from measured_ops.contracts import SERDE_ALLOWLIST, STATE_TYPES, initial_ops_state
+from measured_ops.contracts import SERDE_ALLOWLIST, STATE_TYPES, ActionOutcome, initial_ops_state
 
 # ── Task ──────────────────────────────────────────────────────────────────────
 
@@ -159,8 +159,10 @@ def test_approval_decision_feedback_is_optional() -> None:
         make_action("t1"),
         _result(actions=(make_action("t1"),)),
         ApprovalDecision(action_id="a1", approved=False, feedback="Shorter."),
+        make_action("t1", params={"issue": "DEMO-1", "labels": ["a"]}),
+        ActionOutcome(action_id="a1", type="triage_ticket", status="applied", detail="x", key="k"),
     ],
-    ids=["task", "action", "result", "decision"],
+    ids=["task", "action", "result", "decision", "action-params", "outcome"],
 )
 def test_models_round_trip_json(model: BaseModel) -> None:
     assert type(model).model_validate_json(model.model_dump_json()) == model

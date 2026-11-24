@@ -25,6 +25,9 @@ inbox = [
     "python-multipart>=0.0.20",
     "uvicorn>=0.38",
 ]
+tools = [
+    "mcp>=2.3,<3",
+]
 
 [tool.uv.sources]
 measured-evals = { workspace = true }

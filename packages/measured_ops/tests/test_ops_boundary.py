@@ -37,3 +37,40 @@ def test_source_never_imports_proofline() -> None:
 
 def test_demo_policy_ships_with_the_package() -> None:
     assert (SRC / "config" / "approval_policy.demo.toml").is_file()
+
+
+def test_demo_tools_config_ships_with_the_package() -> None:
+    assert (SRC / "config" / "tools.demo.toml").is_file()
+
+
+def test_the_base_package_never_imports_mcp() -> None:
+    # `mcp` is the optional `tools` extra (C5, ADR-0022): the contracts, the supervisor,
+    # the policy and the executor layer must import without it.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import measured_ops, measured_ops.supervisor, measured_ops.tools, "
+        "measured_ops.tools.config; assert 'mcp' not in sys.modules, 'mcp imported'"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_tests_never_see_the_developers_runtime_config() -> None:
+    # Review: with these exported in a shell, tests could write real Postgres logs,
+    # run under a real budget or start real MCP servers. The root conftest clears them.
+    import os
+
+    for name in ("MEASURED_OPS_LOGS_URL", "MEASURED_OPS_BUDGET_PATH", "MEASURED_OPS_TOOLS_CONFIG"):
+        assert name not in os.environ, name
+
+
+def test_tests_cannot_open_postgres_logs_outside_the_test_database() -> None:
+    import pytest
+
+    from measured_ops.pg_logs import PostgresJudgeLog, PostgresPostedLog
+
+    for cls in (PostgresJudgeLog, PostgresPostedLog):
+        with pytest.raises(AssertionError, match="real Postgres logs"):
+            cls("postgresql://someone@db.example.com/ops")

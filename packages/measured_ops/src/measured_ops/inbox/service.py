@@ -26,6 +26,12 @@
   stopped run and `start()` continues each one once, with `ainvoke(None)`: safe there
   because no interrupt is pending (ADR-0016 forbids it only at a pending gate). C10
   moves this to a worker with budget caps.
+- Approved actions run in `decide` (C5, ADR-0022): after the gate step it continues through
+  `execute` synchronously (a tool call takes seconds) and stops before a `revise`, which goes
+  to the background as above. If an execution fails, the decision still stands, the run is
+  "stopped" (Retry continues it; executors read before they write, so nothing applies
+  twice) and the outcome says so. A run waiting to execute an action a human approved is
+  "stopped" at once; one executing an "auto" action may be another process's first pass.
 - Double taps: the interrupt id is the real guard (an answer for an interrupt that is
   no longer pending is `AlreadyDecided`). The per-thread lock only serialises two taps
   arriving at once, and it is in-process, so the inbox runs as one process (ADR-0017).
@@ -38,8 +44,8 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
-from typing import Any, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.types import Command
@@ -47,18 +53,20 @@ from pydantic import ValidationError
 
 from measured_evals import ModelPrice, total_by_agent
 from measured_evals.scores import DEFAULT_THRESHOLD
-from measured_ops.contracts import ApprovalDecision, PendingAction, Task
-from measured_ops.judge_log import JudgeLog, judge_log_from_env
+from measured_ops.contracts import ActionOutcome, ApprovalDecision, OpsState, PendingAction, Task
+from measured_ops.judge_log import JudgeLog, judge_log_from_env, setup_log
+from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
 from measured_ops.policy import ActionBlockedError, ApprovalPolicy
-from measured_ops.posted import JsonlPostedLog, posted_log_from_env
+from measured_ops.posted import PostedLog, posted_log_from_env
 from measured_ops.prices import load_model_prices
-from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision
+from measured_ops.supervisor import DEFAULT_MAX_REVISIONS, task_revision, unexecuted
 from measured_ops.tracing import masked_tracing_callbacks
 
 log = logging.getLogger("measured_ops.inbox")
 
 RECURSION_LIMIT = 40
 DEFAULT_REVISION_TIMEOUT_S = 600.0
+DEFAULT_EXECUTE_TIMEOUT_S = 120.0  # running approved actions after one decision
 RunState = Literal["queued", "running", "stopped", "elsewhere"]
 
 
@@ -212,6 +220,23 @@ async def list_ready(
 
 
 @dataclass(frozen=True)
+class FailedRun:
+    """A run that ended with a failed agent result (e.g. stopped by its budget): nothing
+    is waiting and nothing will come back, so the human has to be told."""
+
+    thread_id: str
+    agent: str
+    goal: str
+    task_id: str
+    error: str
+    ended_at: str
+
+
+FAILED_WINDOW = timedelta(days=7)  # how long an ended, failed run stays on the list
+ERROR_MAX = 300
+
+
+@dataclass(frozen=True)
 class RunStatus:
     """A run that isn't waiting for a human: revising here, cut off, or busy elsewhere."""
 
@@ -227,6 +252,10 @@ class Outcome:
     approved: bool
     still_paused: bool  # the run paused again, on its next action
     revising: bool = False  # a rejection with feedback: the revision runs in the background
+    executed: tuple[ActionOutcome, ...] = ()  # what ran during this decision (C5)
+    failed: bool = False  # running an approved action failed: the run is stopped (C5)
+    kill_switch: bool = False  # ... because the kill switch is on (C10)
+    timed_out: bool = False  # ... because it took longer than the execute timeout
 
 
 def _cfg(thread_id: str) -> Any:
@@ -253,10 +282,12 @@ class Inbox:
         prices: Mapping[str, ModelPrice] | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
         revision_timeout_s: float = DEFAULT_REVISION_TIMEOUT_S,
+        execute_timeout_s: float = DEFAULT_EXECUTE_TIMEOUT_S,
         judge_log: JudgeLog | None = None,
         max_revisions: int = DEFAULT_MAX_REVISIONS,
-        posted: JsonlPostedLog | None = None,
+        posted: PostedLog | None = None,
         paste_types: frozenset[str] = DEFAULT_PASTE_TYPES,
+        kill_switch: KillSwitch | None = None,
     ) -> None:
         if getattr(graph, "checkpointer", None) is None:
             raise ValueError("the inbox needs a supervisor graph compiled with a checkpointer")
@@ -266,9 +297,11 @@ class Inbox:
         # PII-masked LangSmith tracer when tracing is on (ADR-0018); [] otherwise
         self.callbacks = masked_tracing_callbacks() if callbacks is None else callbacks
         self.revision_timeout_s = revision_timeout_s
+        self.execute_timeout_s = execute_timeout_s  # running approved actions, per decision
         self.max_revisions = max_revisions  # the supervisor's cap, shown on each item
         self.posted = posted_log_from_env() if posted is None else posted
         self.paste_types = paste_types
+        self.kill_switch = kill_switch or KillSwitch.from_env()  # C10, ADR-0023
         self.judge_log: JudgeLog = judge_log_from_env() if judge_log is None else judge_log
         self._revision_slot = asyncio.Semaphore(1)  # one revision at a time (ADR-0019)
         self._revisions: dict[str, Literal["queued", "running"]] = {}
@@ -286,6 +319,10 @@ class Inbox:
                 continue  # a subgraph's checkpoint (older runs): the thread's own is enough
             seen.setdefault(configurable["thread_id"], None)
         return list(seen)
+
+    async def thread_ids(self) -> list[str]:
+        """Every supervisor thread in the checkpointer (the digest reads them, C10)."""
+        return await self._thread_ids()
 
     async def get(self, thread_id: str) -> PendingItem | None:
         """The action `thread_id` is waiting on, or None if it isn't waiting."""
@@ -408,7 +445,8 @@ class Inbox:
                 raise Refused(_reason(exc)) from exc
             except ActionBlockedError as exc:
                 raise Refused(str(exc)) from exc
-            self._log_decision(item, approved=approved)  # saved: now it's a decision
+            # saved: now it's a decision. In a thread: the log may be Postgres (C10).
+            await asyncio.to_thread(self._log_decision, item, approved=approved)
             log.info(
                 "inbox: run %s action %s %s",
                 thread_id,
@@ -416,25 +454,79 @@ class Inbox:
                 "approved" if approved else "rejected",
             )
             snap = await self.graph.aget_state(_cfg(thread_id))
+            executed: tuple[ActionOutcome, ...] = ()
+            if snap.next in (("execute",), ("gate",)):
+                # Run what was just approved (C5), then pause on the round's next action;
+                # stop before a revision, which goes to the background below.
+                before = len(snap.values.get("executed") or [])
+                try:
+                    await asyncio.wait_for(
+                        self.graph.ainvoke(None, cfg, interrupt_before=["revise"]),
+                        timeout=self.execute_timeout_s,
+                    )
+                except TimeoutError:
+                    # Cut off, possibly mid-write: Retry is safe, executors read first.
+                    log.error(
+                        "inbox: run %s: running an approved action took over %ss; stopped "
+                        "(the decision stands; retry from the inbox)",
+                        thread_id,
+                        self.execute_timeout_s,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id,
+                        approved=approved,
+                        still_paused=False,
+                        failed=True,
+                        timed_out=True,
+                    )
+                except KillSwitchEngaged:
+                    log.warning(
+                        "inbox: run %s not continued: the kill switch is on; the decision "
+                        "stands and the action runs after release",
+                        thread_id,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id,
+                        approved=approved,
+                        still_paused=False,
+                        failed=True,
+                        kill_switch=True,
+                    )
+                except Exception:
+                    log.exception(
+                        "inbox: run %s stopped while running an approved action; "
+                        "the decision stands (retry from the inbox)",
+                        thread_id,
+                    )
+                    self._stopped_here.add(thread_id)
+                    return Outcome(
+                        thread_id=thread_id, approved=approved, still_paused=False, failed=True
+                    )
+                snap = await self.graph.aget_state(_cfg(thread_id))
+                executed = tuple((snap.values.get("executed") or [])[before:])
             if snap.next == ("revise",):
                 # A revision runs the agent for minutes: in the background (ADR-0019).
                 self._schedule(thread_id, None)
                 return Outcome(
-                    thread_id=thread_id, approved=approved, still_paused=False, revising=True
+                    thread_id=thread_id,
+                    approved=approved,
+                    still_paused=False,
+                    revising=True,
+                    executed=executed,
                 )
-            if snap.next == ("gate",):
-                # The round's next action: the gate pauses on it at once.
-                out = await self.graph.ainvoke(None, cfg)
-                still_paused = isinstance(out, dict) and bool(out.get("__interrupt__"))
-                return Outcome(thread_id=thread_id, approved=approved, still_paused=still_paused)
-        return Outcome(thread_id=thread_id, approved=approved, still_paused=False)
+            still_paused = snap.next == ("gate",) and bool(snap.interrupts)
+            return Outcome(
+                thread_id=thread_id, approved=approved, still_paused=still_paused, executed=executed
+            )
 
     def _log_decision(self, item: PendingItem, *, approved: bool) -> None:
         """Judge-agreement log: ids, eval scores and the decision; never text (ADR-0019)."""
         scores = None if item.eval is None else {c.name: c.score for c in item.eval.checks}
         try:
             self.judge_log.record_decision(item.action_id, scores, approved)
-        except OSError:
+        except Exception:  # a file error or a database error
             # the decision stands; a lost log line must not undo or hide it
             log.exception("inbox: couldn't write the judge log for action %s", item.action_id)
 
@@ -445,7 +537,7 @@ class Inbox:
         return await list_ready(
             self.graph,
             await self._thread_ids(),
-            posted=self.posted.posted(),
+            posted=await asyncio.to_thread(self.posted.posted),
             paste_types=self.paste_types,
             include_posted=include_posted,
         )
@@ -456,7 +548,7 @@ class Inbox:
         ready = await self.list_ready(include_posted=True)
         if action_id not in {r.action_id for r in ready}:
             raise NotReady(f"no approved draft {action_id}")
-        self.posted.mark(action_id)
+        await asyncio.to_thread(self.posted.mark, action_id)
         log.info("inbox: draft %s marked as posted", action_id)
 
     # ---- background revisions (C8, ADR-0019) ----------------------------------------
@@ -476,7 +568,19 @@ class Inbox:
                     self.graph.ainvoke(value, {**_cfg(thread_id), "callbacks": self.callbacks}),
                     timeout=self.revision_timeout_s,
                 )
-                log.info("inbox: run %s revised", thread_id)
+                failed = await self._failed(thread_id)
+                if failed is None:
+                    log.info("inbox: run %s revised", thread_id)
+                else:
+                    # No new draft is coming: say so loudly; the page and the digest list it.
+                    # Only a budget stop's text is logged (cap names and numbers); any other
+                    # agent error stays out of the log.
+                    budget = failed.error.startswith("budget:")
+                    log.error(
+                        "inbox: run %s ended as failed: %s",
+                        thread_id,
+                        failed.error if budget else "agent error (see the inbox)",
+                    )
                 return
         except TimeoutError:
             log.error(
@@ -508,6 +612,7 @@ class Inbox:
             or snap.next
             in (("gate",), ("revise",))  # after a gate step: only the inbox stops there
             or task.parent_id is not None  # a revision: only the inbox runs those
+            or _approved_but_not_run(snap)  # an approved action: only the inbox runs those
         ):
             return RunStatus(thread_id, task.agent, task.goal, "stopped")
         # A first pass between nodes may be a `proofline propose` run in another process.
@@ -516,6 +621,47 @@ class Inbox:
         stale = age is None or age > 2 * self.revision_timeout_s
         state: RunState = "stopped" if stale else "elsewhere"
         return RunStatus(thread_id, task.agent, task.goal, state)
+
+    async def _failed(self, thread_id: str) -> FailedRun | None:
+        """The run's failure, if it has ended and its last agent result failed."""
+        snap = await self.graph.aget_state(_cfg(thread_id))
+        values = snap.values or {}
+        results = values.get("results") or []
+        task: Task | None = values.get("task")
+        if snap.next or task is None or not results or results[-1].status != "failed":
+            return None
+        return FailedRun(
+            thread_id=thread_id,
+            agent=task.agent,
+            goal=task.goal,
+            task_id=task.id,
+            error=(results[-1].error or "failed")[:ERROR_MAX],
+            ended_at=str(snap.created_at or ""),
+        )
+
+    async def failed_runs(
+        self, *, now: datetime | None = None, window: timedelta = FAILED_WINDOW
+    ) -> list[FailedRun]:
+        """Runs that ended as failed within `window`, newest first. Read from the
+        checkpointer, so a first pass that failed in another process (`proofline propose`)
+        and a restart are covered too."""
+        since = (now or datetime.now(UTC)) - window
+        out: list[FailedRun] = []
+        for thread_id in await self._thread_ids():
+            try:
+                failed = await self._failed(thread_id)
+            except Exception:
+                log.exception("inbox: can't read run %s; skipped", thread_id)
+                continue
+            if failed is None:
+                continue
+            try:
+                recent = datetime.fromisoformat(failed.ended_at) >= since
+            except ValueError:
+                recent = True  # no usable time: show it
+            if recent:
+                out.append(failed)
+        return sorted(out, key=lambda f: f.ended_at, reverse=True)
 
     async def in_progress(self) -> list[RunStatus]:
         """Runs that aren't waiting for a human and aren't finished."""
@@ -531,7 +677,9 @@ class Inbox:
         return out
 
     async def retry(self, thread_id: str) -> None:
-        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped."""
+        """Continue a stopped run in the background. AlreadyDecided if it isn't stopped;
+        KillSwitchEngaged while the kill switch is on (C10)."""
+        self.kill_switch.check()
         async with self._thread_lock(thread_id) as lock, lock:
             status = await self._status(thread_id)
             if status is None or status.state != "stopped":
@@ -544,6 +692,12 @@ class Inbox:
         if self._started:
             return
         self._started = True
+        # A log that can't be set up fails the start (write errors later are only logged).
+        await setup_log(self.judge_log)
+        await setup_log(self.posted)
+        if self.kill_switch.engaged():
+            log.warning("inbox: kill switch is on; not continuing stopped runs (Retry later)")
+            return
         for status in await self.in_progress():
             if status.state == "stopped":
                 log.info("inbox: continuing stopped run %s", status.thread_id)
@@ -559,6 +713,15 @@ class Inbox:
         for task in list(self._tasks):
             task.cancel()
         await self.wait_idle()
+
+
+def _approved_but_not_run(snap: Any) -> bool:
+    """Waiting to execute an action a human approved (C5): only the inbox gets there."""
+    if snap.next != ("execute",):
+        return False
+    waiting = unexecuted(cast(OpsState, snap.values or {}))
+    approved = {d.action_id for d in (snap.values or {}).get("decisions") or [] if d.approved}
+    return bool(waiting) and waiting[0].id in approved
 
 
 def _age_s(created_at: str | None) -> float | None:

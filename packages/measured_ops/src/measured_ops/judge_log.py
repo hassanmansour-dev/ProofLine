@@ -14,6 +14,7 @@ another (the private repo's).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -82,6 +83,20 @@ class NullJudgeLog:
         del action_id, eval_scores, approved
 
 
+async def setup_log(log: object) -> None:
+    """Run a log adapter's `setup()` if it has one (the Postgres adapters do), in a worker
+    thread, and let it raise: a log that can't be reached must fail at start-up. Write
+    errors after that are logged and never undo a decision (ADR-0023)."""
+    setup = getattr(log, "setup", None)
+    if callable(setup):
+        await asyncio.to_thread(setup)
+
+
 def judge_log_from_env() -> JudgeLog:
+    """Postgres when `MEASURED_OPS_LOGS_URL` is set (C10), else the JSONL file."""
+    if os.environ.get("MEASURED_OPS_LOGS_URL", "").strip():
+        from measured_ops.pg_logs import PostgresJudgeLog
+
+        return PostgresJudgeLog(os.environ["MEASURED_OPS_LOGS_URL"].strip())
     raw = os.environ.get(ENV)
     return JsonlJudgeLog(Path(raw) if raw else DEFAULT_PATH)

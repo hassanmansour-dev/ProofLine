@@ -1,10 +1,13 @@
-"""The supervisor graph (C2, ADR-0016; eval node C7, ADR-0018; revisions C8, ADR-0019).
+"""The supervisor graph (C2, ADR-0016; eval node C7, ADR-0018; revisions C8, ADR-0019;
+execute C5, ADR-0022).
 
-    START ─▶ call_agent ─▶ evaluate ─▶ triage ─┬─▶ gate ─┬─▶ gate      (more pending)
-                ▲                              │         ├─▶ revise ─┐ (rejected with feedback,
-                │                              │         │           │  revision < max)
-                └──────────────────────────────┼─────────┼───────────┘
-                                               └─────────┴─▶ END
+    START ─▶ call_agent ─▶ evaluate ─▶ triage ─┬─▶ execute ⟲ (one ready action per step)
+                ▲                              ├─▶ gate ───┬─▶ execute (just approved)
+                │                              │           ├─▶ gate     (more pending)
+                │                              │           ├─▶ revise ─┐ (rejected with
+                └──────────────────────────────┼───────────┼───────────┘  feedback, < max)
+                                               └───────────┴─▶ END
+    execute routes like gate: next unexecuted ready action, else gate, revise or END.
 
 - `call_agent` runs the task through the injected agent's subgraph (`run_agent`)
   and appends its `AgentResult`, plus the run's token usage per model. Agents are
@@ -27,22 +30,40 @@
   count of results (a thread may hold several tasks once C6 creates them). No
   interrupt and no I/O, so it runs once per pass; the gate is unchanged.
 
-Nothing in `ready` executes yet: tools arrive in C5. A rejection without feedback, or
-past the cap, ends the run with the decision recorded.
+- `execute` (C5, ADR-0022) runs the first `ready` action without an outcome through
+  `tools.executors.execute_action` and appends its `ActionOutcome` to `executed`: one action
+  per step, so each side effect is checkpointed before the next starts. Types with no
+  executor get a "manual" outcome (`approve_draft`, ADR-0019); an executable type without
+  configured tools, or a failed tool call (after the RetryPolicy for transient errors),
+  raises and stops the run. Executors read before they write, so re-running the step
+  after a crash finds the change in place. `evaluate` also re-checks every executable
+  action (params, target, preview, scope) before anything is scored or decided.
+
+- Before any agent runs (C10, ADR-0023): the kill switch (`killswitch.KillSwitch`, on by
+  default from the environment) and the run's budget (`budget.Budget`, optional). Both
+  raise before money is spent; the budget is also checked before every model call inside
+  the agent (`budget.guard_budget`).
+
+A rejection without feedback, or past the cap, ends the run with the decision recorded.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+import os
+from collections.abc import Awaitable, Callable, Hashable, Mapping, Sequence
+from contextlib import nullcontext
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import RetryPolicy, interrupt
 from pydantic import AfterValidator
 
 from measured_evals import EvalScores, evaluate
+from measured_evals.budget import Budget, BudgetExceeded, check_budget
 from measured_evals.checks import TARGET_CHECKS
+from measured_evals.cost import Prices
 from measured_ops.agent import (
     Agent,
     AgentContractError,
@@ -51,8 +72,14 @@ from measured_ops.agent import (
     check_agent_graph,
     run_agent,
 )
-from measured_ops.contracts import ApprovalDecision, OpsState, PendingAction, Task
+from measured_ops.budget import budget_from_env, guard_budget
+from measured_ops.contracts import AgentResult, ApprovalDecision, OpsState, PendingAction, Task
+from measured_ops.killswitch import KillSwitch
 from measured_ops.policy import ApprovalPolicy
+from measured_ops.prices import load_model_prices
+from measured_ops.tools.errors import ScopeError, ToolConfigError, ToolUnavailableError
+from measured_ops.tools.executors import Executors, execute_action
+from measured_ops.tools.specs import SPECS
 from measured_ops.usage import collect_usage
 
 log = logging.getLogger("measured_ops.supervisor")
@@ -61,12 +88,36 @@ SupervisorGraph = StateGraph[OpsState, None, OpsState, OpsState]
 Evaluator = Callable[[str, Mapping[str, object]], Awaitable[EvalScores]]
 
 
-def route_pending(state: OpsState) -> Literal["gate", "__end__"]:
-    """Pure router: back to the gate while anything waits for a human."""
+# Transient tool failures (unreachable, timed out) retry the execute step; executors
+# read before they write, so a retry never applies a change twice.
+EXECUTE_RETRY = RetryPolicy(max_attempts=3, retry_on=ToolUnavailableError)
+
+
+class _FromEnv:
+    """Default for `build_supervisor(budget=...)`: the budget the environment names."""
+
+
+FROM_ENV = _FromEnv()
+
+
+def unexecuted(state: OpsState) -> list[PendingAction]:
+    """Ready actions without an outcome yet, in the order they became ready."""
+    done = {o.action_id for o in state.get("executed") or []}
+    return [a for a in state.get("ready") or [] if a.id not in done]
+
+
+def route_pending(state: OpsState) -> Literal["execute", "gate", "__end__"]:
+    """Pure router after triage: run what's ready, then the gate while anything waits."""
+    if unexecuted(state):
+        return "execute"
     return "gate" if state.get("pending_actions") else "__end__"
 
 
 DEFAULT_MAX_REVISIONS = 3
+# Every action costs graph steps (an execute, and a gate when it needs approval). Ten
+# keeps a whole round (3 + 10 steps in one invocation at most) well inside the
+# recursion_limit of 40 that every entry point passes.
+MAX_ACTIONS_PER_RESULT = 10
 FEEDBACK_MAX = 4000  # Task.feedback's limit
 PREVIEW_SEPARATOR = "\n\n---\n\n"
 
@@ -89,8 +140,13 @@ def rejected_with_feedback(state: OpsState) -> list[tuple[PendingAction, str]]:
     ]
 
 
-def route_after_gate(state: OpsState, max_revisions: int) -> Literal["gate", "revise", "__end__"]:
-    """Pure router: next pending action; else a revision if earned and allowed; else END."""
+def route_after_gate(
+    state: OpsState, max_revisions: int
+) -> Literal["execute", "gate", "revise", "__end__"]:
+    """Pure router after gate and execute: run what's ready (an action just approved);
+    next pending action; else a revision if earned and allowed; else END."""
+    if unexecuted(state):
+        return "execute"
     if state.get("pending_actions"):
         return "gate"
     if not rejected_with_feedback(state):
@@ -191,6 +247,10 @@ def build_supervisor(
     evaluator: Evaluator = evaluate,
     target_evaluator: Evaluator | None = None,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
+    executors: Executors | None = None,
+    budget: Budget | _FromEnv | None = FROM_ENV,
+    prices: Prices | None = None,
+    kill_switch: KillSwitch | None = None,
 ) -> SupervisorGraph:
     """Wire the supervisor. Compiles and checks every agent's graph now, so a broken
     agent fails at startup, not mid-run. Compile the result with a checkpointer from
@@ -199,8 +259,32 @@ def build_supervisor(
     `eval_context` goes to every eval (e.g. `{"pii_allow": [...]}` from private
     config); `evaluator` scores each action's preview and defaults to
     `measured_evals.evaluate` (guard-v0). `target_evaluator` scores its target (a URL,
-    a repo) with the injection and PII checks only; its metrics are prefixed `target_`."""
+    a repo) with the injection and PII checks only; its metrics are prefixed `target_`.
+
+    `executors` (C5, ADR-0022; `tools.mcp.build_executors`) run executable actions once
+    they're ready. Without them an agent can't propose an executable type: `evaluate`
+    fails loudly instead of letting an approval go nowhere.
+
+    `budget` (C10, ADR-0023) caps each run's calls, tokens and cost, priced with `prices`.
+    By default it is the table `MEASURED_OPS_BUDGET_PATH` names (no caps when unset), so
+    every runner gets it without wiring; `budget=None` opts out. `prices` default to
+    `MEASURED_OPS_PRICES_PATH`, else the bundled demo table. A run that crosses a cap ends
+    with a failed `AgentResult` and its spend recorded, so it can't be resumed into more. `kill_switch` defaults to
+    `KillSwitch.from_env()`: every supervisor honours it."""
     context: Mapping[str, object] = dict(eval_context or {})
+    switch = kill_switch or KillSwitch.from_env()
+    run_budget = budget_from_env() if isinstance(budget, _FromEnv) else budget
+    run_prices: Prices = prices if prices is not None else {}
+    if prices is None and run_budget is not None:
+        raw = os.environ.get("MEASURED_OPS_PRICES_PATH", "").strip()
+        run_prices = load_model_prices(Path(raw) if raw else None)
+
+    def over_budget(task: Task, agent_name: str, exc: BudgetExceeded) -> AgentResult:
+        # numbers and cap names only (measured_evals.budget), never content
+        log.warning("supervisor: task %s stopped by its budget: %s", task.id, exc)
+        return AgentResult(
+            task_id=task.id, agent=agent_name, status="failed", summary="", error=f"budget: {exc}"
+        )
 
     async def _default_target_evaluator(text: str, ctx: Mapping[str, object]) -> EvalScores:
         return await evaluate(text, ctx, checks=TARGET_CHECKS)
@@ -225,11 +309,27 @@ def build_supervisor(
                 f"no agent named {task.agent!r} for task {task.id}; known agents: {sorted(graphs)}"
             )
         agent, graph = graphs[task.agent]
-        with collect_usage(agent.name) as usage:
+        switch.check()  # KillSwitchEngaged: nothing runs, the run stays resumable
+        prior = state.get("usage") or []
+        if run_budget is not None:
             try:
-                result = await run_agent(
-                    agent, graph, task, config=agent_run_config(agent.name, task)
-                )
+                check_budget(run_budget, prior, run_prices)  # before the agent runs
+            except BudgetExceeded as exc:
+                return {"results": [over_budget(task, agent.name, exc)], "usage": []}
+        with collect_usage(agent.name) as usage:
+            guard = (
+                guard_budget(run_budget, run_prices, prior, usage) if run_budget else nullcontext()
+            )
+            try:
+                with guard:  # and before every model call inside the agent
+                    result = await run_agent(
+                        agent, graph, task, config=agent_run_config(agent.name, task)
+                    )
+            except BudgetExceeded as exc:
+                # The run ends here, as a failed result with this pass's spend recorded:
+                # raising would lose the state update, and every Retry would then start
+                # from a fresh allowance (review B2).
+                return {"results": [over_budget(task, agent.name, exc)], "usage": usage.calls()}
             except BaseException:  # incl. cancellation (an inbox revision's timeout)
                 # the run's spend is lost with the state update: keep it in the log
                 per_model: dict[str, int] = {}
@@ -252,14 +352,25 @@ def build_supervisor(
         return {"results": [result], "usage": usage.calls()}
 
     async def evaluate_actions(state: OpsState) -> dict[str, Any]:
-        decided = {d.action_id for d in state.get("decisions") or []}
-        reused = sorted(a.id for a in state["results"][-1].actions if a.id in decided)
-        if reused:
-            # Revisions key on action ids: a reused id could match an earlier round's
-            # rejection and revise again (C8 review). Ids must be new every round.
+        proposed = len(state["results"][-1].actions)
+        if proposed > MAX_ACTIONS_PER_RESULT:
             raise AgentContractError(
-                f"agent {state['task'].agent!r} reused already-decided action ids {reused}"
+                f"agent {state['task'].agent!r} proposed {proposed} actions; a result has "
+                f"at most {MAX_ACTIONS_PER_RESULT} actions"
             )
+        # Decisions, outcomes and revisions are all keyed by action id, so an id from an
+        # earlier round could match an old rejection (and revise again, C8 review) or an
+        # old outcome (and an approved action would silently never run). Ids are new
+        # every round.
+        seen = {a.id for r in state["results"][:-1] for a in r.actions}
+        seen |= {d.action_id for d in state.get("decisions") or []}
+        reused = sorted(a.id for a in state["results"][-1].actions if a.id in seen)
+        if reused:
+            raise AgentContractError(
+                f"agent {state['task'].agent!r} reused action ids {reused} from an earlier round"
+            )
+        for action in state["results"][-1].actions:
+            check_executable(action)
         scored: list[PendingAction] = []
         for action in state["results"][-1].actions:
             scores = _merge(
@@ -275,6 +386,20 @@ def build_supervisor(
             )
             scored.append(action.model_copy(update={"eval_scores": scores}))
         return {"evaluated_actions": scored}
+
+    def check_executable(action: PendingAction) -> None:
+        """An executable action must render to what it runs, in scope, with an executor."""
+        if action.type not in SPECS:
+            return
+        if executors is None:
+            raise AgentContractError(
+                f"action {action.id} is {action.type}, which runs through an executor, and "
+                "this supervisor has no tools configured"
+            )
+        try:
+            executors.check(action)  # AgentContractError on a params/preview mismatch
+        except (ScopeError, ToolConfigError) as exc:
+            raise AgentContractError(f"action {action.id} ({action.type}): {exc}") from exc
 
     async def triage(state: OpsState) -> dict[str, Any]:
         ready: list[PendingAction] = []
@@ -304,6 +429,17 @@ def build_supervisor(
             "ready": [action] if decision.approved else [],
         }
 
+    async def execute(state: OpsState) -> dict[str, Any]:
+        # One action per step: its outcome is checkpointed before the next one runs.
+        action = unexecuted(state)[0]
+        if action.type in SPECS:
+            # The kill switch stops writes too, not only agent runs (ADR-0023). Not
+            # retried: the run stops here with the decision saved, and the action runs
+            # once after release. A "manual" outcome runs nothing, so it isn't stopped.
+            switch.check()
+        outcome = await execute_action(action, executors)
+        return {"executed": [outcome]}
+
     async def revise(state: OpsState) -> dict[str, Any]:
         # No interrupt, no I/O: runs once per pass (ADR-0019).
         task = revision_task(state)
@@ -322,15 +458,23 @@ def build_supervisor(
     builder.add_node("evaluate", evaluate_actions)
     builder.add_node("triage", triage)
     builder.add_node("gate", gate)
+    builder.add_node("execute", execute, retry_policy=EXECUTE_RETRY)
     builder.add_node("revise", revise)
     builder.add_edge(START, "call_agent")
     builder.add_edge("call_agent", "evaluate")
     builder.add_edge("evaluate", "triage")
-    builder.add_conditional_edges("triage", route_pending, {"gate": "gate", END: END})
     builder.add_conditional_edges(
-        "gate",
-        lambda state: route_after_gate(state, max_revisions),
-        {"gate": "gate", "revise": "revise", END: END},
+        "triage", route_pending, {"execute": "execute", "gate": "gate", END: END}
     )
+    after: dict[Hashable, str] = {
+        "execute": "execute",
+        "gate": "gate",
+        "revise": "revise",
+        END: END,
+    }
+    for node in ("gate", "execute"):
+        builder.add_conditional_edges(
+            node, lambda state: route_after_gate(state, max_revisions), after
+        )
     builder.add_edge("revise", "call_agent")
     return builder

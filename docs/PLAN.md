@@ -42,8 +42,8 @@ The content pipeline above becomes the seed of the **content agent** (C8). Its
 critic becomes the first rubric in the eval/guard node (C7).
 
 Open from the earlier Week 0–1:
-- [ ] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it).
-  The first live run's hook was weak because this file is still empty
+- [x] Fill in `docs/BRAND_VOICE.md` (your words; the writer and critic depend on it).
+  Filled by Hassan. The first live run's hook was weak because the file was still empty then
 - [x] First live run with a real key (input for the content agent's rubric)
 
 What the first live run surfaced (fix in the step named, not before):
@@ -245,7 +245,38 @@ Waits on: C3 ✅. Reads run freely; every write goes through the approval policy
 (calendar blocks need approval, per C3; ticket triage is auto); `approve_draft` never
 gets an executor (ADR-0019); the executor handles a revision re-proposing an action
 that was already approved. Real credentials only in the environment or
-measured-ops-private; tests use fakes. Plan and checklist: to come with Hassan's review.
+measured-ops-private; tests use fakes. Decisions: ADR-0022 (proposed). Built on branch
+`c5/mcp-tools` with Hassan's go to proceed (2026-11-23); the checklist below was drafted
+from this section and GROW-84, for his review on the PR.
+
+- [x] Read/write split by construction: agents get read ports (Jira search / issue /
+  transitions, calendar events); write tools live only in the supervisor's executors;
+  each MCP client has a tool allowlist, and a tool can't be both read and write
+- [x] Every write is a `PendingAction` through the policy: `triage_ticket` (auto) and
+  `schedule_calendar_block` (approval, per C3) in the demo table; unknown types still
+  default to approval; the preview and target are rendered from `PendingAction.params`
+  and re-checked, so what's approved is what runs; out-of-scope projects and calendars
+  are refused
+- [x] `execute` node: one ready action per step, read-before-write and verified;
+  `approve_draft` gets a "manual" outcome and can never have an executor; a revision
+  re-proposing an applied change is found in place ("already_applied"); a failed call
+  stops the run with the decision saved, transient ones retried; the inbox runs approved
+  actions and shows "Stopped" + Retry on failure
+- [x] MCP client on `mcp` 2.3 (optional `tools` extra): stdio and streamable HTTP, secrets
+  only from env vars the config names; demo MCP servers + demo tools config;
+  `python -m measured_ops.tools check|list` to verify a config against real servers
+- [x] e2e: an agent reads the tracker over MCP, proposes a ticket move, approval applies it
+  across a restart; rejection doesn't; auto applies without pausing (SQLite + Postgres)
+- [x] Private side (measured-ops-private, branch `c5/tools-config` on top of
+  `policy/c5-tool-actions`): tools config skeleton with `[NEEDS HASSAN]` values, and its
+  tests (loads with the public loader; policy never looser than the demo)
+- [ ] Hassan: choose the Jira and personal-calendar MCP servers, fill the private tools
+  config (tool names, credential env vars, the personal calendar's id), and run
+  `uv run python -m measured_ops.tools check --config config/tools.toml` on his machine
+- [ ] Hassan: review the PR and ADR-0022; green in CI (Postgres e2e)
+
+**Done when:** e2e passes in CI and the private config passes `tools check` against the
+real servers.
 
 ### C9 · A week of real use (GROW-88)
 
@@ -258,14 +289,39 @@ comments. Feeds the golden set (GROW-13) and content agent v1 (GROW-9).
 
 ### C10 · Staging as scheduled jobs (GROW-89)
 
-Waits on: C8. Daily digests, budget caps, kill switch, own infra only.
+Waits on: C8. Daily digests, budget caps, kill switch, own infra only. Decisions:
+ADR-0023 (proposed). The parts that need neither C9 nor Hassan's accounts are built on
+branch `c10/staging-jobs` (Hassan's go, 2026-11-23); nothing here waits on C9.
 
 - [ ] First real run of the bootstrap's Supabase step (hosted project): moved here
   from C0, because the free tier is full. Check that `projects create` reads the DB
   password from the environment and that `-o json` (not `--output-format json`)
-  gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier)
-- [ ] Judge log and posted marks move into Postgres when runs are hosted (now local
-  JSONL files under `.data/`, ADR-0019, ADR-0020; Hassan, 2026-11-16)
+  gives JSON on `supabase@2.122.0`, then add migrations (`db push`, production tier).
+  Hassan, on his machine, in the SanoVinci Supabase organization (GROW-89, 2026-11-14)
+- [x] Judge log and posted marks can live in Postgres (`MEASURED_OPS_LOGS_URL`;
+  `python -m measured_ops.worker import-logs` copies the JSONL files in, idempotently).
+  Switching them over waits for hosted runs (ADR-0019, ADR-0020; Hassan, 2026-11-16)
+- [x] Kill switch: one file (`~/.measured_ops/kill_switch`) stops every agent run and
+  every approved or auto write before it starts; every supervisor reads it by default;
+  the inbox won't retry or sweep while it's on (`worker kill|release`)
+- [x] Budget caps per run: every supervisor takes them from `MEASURED_OPS_BUDGET_PATH`
+  (so: only in processes where that variable is set; unset = no caps); checked before
+  each agent run and before every model call (ADR-0021's guard, wired); unknown cost and
+  calls without usage fail closed; a run that crosses a cap ends as failed with its
+  spend recorded. Not covered: `proofline run`, and the usage of a pass cut off by a
+  timeout or crash (ADR-0023)
+- [x] Review of the integration branch (2026-11-24): two blockers, six should-fixes and
+  three nits fixed, each with a test (ADR-0022 §5b, ADR-0023); second review: failed
+  runs shown in the inbox and the digest, log setup at start-up
+- [x] Digests: read-only Markdown (waiting, stopped, drafts to paste, cost, kill switch),
+  `worker digest` once or `worker run` at 07:00 and 21:00 America/Toronto, written to
+  `outputs/digests/`
+- [ ] Hassan: real caps in measured-ops-private (`MEASURED_OPS_BUDGET_PATH`) and how a
+  digest reaches the phone (a channel is "message a real person": his decision)
+- [ ] Hassan: where the worker and inbox run (his machine or hosted), then the deploy
+  (an approval-policy action), then 3 unattended days with digests arriving
+- [ ] After C6 (it creates tasks): a daily cap, and revisions moved from the inbox to the
+  worker (ADR-0019)
 
 **Done when:** it runs unattended for 3 days with digests arriving.
 
@@ -285,6 +341,13 @@ week of phone review → enable. Never two new agents at once. Order:
   fact-checker, read-only knowledge MCP server
 - **Golden set, 20 topics** (GROW-13) · waits on C9: seeded from real edits;
   doubles as Measured Lab's first exercises
+- **Golden-set runner** (under GROW-14; no ticket of its own yet) ✅ built on branch
+  `evals/golden-runner`: `uv run proofline golden --out outputs/golden/<run>` runs the real
+  pipeline on each approved item with the item's own fixture sources (no search), saves
+  `<item-id>.md` in the shape the checks read and `critic_scores.json` for the calibration
+  sheet; resumable, one failed item doesn't stop the rest. Then `python -m measured_evals
+  run --approved-only --outputs outputs/golden/<run>`. The real run is Hassan's (keys,
+  model cost); tests use fake models (`docs/EVALS.md`, "Making it real")
 - **DeepEval + promptfoo in CI, publish `measured-evals`** (GROW-14) · waits on GROW-13.
   Measured Lab v0 (GROW-68) and Measured Index #1 (GROW-67) wait on this
 - **Production hardening** (GROW-15): cost budgets, injection suite, auth, rate limits
@@ -294,7 +357,7 @@ week of phone review → enable. Never two new agents at once. Order:
 - **L1 Case study + demo video** (GROW-16) · waits on C8 traces; demo uses the
   public demo config, no private data on screen
 - **L2 Public launch** (GROW-17) · waits on L1 and GROW-14: re-run the pre-public
-  check, choose a licence, tag `v1.0.0`, publish `measured-evals`, case study on
+  check, ~~choose a licence~~ (done: Apache-2.0, PR #23), tag `v1.0.0`, publish `measured-evals`, case study on
   hassanmansour.com, build post #3. **This gate opens Phase 2.**
 
 ## Phase 2 — Use the evidence (after L2)

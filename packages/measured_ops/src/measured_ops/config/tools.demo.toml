@@ -1,0 +1,90 @@
+# Demo tools config (public, C5, ADR-0022). It points at the demo MCP servers bundled
+# with this package (measured_ops.tools.demo_servers): a Jira-like tracker and a
+# calendar with demo data in .data/demo_tools.json. Real servers, project keys and
+# calendar ids live in measured-ops-private, loaded with load_tools_config(path) or
+# MEASURED_OPS_TOOLS_CONFIG.
+#
+# No secret is ever written here. A server gets credentials only from env vars this
+# file names: `env_from` (stdio) or `headers_from_env` (http). Check a config against
+# the servers' own tool lists with `python -m measured_ops.tools check [--config PATH]`.
+#
+# Read tools go to agents; write tools only to the executors. A tool can't be both.
+
+version = 1
+
+[servers.jira]
+transport = "stdio"
+command = "{python}"  # the interpreter running Measured Ops
+args = ["-m", "measured_ops.tools.demo_servers", "jira"]
+env_from = ["MEASURED_OPS_DEMO_TOOLS_STATE"]
+timeout_s = 30
+
+[servers.calendar]
+transport = "stdio"
+command = "{python}"
+args = ["-m", "measured_ops.tools.demo_servers", "calendar"]
+env_from = ["MEASURED_OPS_DEMO_TOOLS_STATE"]
+timeout_s = 30
+
+# ---- Jira: triage_ticket (policy: auto) ------------------------------------------------
+[jira]
+server = "jira"
+projects = ["DEMO"]  # only these projects are read or changed
+
+[jira.tools.search]  # read
+tool = "search_issues"
+args = { jql = "jql", limit = "limit" }
+items = "issues"
+
+[jira.tools.get_issue]  # read
+tool = "get_issue"
+args = { key = "key" }
+
+[jira.tools.transitions]  # read
+tool = "get_transitions"
+args = { key = "key" }
+items = "transitions"
+
+[jira.tools.transition]  # write
+tool = "transition_issue"
+args = { key = "key", transition_id = "transition_id" }
+
+[jira.tools.update]  # write
+tool = "update_issue"
+args = { key = "key", labels = "labels", priority = "priority" }
+
+[jira.fields]  # where each issue field is in a result (dotted paths)
+key = "key"
+summary = "summary"
+status = "status"
+labels = "labels"
+priority = "priority"
+
+[jira.transition_fields]
+id = "id"
+to_status = "to"
+
+# ---- Calendar: schedule_calendar_block (policy: approval, per C3) ----------------------
+[calendar]
+server = "calendar"
+# alias → calendar id. Personal calendars only, never a work calendar.
+calendars = { personal = "demo-personal" }
+
+[calendar.tools.list_events]  # read
+tool = "list_events"
+args = { calendar_id = "calendar_id", start = "time_min", end = "time_max" }
+items = "events"
+
+[calendar.tools.create_event]  # write
+tool = "create_event"
+args = { calendar_id = "calendar_id", title = "summary", start = "start", end = "end", description = "description" }
+id = "id"
+
+[calendar.fields]
+# Event times are read in the shapes servers send: ISO 8601 with an offset or Z, with a
+# zone label ("2026-12-01T14:00:00.0000000 (UTC)"), or a {dateTime, timeZone} pair. A time
+# with no zone at all is an error unless you name its zone: time_zone = "UTC".
+id = "id"
+title = "summary"
+start = "start"
+end = "end"

@@ -1,7 +1,20 @@
 # ADR-0016: Supervisor graph, approval gate and Postgres checkpointer
 
 - Status: accepted (2026-11-14, Hassan's review on PR #9). Amends
-  ADR-0014 on `pending_actions` ownership (see State).
+  ADR-0014 on `pending_actions` ownership (see State). Amended by ADR-0022 (C5): an
+  `execute` node now consumes `ready`, one action per step, after triage and after the
+  gate; the gate itself is unchanged (nothing before `interrupt()`, nothing raised
+  after it), and the inbox's `ainvoke(None)` after a committed gate step is the same
+  safe case as before (no interrupt pending).
+- Amendment (2026-11-24, verified on langgraph 1.2.16): "a bare re-run after a refusal
+  replays the refused answer" holds only for an answer sent **unkeyed**
+  (`Command(resume=value)`). An answer **keyed by interrupt id**
+  (`Command(resume={interrupt_id: value})`, how the inbox answers) leaves nothing
+  behind when refused: `ainvoke(None)` then pauses at the gate again with the same
+  interrupt and nothing decided. The rule is unchanged, since a caller can't rely on
+  which form was used: answer a waiting gate with a new `Command`, never a bare re-run.
+  Tests: `test_a_bare_rerun_after_an_unkeyed_refusal_replays_the_refused_answer`,
+  `test_a_bare_rerun_after_a_keyed_refusal_just_pauses_again`.
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C2 (GROW-81)
 

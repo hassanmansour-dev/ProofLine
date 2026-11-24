@@ -3,10 +3,13 @@
 Status: **linear flow built** (ADR-0012); **Measured Ops contract built** (C1,
 ADR-0014); **supervisor and approval gate built** (C2, ADR-0016); **approval inbox
 built** (C4, ADR-0017); **eval/guard node built** (C7, ADR-0018); **content agent and
-same-thread revisions built** (C8, ADR-0019). Sections 3–11
+same-thread revisions built** (C8, ADR-0019); **MCP tools and the execute node built**
+(C5, ADR-0022); **kill switch, per-run budget, digests and Postgres logs built** (C10 parts,
+ADR-0023). Sections 3–11
 describe the content pipeline, which becomes the Measured Ops content agent
 (ADR-0013). Section 13 describes Measured Ops itself: the contract, the agent
-interface, the approval policy, the supervisor, its eval node, its gate and the inbox. Planned parts
+interface, the approval policy, the supervisor, its eval node, its gate, the tools and
+executors, and the inbox. Planned parts
 are marked ⟶ with the `docs/PLAN.md` step that brings them, so the design doesn't
 need to be torn up when they land.
 
@@ -27,13 +30,15 @@ packages/
                     the content agent (`proofline.agent.ContentAgent`)
   measured_ops/     Measured Ops: contracts, agent interface, approval policy (C1);
                     supervisor + gate + checkpointer (C2); inbox (C4); eval node,
-                    usage collection, price table (C7)
+                    usage collection, price table (C7); MCP tools, executors and the
+                    execute node (C5, `tools` extra)
   measured_evals/   eval + security layer: guard-v0 checks (quality, injection, PII)
                     and usage cost (C7); golden sets, judge metrics, budgets (GROW-14/15)
 ```
 
 Dependencies point one way: **proofline → measured_ops → measured_evals**, never
-back (ADR-0014; `proofline` depends on `measured_ops` since C8). The
+back (ADR-0014; `proofline` depends on `measured_ops` since C8, and declares
+`measured_evals` directly since the golden-set runner reads its golden sets). The
 supervisor gets agents injected, so `measured_ops` never imports `proofline`
 (`packages/measured_ops/tests/test_ops_boundary.py`). `measured_evals` is published
 as open source at launch and reused by a separate web app (Measured Lab), so it
@@ -112,6 +117,9 @@ guarantee (ADR-0007). Wired with `researcher.RETRY_POLICY` (3 attempts, retries 
   `max_sources`, truncates, **assigns `S1..Sn` in code**, and makes one structured LLM
   call for findings. Sources reach the model inside escaped `<source>` tags, as
   untrusted data.
+- `FixtureResearcher` (`proofline golden` only): a golden item's own fixture sources, ids
+  kept as written, findings from the same `extract_findings` call as `WebResearcher`; an
+  item with no sources gets empty notes and no call.
 - ⟶ Content agent v1 (GROW-9): a web-search agent behind the same protocol; graph.py doesn't change.
 
 **writer** — reads `outline, research_notes, run_config` (+ `draft, critique,
@@ -164,6 +172,13 @@ use a `JsonPlusSerializer` whose `allowed_msgpack_modules` lists every state mod
 ## 9. Interfaces
 
 **CLI** (`cli.py`, Typer):
+- `proofline golden --out outputs/golden/<run> [--item ID] [--all] [--overwrite]`
+  (`golden.py`, GROW-14): the full pipeline on each approved golden item, with
+  `research/fixture.py`'s `FixtureResearcher` (the item's own sources, ids kept as written,
+  findings from the same `extract_findings` step `WebResearcher` uses; no search). Saves
+  `<item-id>.md` (title, hook, body, call to action; no Sources list) and
+  `critic_scores.json`, under `outputs/` only; skips items already saved; a failed item
+  is reported and the rest run. `measured_evals run --outputs` checks the files.
 - `proofline propose --topic … --audience …` (C8) runs the supervisor with the content
   agent against the inbox's database (`MEASURED_OPS_INBOX_CHECKPOINTER_URL`), masked
   tracing on, and prints the run's id once the draft waits at the gate; a failed draft
@@ -205,8 +220,13 @@ inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
 
 - Web content is data, never instructions: escaped inside `<source>` and
   `<research_notes>` tags, with an explicit rule in every prompt that sees it; no
-  tools in the linear flow, so injected instructions have nothing to act on. From
-  C5, tool writes go through the approval policy.
+  tools in the linear flow, so injected instructions have nothing to act on.
+- Tools (C5, ADR-0022): agents hold read ports only; writes run only in the supervisor's
+  executors, after the policy (and the gate, where it asks). An executable action's
+  preview and target are rendered from its params and re-checked, so what's approved is
+  what runs; Jira projects and calendars outside the config are never read or changed.
+  No secret is written in a tools config: servers get credentials from env vars it names.
+  Tool results are untrusted data (ADR-0021's inbound screen isn't wired to them yet).
 - Secrets only from env; `.env` is unreadable to Claude Code (hooks + deny rules).
 - Nothing private in this public repo, checked twice (C0): `.pre-commit-config.yaml`
   runs gitleaks and `scripts/pii_scan.py` (emails, phone numbers, SINs) on every
@@ -233,7 +253,7 @@ inbox prices them. ⟶ GROW-15: cost budgets and alerts via `measured_evals`.
 ```
 Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
                                │
-               policy.decide(action) ── "auto" ──▶ ready (runs from C5)
+               policy.decide(action) ── "auto" ──▶ ready ──▶ execute ──▶ ActionOutcome (C5)
                                │      └── "never" ──▶ blocked + logged, no inbox
                            "approval" ──▶ gate ──▶ ApprovalDecision ──▶ ready | rejected
                                                        │        (C2 gate, C4 inbox)
@@ -245,16 +265,17 @@ Task ──agent subgraph──▶ AgentResult(actions=[PendingAction, ...])
 | Model | Fields | Rules |
 |---|---|---|
 | `Task` | `id`, `agent`, `goal`, `inputs` (JSON), `feedback`, `parent_id`, `created_at` | `agent` is snake_case; `feedback` needs a `parent_id` (a revision) |
-| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` written only by the eval node (C7, ADR-0018), never by the agent |
+| `PendingAction` | `id`, `task_id`, `type`, `target`, `preview`, `params` (C5), `eval_scores`, `risk_level`, `created_at` | `type` is a policy key (snake_case); `risk_level` ∈ low/medium/high; `eval_scores` written only by the eval node (C7, ADR-0018), never by the agent; `params` (JSON, default empty) are an executable action's arguments, and its `target` and `preview` must be the ones they render to (C5, ADR-0022) |
 | `AgentResult` | `task_id`, `agent`, `status`, `summary`, `actions`, `error`, `finished_at` | failed ⇔ `error`; failed proposes no actions; every action belongs to this task; action ids unique |
 | `ApprovalDecision` | `action_id`, `approved`, `feedback`, `decided_at` | the gate's resume value |
+| `ActionOutcome` | `action_id`, `type`, `status`, `key`, `detail`, `ref`, `finished_at` | C5: one per ready action, written only by `execute`; `status` ∈ applied / already_applied / manual; `key` = the change's identity hash; `ref` = the external id touched |
 
 `OpsState` (TypedDict, ADR-0002): `task`; `results`, `decisions`, `blocked`,
-`ready` and `usage` (C7) with `operator.add` reducers; `evaluated_actions` (C7, no
+`ready`, `executed` (C5) and `usage` (C7) with `operator.add` reducers; `evaluated_actions` (C7, no
 reducer, one writer: `evaluate`); `pending_actions` (no reducer: `triage` sets
 it, `gate` pops it, which is fine while one agent runs at a time; ADR-0016).
 Every proposed action ends in exactly one of `ready`, `blocked`, or rejected (its
-decision in `decisions`).
+decision in `decisions`), and every `ready` action gets exactly one `ActionOutcome` (C5).
 `initial_ops_state(task)` sets every field. `contracts.SERDE_ALLOWLIST` is built
 from `STATE_TYPES` and must be passed to the supervisor's checkpointer (ADR-0006).
 
@@ -270,7 +291,8 @@ propose actions; they never execute anything that leaves the system.
 `"auto"`, `"approval"` or `"never"`. `load_policy()` reads the public demo table
 bundled at `measured_ops/config/approval_policy.demo.toml` (rows from GROW-69, plus
 `bulk_export_personal_data` and `act_outside_own_systems` as `"never"`, and
-`approve_draft` as `"approval"` since C8);
+`approve_draft` as `"approval"` since C8; since C5 `schedule_calendar_block` as
+`"approval"` (C3) in place of `schedule_internal_block`, and `triage_ticket` stays `"auto"`);
 `load_policy(path)` reads the private one. `decide(action)`:
 
 1. row is `"never"` → **never**: blocked, logged at WARNING (id, type, task; never the
@@ -323,13 +345,17 @@ outside LangChain aren't seen. Prices match the exact model id the response repo
 returns the uncompiled `StateGraph`; compile it with a checkpointer.
 
 ```
-START → call_agent → evaluate → triage ─┬→ gate ─┬→ gate   (more pending)
-           ▲                            │        ├→ revise ─┐   (rejected with feedback, revision < max)
+START → call_agent → evaluate → triage ─┬→ execute ⟲            (C5: one ready action per step)
+           ▲                            ├→ gate ─┬→ execute     (just approved)
+           │                            │        ├→ gate        (more pending)
+           │                            │        ├→ revise ─┐   (rejected with feedback, revision < max)
            └────────────────────────────┼────────┼──────────┘
-                                        └────────┴→ END
+                                        └────────┴→ END         (execute routes like gate)
 ```
-`route_pending` (pure, after triage): "gate" while `pending_actions` is non-empty, else
-END. `route_after_gate` (pure, C8): more pending → gate; else this round has a
+`route_pending` (pure, after triage): "execute" while a `ready` action has no outcome
+(C5), else "gate" while `pending_actions` is non-empty, else END. `route_after_gate`
+(pure, C8; after `gate` and `execute`): an unexecuted ready action → execute; more
+pending → gate; else this round has a
 rejection with feedback and the task's `revision` (`Task.inputs["revision"]`, 0 when
 absent) is below `max_revisions` (default 3) → revise; else END. An invalid revision
 number fails closed (END, logged).
@@ -344,7 +370,12 @@ number fails closed (END, logged).
   `evaluator` (default `measured_evals.evaluate`) and the supervisor's `eval_context`,
   plus its `target` with the injection and PII checks (metrics `target_injection`,
   `target_pii`), and writes the scored copies to `evaluated_actions`. The agent's own result stays
-  unscored. It logs pass/fail with metric names only.
+  unscored. It logs pass/fail with metric names only. It refuses a result with more than 10
+  actions, or with an action id seen in an earlier result or decision (ids key decisions and
+  outcomes). First (C5) it re-checks every
+  executable action (`tools.specs.SPECS`): params valid, target and preview equal to what
+  they render, in the configured scope, with an executor configured; otherwise it raises
+  `AgentContractError` and nothing reaches triage.
 - `triage` calls `policy.decide` once per scored action (never in the gate, which re-runs on
   resume): auto → `ready`, never → `blocked`, approval → `pending_actions`.
 - `gate` pauses on the head of `pending_actions` with `interrupt(payload)`, where the
@@ -355,8 +386,11 @@ number fails closed (END, logged).
   waiting action, and `check_decision` runs. A bad answer raises to the caller
   (`ValidationError`, or `ActionBlockedError`, which `is_invalid_resume` doesn't
   mark: catch both), nothing is bound to the gate task, and the run stays paused
-  for a new `Command(resume=...)`. The refused value stays as the pending resume
-  until then, so never retry with a bare `ainvoke(None)`. (Raising after
+  for a new `Command(resume=...)`. A refused **unkeyed** answer (`Command(resume=value)`)
+  stays as the pending resume until then, and a bare `ainvoke(None)` replays it; a
+  refused answer **keyed by interrupt id** leaves nothing, and `ainvoke(None)` just
+  pauses again, undecided (ADR-0016 amendment). Either way, never retry with a bare
+  `ainvoke(None)`. (Raising after
   `interrupt()` returns would bind the bad answer and replay it on every resume.) An approved action goes
   to `ready`; a rejection is recorded.
 - `revise` (C8, ADR-0019) builds the next `Task` for the same agent: `parent_id` = the
@@ -365,7 +399,82 @@ number fails closed (END, logged).
   `revision` (+1). It writes `task` and the graph returns to `call_agent`; no interrupt
   and no I/O, so it runs once per pass, and the gate is unchanged. A rejection without
   feedback, or past the cap, ends the run.
-- Nothing executes `ready` yet (⟶ C5); `approve_draft` never will (ADR-0019).
+- `execute` (C5, ADR-0022; `RetryPolicy` on `ToolUnavailableError`, 3 attempts) runs the
+  first `ready` action without an outcome through `tools.executors.execute_action` and
+  appends its `ActionOutcome`; one action per step, so each side effect is checkpointed
+  before the next. `build_supervisor(..., executors=...)` passes them in. Types without a
+  spec get "manual" (`approve_draft` never has an executor, ADR-0019); an executable type
+  without its executor, or a failed call, raises and stops the run at `execute` with the
+  decision saved; `ainvoke(None)` continues it (no interrupt pending there).
+
+**Tools** (`tools/`, C5, ADR-0022; MCP adapters need the `tools` extra, `mcp>=2.3,<3`).
+- `specs.py` (pure): `triage_ticket` (`TriageParams`: issue, to_status, add/remove labels,
+  priority, reason) and `schedule_calendar_block` (`BlockParams`: calendar alias, title,
+  aware start/end ≤ 12 h, description). Each renders `target` (`jira:DEMO-1`,
+  `calendar:personal`) and `preview` from its params, gives an identity key (the change
+  without the explanation) and checks scope (`ToolScope`: Jira projects, calendar aliases).
+  Agents propose with `spec.propose(task_id, params)`.
+- `ports.py`: read ports for agents (`JiraReads.search/get_issue/transitions`,
+  `CalendarReads.list_events`) and write ports only executors hold (`JiraWrites.transition/
+  update`, `CalendarWrites.create_event`).
+- `executors.py`: `TriageExecutor` reads the issue, writes only what differs (a transition
+  found by target status, then labels/priority), re-reads and raises if it didn't take;
+  `CalendarBlockExecutor` creates the block unless an event with the same title, start
+  and end is there. `Executors(executors, scope)` refuses an executor for `approve_draft`;
+  `run` re-checks the action; a change already in place (a revision re-proposing an
+  approved action, a retry after a crash) is found by reading and recorded
+  "already_applied". An earlier outcome is never taken as proof.
+- `config.py`: `ToolsConfig` from TOML (`load_tools_config(path)`; the bundled demo when
+  no path; `MEASURED_OPS_TOOLS_CONFIG`): servers (stdio with `env_from`, or https with
+  `headers_from_env`: env var names, never values) and, per logical operation, the tool,
+  argument names (dotted = nested), constants and result paths. A tool can't be both read
+  and write.
+- `mcp.py`: `McpToolClient(name, server, allowed)` opens a session per call (`mcp.Client`:
+  stdio, streamable HTTP, or an in-process `MCPServer` in tests) under one deadline (twice
+  the server's `timeout_s`), refuses tools outside its allowlist, and maps failures to `ToolUnavailableError` (retried) / `ToolError` /
+  `ToolConfigError`. `build_read_tools(config)` → read ports for agents (read allowlist);
+  `build_executors(config)` → executors (read + write clients). Jira search results
+  outside the configured projects are dropped; `scope_jql` adds the project scope and keeps
+  ORDER BY outside its parentheses. `parse_event_time` reads event times as servers send
+  them (ISO 8601 with any fractional digits, a zone label such as ` (UTC)`, Graph's
+  `{dateTime, timeZone}`) and raises on one it can't read: an unread time must never look
+  like "no such event", or a retry would duplicate a block.
+- `demo_servers.py`: demo tracker and calendar MCP servers over one JSON file
+  (`MEASURED_OPS_DEMO_TOOLS_STATE`, default `.data/demo_tools.json`), used by the demo
+  config and the tests. `python -m measured_ops.tools check|list` verifies a config
+  against the servers' `tools/list`, calling no tool.
+- e2e (`tests/test_tools_e2e.py`): an agent reads the demo tracker over stdio MCP,
+  proposes a move, the run pauses in another process, approval applies it (and a
+  rejection doesn't; "auto" applies without pausing), on SQLite and Postgres.
+
+**Staging pieces** (C10, ADR-0023).
+- Kill switch (`killswitch.py`): a file (`MEASURED_OPS_KILL_SWITCH_PATH`, absolute;
+  default `~/.measured_ops/kill_switch`, the same from every working directory).
+  `build_supervisor(..., kill_switch=...)` defaults to `KillSwitch.from_env()`.
+  `call_agent` raises `KillSwitchEngaged` before any agent runs, and `execute` before any
+  executable action (writes stop too; a "manual" outcome isn't stopped); the run is
+  resumable after release and the action then runs once. The inbox refuses Retry, skips
+  its start-up sweep and says the switch is on; `proofline golden` starts no item.
+- Budget (`budget.py`): `build_supervisor(..., budget=...)` defaults to the table
+  `MEASURED_OPS_BUDGET_PATH` names (`budget=None` opts out; unset = no caps), priced with
+  `MEASURED_OPS_PRICES_PATH` or the demo table. It checks the run's `usage` before each
+  agent run and, through a `raise_error` callback set in a context variable, before every
+  model call inside it (`guard_budget`). The calls cap counts the call about to be made;
+  tokens and cost use spend so far; unknown cost fails closed, and a call that reports no
+  usage counts as one call on the "unknown" model. Crossing a cap ends the run with a
+  failed `AgentResult` (`error = "budget: ..."`) and that pass's usage recorded, so a
+  resume can't spend more. Demo table `config/budget.demo.toml` (placeholder values).
+- Digest (`digest.py`): `build_digest(inbox, prices=, kill_switch=)` → Markdown from the
+  inbox service (waiting, stopped, in progress, drafts not posted, cost of runs active in
+  the window, kill switch); no targets. `FileDigestSink(dir)` writes it.
+- Worker (`worker.py`, `python -m measured_ops.worker`): `digest`, `run` (07:00 and
+  21:00 America/Toronto by default, per-day local times, lock file), `kill`, `release`,
+  `status`, `import-logs`. Runs no agent.
+- Postgres logs (`pg_logs.py`): `PostgresJudgeLog`, `PostgresPostedLog` behind the same
+  ports, chosen by `MEASURED_OPS_LOGS_URL` in `judge_log_from_env` / `posted_log_from_env`;
+  nothing connects at construction; `setup()` creates the tables and is run, and allowed to
+  raise, when the inbox starts and before the content agent's first run (`judge_log.setup_log`);
+  `import_jsonl` is idempotent; callers on an event loop run them in a worker thread.
 
 **Checkpointer** (`checkpoint.py`). `open_checkpointer(url)`: `memory://`,
 `sqlite:///path`, `postgresql://…` (needs the `postgres` extra; a small connection pool
@@ -430,6 +539,20 @@ adds its own case.
   text and a revision left; shows "Revision 2 of 3"), Reject and stop (drops any text).
   The inbox's one script, `/static/inbox.js` (CSP `script-src 'self'`), copies blocks
   and disables Revise while the box is empty; pages work without it.
+- Approved actions run in `decide` (C5, ADR-0022): after committing the gate step it
+  continues with `ainvoke(None, interrupt_before=["revise"])` (no interrupt pending), so
+  `execute` runs in the request and a revision still goes to the background. `Outcome`
+  carries what ran (`executed`) or `failed`; a failure keeps the decision, marks the run
+  "Stopped" and the page says so; Retry continues it. A run waiting to execute an action a
+  human approved is "stopped" at once after a restart. The continuation runs under
+  `MEASURED_OPS_INBOX_EXECUTE_TIMEOUT_S` (default 120); a timeout or the kill switch also
+  leaves the decision saved and the run "Stopped". Log writes (judge log, posted marks)
+  run in a worker thread. `create_inbox_app(...,
+  executors=...)`; `serve` builds them from `MEASURED_OPS_TOOLS_CONFIG`.
+- Failed runs (C10 review): `failed_runs()` lists threads that ended with a failed agent
+  result in the last 7 days (`FailedRun`: thread, agent, goal, task, error), read from the
+  checkpointer; the list page shows them under "Failed", the digest in a Failed section,
+  and a background revision that ends failed is logged at ERROR, not as "revised".
 - One process: the lifespan holds an exclusive lock file. `python -m measured_ops.inbox
   serve` binds 127.0.0.1 with one worker; the phone reaches it over `tailscale serve`
   (`docs/INBOX.md`). Edit is deferred to C9.

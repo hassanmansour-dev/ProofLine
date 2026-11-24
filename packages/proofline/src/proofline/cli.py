@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -156,7 +157,13 @@ def propose(
         format="%(levelname)s %(name)s: %(message)s",
     )
     deps = _deps_or_exit()
-    thread_id, paused, summary = asyncio.run(propose_topic(topic, audience, deps))
+    from measured_ops.killswitch import KillSwitchEngaged
+
+    try:
+        thread_id, paused, summary = asyncio.run(propose_topic(topic, audience, deps))
+    except KillSwitchEngaged as exc:
+        typer.echo(f"error: {exc}; nothing ran", err=True)
+        raise typer.Exit(code=1) from exc
     if not paused:
         typer.echo(f"error: no draft is waiting: {summary}", err=True)
         raise typer.Exit(code=1)
@@ -214,6 +221,79 @@ def ready(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(markdown, encoding="utf-8")
         typer.echo(f"saved to {out}", err=True)
+
+
+@app.command()
+def golden(
+    out: Annotated[Path, typer.Option(help="Directory for <item-id>.md files, under outputs/")],
+    item: Annotated[
+        list[str] | None, typer.Option("--item", help="Only these item ids (repeatable)")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="Include items not approved yet (not for baselines)")
+    ] = False,
+    overwrite: Annotated[bool, typer.Option(help="Run items already saved again")] = False,
+) -> None:
+    """Run the real pipeline on the golden set and save one output per item.
+
+    Each item uses its own fixture sources (no search) and real models: this costs money.
+    Then check the outputs with `python -m measured_evals run --approved-only --outputs OUT`.
+    Items already saved are skipped, so a stopped run resumes where it left off.
+
+    If MEASURED_OPS_BUDGET_PATH names a budget, it caps each item, not the whole run:
+    20 items can spend up to 20 times the cap. The kill switch stops the run between items.
+    """
+    from measured_evals.golden import load_golden_set
+    from measured_ops.budget import budget_from_env
+    from measured_ops.killswitch import KillSwitch, KillSwitchEngaged
+    from measured_ops.prices import load_model_prices
+    from proofline.golden import CRITIC_FILE, run_golden
+
+    deps = _deps_or_exit()
+    switch = KillSwitch.from_env()
+    budget = budget_from_env()  # MEASURED_OPS_BUDGET_PATH: caps each item when set
+    prices_path = os.environ.get("MEASURED_OPS_PRICES_PATH", "").strip()
+    prices = load_model_prices(Path(prices_path) if prices_path else None)
+    root = deps.settings.output_dir.resolve()
+    if not out.resolve().is_relative_to(root):
+        typer.echo(
+            f"error: --out must be under {deps.settings.output_dir}/ (git-ignored)", err=True
+        )
+        raise typer.Exit(code=1)
+    golden_set = load_golden_set()
+    try:
+        result = asyncio.run(
+            run_golden(
+                golden_set,
+                deps,
+                out,
+                approved_only=not all_items,
+                only=set(item) if item else None,
+                overwrite=overwrite,
+                progress=lambda item_id, what: typer.echo(f"{item_id}: {what}", err=True),
+                budget=budget,
+                prices=prices,
+                kill_switch=switch,
+            )
+        )
+    except KillSwitchEngaged as exc:
+        typer.echo(f"error: {exc}; saved items are kept, run again after release", err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"saved {len(result.written)}, skipped {len(result.skipped)}, failed {len(result.failed)} "
+        f"(golden set {golden_set.name}) in {out}/, critic scores in {out}/{CRITIC_FILE}"
+    )
+    for item_id, error in result.failed.items():
+        typer.echo(f"FAILED {item_id}: {error}", err=True)
+    typer.echo(
+        "next: uv run python -m measured_evals run --approved-only "
+        f"--outputs {out} --write-draft-baseline evals/baselines/content_v0.json"
+    )
+    if result.failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

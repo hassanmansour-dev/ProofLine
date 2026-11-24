@@ -19,6 +19,7 @@ callbacks, including the masked tracer (ADR-0018).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, TypedDict
 
@@ -27,7 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from measured_ops import AgentResult, PendingAction, Task
 from measured_ops.agent import AgentGraph, AgentInput, AgentOutput
-from measured_ops.judge_log import JudgeLog, NullJudgeLog
+from measured_ops.judge_log import JudgeLog, NullJudgeLog, setup_log
 from proofline.context import Deps
 from proofline.graph import build_graph
 from proofline.render import approve_draft_preview
@@ -78,8 +79,16 @@ class ContentAgent:
         # checkpoint. It still gets the thread id and callbacks from the supervisor.
         pipeline = build_graph().compile(checkpointer=False)
 
+        log_ready = False
+
         async def draft(state: _State) -> dict[str, Any]:
+            nonlocal log_ready
             task = state["task"]
+            if not log_ready:
+                # Before anything is paid for: a judge log that can't be set up raises here
+                # (a later write error is only logged, so it must not be the first sign).
+                await setup_log(judge_log)
+                log_ready = True
             try:
                 topic = _text_input(task, "topic")
                 audience = _text_input(task, "audience")
@@ -127,8 +136,11 @@ class ContentAgent:
             if critique is not None:  # ids and scores only, never the draft (ADR-0019)
                 scores: dict[str, float] = {c.criterion: c.score for c in critique.scores}
                 try:
-                    judge_log.record_critic(action.id, {**scores, "overall": critique.overall})
-                except OSError:
+                    # in a thread: the log may be Postgres (C10), and this is an async node
+                    await asyncio.to_thread(
+                        judge_log.record_critic, action.id, {**scores, "overall": critique.overall}
+                    )
+                except Exception:  # a file error or a database error
                     # the draft is paid for and stands; a lost log line must not undo it
                     log.exception("content: couldn't write the judge log for %s", action.id)
             return {

@@ -17,7 +17,6 @@ from measured_ops.policy import ApprovalPolicy
 AUTO = [
     "draft_content",
     "research",
-    "schedule_internal_block",
     "triage_ticket",
     "run_tests",
     "run_evals",
@@ -25,6 +24,7 @@ AUTO = [
 APPROVAL = [
     "publish_public",
     "approve_draft",  # C8: the content agent's draft, never executed (ADR-0019)
+    "schedule_calendar_block",  # C3 review, C5: each calendar block is approved
     "deploy_production",
     "spend_money",
     "message_person",

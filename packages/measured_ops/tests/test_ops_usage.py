@@ -79,3 +79,23 @@ def test_inconsistent_counts_are_clamped_and_logged(caplog: pytest.LogCaptureFix
     assert usage.input_tokens == 0
     assert usage.cache_read_tokens == 9
     assert "more cache tokens than input tokens" in caplog.text
+
+
+async def test_a_call_that_reports_no_usage_still_counts_as_a_call() -> None:
+    # Review: such a call was only logged, so a model that reports no usage ran free of
+    # every cap. It counts as one call on an "unknown" model: unpriced, never free.
+    from measured_evals.budget import Budget, BudgetExceeded, check_budget
+
+    silent = GenericFakeChatModel(messages=iter([AIMessage(content="ok")] * 2))
+    with collect_usage("content") as usage:
+        await silent.ainvoke("a")
+        await silent.ainvoke("b")
+
+    assert (
+        usage.calls()
+        == [Usage(agent="content", model="unknown", input_tokens=0, output_tokens=0)] * 2
+    )
+    with pytest.raises(BudgetExceeded, match="max_calls: 2 > 1"):
+        check_budget(Budget(max_calls=1), usage.calls(), {})
+    with pytest.raises(BudgetExceeded, match="cost unknown"):  # fails closed under a cost cap
+        check_budget(Budget(max_cost=100.0), usage.calls(), {})

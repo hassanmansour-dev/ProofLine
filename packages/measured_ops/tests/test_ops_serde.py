@@ -15,12 +15,17 @@ from ops_fakes import make_action, make_task
 
 from measured_evals import EvalScores
 from measured_ops import AgentResult, ApprovalDecision, OpsState
-from measured_ops.contracts import SERDE_ALLOWLIST
+from measured_ops.contracts import SERDE_ALLOWLIST, ActionOutcome
 
 pytestmark = pytest.mark.anyio
 
 TASK = make_task(inputs={"topic": "evals", "tags": ["a", "b"]})
-ACTION = make_action(TASK.id, eval_scores=EvalScores({"quality": 0.8}))
+ACTION = make_action(
+    TASK.id,
+    eval_scores=EvalScores({"quality": 0.8}),
+    params={"issue": "DEMO-1", "add_labels": ["a"], "priority": None},  # C5
+)
+OUTCOME = ActionOutcome(action_id=ACTION.id, type=ACTION.type, status="applied", detail="ok")
 
 
 async def _write(state: OpsState) -> dict[str, Any]:
@@ -28,7 +33,12 @@ async def _write(state: OpsState) -> dict[str, Any]:
         task_id=TASK.id, agent="echo", status="succeeded", summary="ok", actions=(ACTION,)
     )
     decision = ApprovalDecision(action_id=ACTION.id, approved=False, feedback="Shorter.")
-    return {"results": [result], "pending_actions": [ACTION], "decisions": [decision]}
+    return {
+        "results": [result],
+        "pending_actions": [ACTION],
+        "decisions": [decision],
+        "executed": [OUTCOME],
+    }
 
 
 def _graph(saver: InMemorySaver) -> Any:
@@ -55,6 +65,8 @@ async def test_ops_state_survives_strict_checkpoint(monkeypatch: pytest.MonkeyPa
     assert isinstance(action.eval_scores, EvalScores)
     assert action.eval_scores.passed is True
     assert values["decisions"][0].feedback == "Shorter."
+    assert values["executed"] == [OUTCOME]  # C5
+    assert values["pending_actions"][0].params["add_labels"] == ["a"]
 
 
 async def test_strict_mode_blocks_unlisted_types(monkeypatch: pytest.MonkeyPatch) -> None:

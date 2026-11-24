@@ -219,6 +219,43 @@ async def test_no_approval_unblocks_an_action_the_policy_now_forbids() -> None:
     assert [(d.action_id, d.approved) for d in done["decisions"]] == [(action_id, False)]
 
 
+async def test_a_bare_rerun_after_an_unkeyed_refusal_replays_the_refused_answer() -> None:
+    # ADR-0016: an answer sent as Command(resume=value) stays as the thread's pending
+    # resume after it's refused, so ainvoke(None) raises the same refusal again.
+    app = _app(ScriptedAgent([APPROVAL]))
+    action_id = (await _start(app))["__interrupt__"][0].value["action_id"]
+    with pytest.raises(ValueError, match="not the action waiting"):
+        await app.ainvoke(_resume("someone-else", approved=True), _cfg())
+
+    with pytest.raises(ValueError, match="not the action waiting"):
+        await app.ainvoke(None, _cfg())
+
+    assert (await app.aget_state(_cfg())).values["decisions"] == []
+    done = await app.ainvoke(_resume(action_id, approved=True), _cfg())
+    assert [a.id for a in done["ready"]] == [action_id]
+
+
+async def test_a_bare_rerun_after_a_keyed_refusal_just_pauses_again() -> None:
+    # ADR-0016 amendment: an answer keyed by interrupt id (how the inbox answers) leaves
+    # nothing behind when refused; ainvoke(None) pauses at the gate again, undecided.
+    app = _app(ScriptedAgent([APPROVAL]))
+    [intr] = (await _start(app))["__interrupt__"]
+    wrong = ApprovalDecision(action_id="someone-else", approved=True).model_dump()
+    with pytest.raises(ValueError, match="not the action waiting"):
+        await app.ainvoke(Command(resume={intr.id: wrong}), _cfg())
+
+    out = await app.ainvoke(None, _cfg())
+
+    assert [i.id for i in out["__interrupt__"]] == [intr.id]
+    snap = await app.aget_state(_cfg())
+    assert snap.next == ("gate",)
+    assert snap.values["decisions"] == []
+    assert snap.values["ready"] == []
+    right = ApprovalDecision(action_id=intr.value["action_id"], approved=True).model_dump()
+    done = await app.ainvoke(Command(resume={intr.id: right}), _cfg())
+    assert [a.id for a in done["ready"]] == [intr.value["action_id"]]
+
+
 async def test_malformed_answer_is_refused_and_the_run_stays_paused() -> None:
     app = _app(ScriptedAgent([APPROVAL]))
     action_id = (await _start(app))["__interrupt__"][0].value["action_id"]
@@ -244,6 +281,8 @@ def test_route_pending_is_pure() -> None:
     state = initial_ops_state(task)
     state["pending_actions"] = [make_action(task.id)]
     assert route_pending(state) == "gate"
+    state["ready"] = [make_action(task.id)]  # C5: what's ready runs before the gate
+    assert route_pending(state) == "execute"
 
 
 # ---- agents --------------------------------------------------------------------------
@@ -277,6 +316,20 @@ def test_graph_shape() -> None:
         "evaluate",
         "triage",
         "gate",
+        "execute",
         "revise",
         "__end__",
     }
+
+
+async def test_a_result_with_too_many_actions_is_refused() -> None:
+    # Review nit: every action costs graph steps (a gate and an execute), so an unbounded
+    # result would hit the recursion limit mid-round, after some actions had already run.
+    from measured_ops.supervisor import MAX_ACTIONS_PER_RESULT
+
+    app = _app(ScriptedAgent([AUTO] * (MAX_ACTIONS_PER_RESULT + 1)))
+    with pytest.raises(AgentContractError, match="at most 10 actions"):
+        await _start(app)
+
+    ok = await _start(_app(ScriptedAgent([APPROVAL] * MAX_ACTIONS_PER_RESULT)))
+    assert "__interrupt__" in ok

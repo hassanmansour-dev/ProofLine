@@ -31,6 +31,7 @@ class InboxSettings:
     port: int = 8765
     session_hours: int = 12
     revision_timeout_s: float = 600.0  # one background revision (ADR-0019)
+    execute_timeout_s: float = 120.0  # running approved actions after one decision (C5)
 
     def check(self) -> None:
         """Raise InboxConfigError unless the secrets are present and usable."""
@@ -61,6 +62,11 @@ class InboxSettings:
                 f"{PREFIX}REVISION_TIMEOUT_S must be a positive number of seconds, "
                 f"got {self.revision_timeout_s}"
             )
+        if not math.isfinite(self.execute_timeout_s) or self.execute_timeout_s <= 0:
+            raise InboxConfigError(
+                f"{PREFIX}EXECUTE_TIMEOUT_S must be a positive number of seconds, "
+                f"got {self.execute_timeout_s}"
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> InboxSettings:
@@ -74,6 +80,9 @@ class InboxSettings:
             port=int(env.get(f"{PREFIX}PORT", str(defaults.port))),
             revision_timeout_s=float(
                 env.get(f"{PREFIX}REVISION_TIMEOUT_S") or defaults.revision_timeout_s
+            ),
+            execute_timeout_s=float(
+                env.get(f"{PREFIX}EXECUTE_TIMEOUT_S") or defaults.execute_timeout_s
             ),
         )
         settings.check()

@@ -1,7 +1,10 @@
 # ADR-0019: Content agent v0, approve_draft, and revisions in the same thread
 
 - Status: accepted (2026-11-14, Hassan's review: background revisions with a one-at-a-time
-  semaphore, a timeout and per-pass usage; revision number carried in the task)
+  semaphore, a timeout and per-pass usage; revision number carried in the task).
+  C5 follow-ups done in ADR-0022: the executor table refuses `approve_draft` (it gets a
+  "manual" outcome), and a revision re-proposing an applied change is "already_applied"
+  without a tool call.
 - Date: 2026-11-14
 - Phase/Step: Phase 1 / C8 (GROW-87)
 

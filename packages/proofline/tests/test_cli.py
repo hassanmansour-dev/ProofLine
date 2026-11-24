@@ -318,3 +318,32 @@ def test_ready_only_reads_it_never_touches_a_run(
     before = count()
     assert CliRunner().invoke(cli.app, ["ready"]).exit_code == 0
     assert count() == before
+
+
+# ── review 2 nits ─────────────────────────────────────────────────────────────
+
+
+def test_propose_says_the_kill_switch_is_on_in_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from measured_ops.killswitch import KillSwitch
+
+    llm = FakeLLM()
+    monkeypatch.setenv("MEASURED_OPS_INBOX_CHECKPOINTER_URL", f"sqlite:///{tmp_path / 'o.db'}")
+    monkeypatch.setattr(cli, "build_deps", lambda settings: make_deps(tmp_path, llm))
+    KillSwitch.from_env().engage("testing")
+
+    result = CliRunner().invoke(cli.app, ["propose", "--topic", "Loops need exits"])
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)  # no traceback
+    assert "error: kill switch is on" in result.output
+    assert llm.calls == []
+
+
+def test_golden_help_says_the_budget_is_per_item() -> None:
+    # the command's docstring is its help text; rendered help carries colour codes and
+    # box wrapping that differ between terminals (and CI), so the source is checked
+    result = CliRunner().invoke(cli.app, ["golden", "--help"])
+    assert result.exit_code == 0
+    assert "caps each item, not the whole run" in " ".join((cli.golden.__doc__ or "").split())

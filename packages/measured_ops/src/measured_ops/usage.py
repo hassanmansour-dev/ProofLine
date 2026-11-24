@@ -71,7 +71,8 @@ def usage_from_langchain(agent: str, model: str, usage_metadata: Mapping[str, An
 
 class UsageCollector(BaseCallbackHandler):
     """Collects usage for one agent run. Calls without a model name count as "unknown"
-    (priced as unknown, never free); calls without usage are logged, not dropped silently."""
+    (priced as unknown, never free); a call that reports no usage counts as one call on the
+    "unknown" model with zero tokens."""
 
     run_inline = True  # record in the caller's thread; no executor hop
 
@@ -108,7 +109,16 @@ class UsageCollector(BaseCallbackHandler):
         )
         message = generation.message if isinstance(generation, ChatGeneration) else None
         if not isinstance(message, AIMessage) or message.usage_metadata is None:
-            log.warning("usage: a model call by %s reported no usage; not counted", self.agent)
+            # Still a call: counted on an "unknown" model, which no price table lists, so
+            # a calls cap sees it and a cost cap fails closed (never free, ADR-0023).
+            log.warning(
+                "usage: a model call by %s reported no usage; counted as one unpriced call",
+                self.agent,
+            )
+            with self._lock:
+                self._calls.append(
+                    Usage(agent=self.agent, model=UNKNOWN_MODEL, input_tokens=0, output_tokens=0)
+                )
             return
         model = (
             message.response_metadata.get("model_name")

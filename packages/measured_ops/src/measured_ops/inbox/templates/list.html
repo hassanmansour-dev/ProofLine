@@ -33,7 +33,7 @@
     <span class="meta">{{ run.agent }} ·
       {% if run.state == "running" %}Revising…
       {% elif run.state == "queued" %}Revision queued
-      {% elif run.state == "stopped" %}Revision stopped (timeout, error or restart)
+      {% elif run.state == "stopped" %}Stopped (timeout, error or restart)
       {% else %}In progress elsewhere{% endif %}
     </span>
     {% if run.state == "stopped" %}
@@ -42,6 +42,18 @@
       <button type="submit" class="primary">Retry</button>
     </form>
     {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if failed %}
+<h2>Failed (last 7 days)</h2>
+<ul class="items">
+  {% for run in failed %}
+  <li class="card run run-stopped">
+    <span class="goal">{{ run.goal }}</span>
+    <span class="meta">{{ run.agent }} · ended, nothing more is coming · {{ run.error }}</span>
+    <span class="when">{{ run.ended_at[:16] | replace("T", " ") }}</span>
   </li>
   {% endfor %}
 </ul>

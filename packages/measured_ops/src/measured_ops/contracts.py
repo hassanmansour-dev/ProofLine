@@ -99,6 +99,15 @@ class PendingAction(_Model):
         max_length=20_000,
         description="What the human sees before approving: the text, diff or summary.",
     )
+    params: dict[str, JsonValue] = Field(
+        default_factory=dict,
+        description=(
+            "Structured arguments for the action's executor (C5, ADR-0022), e.g. the issue "
+            "and target status of a ticket move. For an executable type the supervisor "
+            "checks that `target` and `preview` are rendered from these, so what the human "
+            "approves is exactly what runs. Empty for types nothing executes."
+        ),
+    )
     eval_scores: EvalScores | None = Field(
         default=None,
         description=(
@@ -155,6 +164,34 @@ class ApprovalDecision(_Model):
     decided_at: datetime = Field(default_factory=_now)
 
 
+OutcomeStatus = Literal["applied", "already_applied", "manual"]
+
+
+class ActionOutcome(_Model):
+    """What happened to one `ready` action (C5, ADR-0022). Written only by the
+    supervisor's `execute` node, once per ready action.
+
+    - "applied": the executor changed something (e.g. moved the ticket);
+    - "already_applied": the change was already in place (a revision re-proposing an
+      approved action, or a retry after a crash between the write and the checkpoint);
+    - "manual": nothing runs this type (e.g. `approve_draft`, pasted by hand, ADR-0019).
+
+    A failed execution is not an outcome: the node raises and the run stops, loudly.
+    """
+
+    action_id: str = Field(min_length=1)
+    type: str = Field(pattern=NAME_PATTERN)
+    status: OutcomeStatus
+    key: str | None = Field(
+        default=None, description="The action's identity (type + what it changes), hashed."
+    )
+    detail: str = Field(max_length=500, description="One line on what was done.")
+    ref: str | None = Field(
+        default=None, max_length=300, description="The external id it touched, e.g. an event id."
+    )
+    finished_at: datetime = Field(default_factory=_now)
+
+
 class OpsState(TypedDict, total=False):
     """The supervisor graph's state (C2). Values are the models above.
 
@@ -173,9 +210,10 @@ class OpsState(TypedDict, total=False):
     pending_actions: list[PendingAction]
     decisions: Annotated[list[ApprovalDecision], operator.add]  # append-only audit trail
     blocked: Annotated[list[PendingAction], operator.add]  # "never" actions, append-only audit
-    # Cleared to run: "auto" by the policy, or approved at the gate. Append-only.
-    # Nothing executes them before the tools arrive (C5). ADR-0016.
+    # Cleared to run: "auto" by the policy, or approved at the gate. Append-only. ADR-0016.
     ready: Annotated[list[PendingAction], operator.add]
+    # One outcome per ready action, written only by `execute` (C5, ADR-0022). Append-only.
+    executed: Annotated[list[ActionOutcome], operator.add]
     # Tokens per agent run and model, from the LLM calls inside the agent (C7). Append-only.
     usage: Annotated[list[Usage], operator.add]
 
@@ -190,6 +228,7 @@ def initial_ops_state(task: Task) -> OpsState:
         decisions=[],
         blocked=[],
         ready=[],
+        executed=[],
         usage=[],
     )
 
@@ -201,6 +240,7 @@ STATE_TYPES: tuple[type, ...] = (
     AgentResult,
     PendingAction,
     ApprovalDecision,
+    ActionOutcome,
     EvalScores,
     Usage,
 )
