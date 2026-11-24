@@ -44,7 +44,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -217,6 +217,23 @@ async def list_ready(
                 )
             )
     return sorted(items, key=lambda i: i.approved_at, reverse=True)
+
+
+@dataclass(frozen=True)
+class FailedRun:
+    """A run that ended with a failed agent result (e.g. stopped by its budget): nothing
+    is waiting and nothing will come back, so the human has to be told."""
+
+    thread_id: str
+    agent: str
+    goal: str
+    task_id: str
+    error: str
+    ended_at: str
+
+
+FAILED_WINDOW = timedelta(days=7)  # how long an ended, failed run stays on the list
+ERROR_MAX = 300
 
 
 @dataclass(frozen=True)
@@ -551,7 +568,19 @@ class Inbox:
                     self.graph.ainvoke(value, {**_cfg(thread_id), "callbacks": self.callbacks}),
                     timeout=self.revision_timeout_s,
                 )
-                log.info("inbox: run %s revised", thread_id)
+                failed = await self._failed(thread_id)
+                if failed is None:
+                    log.info("inbox: run %s revised", thread_id)
+                else:
+                    # No new draft is coming: say so loudly; the page and the digest list it.
+                    # Only a budget stop's text is logged (cap names and numbers); any other
+                    # agent error stays out of the log.
+                    budget = failed.error.startswith("budget:")
+                    log.error(
+                        "inbox: run %s ended as failed: %s",
+                        thread_id,
+                        failed.error if budget else "agent error (see the inbox)",
+                    )
                 return
         except TimeoutError:
             log.error(
@@ -592,6 +621,47 @@ class Inbox:
         stale = age is None or age > 2 * self.revision_timeout_s
         state: RunState = "stopped" if stale else "elsewhere"
         return RunStatus(thread_id, task.agent, task.goal, state)
+
+    async def _failed(self, thread_id: str) -> FailedRun | None:
+        """The run's failure, if it has ended and its last agent result failed."""
+        snap = await self.graph.aget_state(_cfg(thread_id))
+        values = snap.values or {}
+        results = values.get("results") or []
+        task: Task | None = values.get("task")
+        if snap.next or task is None or not results or results[-1].status != "failed":
+            return None
+        return FailedRun(
+            thread_id=thread_id,
+            agent=task.agent,
+            goal=task.goal,
+            task_id=task.id,
+            error=(results[-1].error or "failed")[:ERROR_MAX],
+            ended_at=str(snap.created_at or ""),
+        )
+
+    async def failed_runs(
+        self, *, now: datetime | None = None, window: timedelta = FAILED_WINDOW
+    ) -> list[FailedRun]:
+        """Runs that ended as failed within `window`, newest first. Read from the
+        checkpointer, so a first pass that failed in another process (`proofline propose`)
+        and a restart are covered too."""
+        since = (now or datetime.now(UTC)) - window
+        out: list[FailedRun] = []
+        for thread_id in await self._thread_ids():
+            try:
+                failed = await self._failed(thread_id)
+            except Exception:
+                log.exception("inbox: can't read run %s; skipped", thread_id)
+                continue
+            if failed is None:
+                continue
+            try:
+                recent = datetime.fromisoformat(failed.ended_at) >= since
+            except ValueError:
+                recent = True  # no usable time: show it
+            if recent:
+                out.append(failed)
+        return sorted(out, key=lambda f: f.ended_at, reverse=True)
 
     async def in_progress(self) -> list[RunStatus]:
         """Runs that aren't waiting for a human and aren't finished."""

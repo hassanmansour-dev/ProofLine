@@ -95,3 +95,32 @@ def test_the_page_says_when_the_kill_switch_stopped_it(client: TestClient, jira:
 
     assert "The kill switch is on, so it did not run" in client.get("/").text
     assert jira.writes == []
+
+
+def test_the_page_lists_a_run_that_ended_as_failed(tmp_path: Path) -> None:
+    # Review 2: a failed result ends the run; without this it left no trace on the page.
+    from ops_fakes import ScriptedAgent
+
+    settings = InboxSettings(
+        passphrase_hash=hash_passphrase(PASSPHRASE, n=2**10),
+        session_secret="k" * 40,
+        checkpointer_url=f"sqlite:///{tmp_path / 'cp.db'}",
+        lock_path=tmp_path / "inbox.lock",
+    )
+    agents = [ScriptedAgent(fail=True, name="ops")]
+
+    async def seed() -> None:
+        async with open_checkpointer(settings.checkpointer_url) as saver:
+            graph = build_supervisor(agents, POLICY).compile(checkpointer=saver)
+            cfg: Any = {"configurable": {"thread_id": "f1"}, "recursion_limit": 40}
+            await graph.ainvoke(initial_ops_state(Task(agent="ops", goal="Plan the week.")), cfg)
+
+    asyncio.run(seed())
+    app = create_inbox_app(settings, agents, POLICY, clock=Clock())
+    with TestClient(app, base_url="https://testserver", follow_redirects=False) as c:
+        login(c)
+        page = c.get("/").text
+
+    assert "Failed (last 7 days)" in page
+    assert "Plan the week." in page
+    assert "ended, nothing more is coming · boom" in page

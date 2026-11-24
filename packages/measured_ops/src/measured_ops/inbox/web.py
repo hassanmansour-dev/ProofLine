@@ -323,8 +323,11 @@ def create_inbox_app(
             return to_login()
         items = await inbox(request).list_pending()
         running = await inbox(request).in_progress()
+        failed = await inbox(request).failed_runs()
         flash = request.session.pop("flash", None)
-        return render(request, "list.html", items=items, running=running, flash=flash)
+        return render(
+            request, "list.html", items=items, running=running, failed=failed, flash=flash
+        )
 
     # `:path` so a thread id containing "/" still routes (links quote it fully).
     @app.get("/a/{thread_id:path}", response_class=HTMLResponse)

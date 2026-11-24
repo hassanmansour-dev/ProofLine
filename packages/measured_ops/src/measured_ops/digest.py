@@ -6,7 +6,8 @@ calls no model, resumes no run and sends nothing anywhere. Where a digest goes i
 Delivering it to the phone (email, push, a chat message) is a separate decision: any of
 those messages a real person through an outside service, so it waits for Hassan.
 
-Sections: waiting for you (oldest first, with how long), stopped and in-progress runs,
+Sections: waiting for you (oldest first, with how long), stopped, failed (ended with an
+agent error or a budget stop, in the window) and in-progress runs,
 approved drafts not yet posted, the cost of runs active in the window (whole runs, priced
 with the price table; an unpriced model shows "unknown", never 0), and the kill switch.
 Goals and previews are Hassan's own text and stay in his local file; targets never
@@ -120,6 +121,9 @@ async def build_digest(
     ] or ["- Nothing."]
     lines += ["", f"## Stopped ({len(stopped)}): Retry in the inbox"]
     lines += [f"- {_short(r.goal)} · {r.agent}" for r in stopped] or ["- Nothing."]
+    failed = await inbox.failed_runs(now=now, window=window)
+    lines += ["", f"## Failed ({len(failed)}): ended, nothing more is coming"] if failed else []
+    lines += [f"- {_short(f.goal)} · {f.agent} · {_short(f.error)}" for f in failed]
     if others:
         lines += ["", f"## In progress ({len(others)})"]
         lines += [f"- {_short(r.goal)} · {r.agent} · {r.state}" for r in others]
